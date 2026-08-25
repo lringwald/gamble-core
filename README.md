@@ -12,51 +12,73 @@ prior land-use and livestock models (LAMASUS). Consolidates the production pipel
 ## Layout
 
 ```
+run/              ENTRY POINTS — start here
+  flat.R            build the design dump and/or fit the FLAT pixel model (pick the CLASSIFICATION)
+  nested.R          fit the NESTED model (factorized | iv, RE block, symmetric HS)
+  count.R           fit the livestock count model (BOV + SGT in one pass)
+  score.R           score fitted models side by side
+  fit_nested.sh     non-interactive form of nested.R:  run/fit_nested.sh prod factorized intercept diag
 codes/            core samplers + Rcpp cores + shared helpers
   mnlogit_rcpp_sym.R + mnlogit_gibbs_core_sym.cpp   pixel MNL (symmetric zero-sum)
   mnlogit_rcpp.R     + mnlogit_gibbs_core.cpp        base MNL (dependency)
   count_rcpp.R       + count_gibbs_core.cpp          livestock count (NB/Poisson)
   nested_cut.R, nest_trees.R, mnlogit_nested_iv.R    nested / inclusive-value framework
   lnm_gibbs.R, mvclr_gibbs.R (+ cores)               alternative compositional samplers
-  mnl_aux_func.R, prior_model_predict.R, spatial_utils.R,
-  MNL_parameter_heatplot.R, MNL_reporting_suite.R, MNL_re_viz_utils.R
-experiments/focal/  compute_focal_coord.R           focal (t-1) neighbourhood covariate
-data prep (root):   data_preparation_pixel_panel.R, prepare_eurostat_livestock_shares.R,
-                    prepare_composition_training.R, compile_complete_LUM_map.R
-composition (root): fit_composition.R, fit_delta_contrast.R, build_subclass_parameters.R,
-                    consolidate_composition.R
-drivers (root):     run_prior_module_pixel_level_model.R   (pixel MNL)
-                    run_prior_module_count_model.R         (livestock count)
-                    run_nested_cut.R                       (nested)
-postprocess/        engine.R, render_maps.R, render_heatplot.R, build_html.R   (fit report:
-                    recover -> metrics -> grid maps -> HTML), + calculate_fit_metrics.R,
-                    plot_results_heatmap.R
-tests/ (root):      test_nested_cut.R, test_nested_iv.R, codes/master_test_suite_sym.R
-docs/               model specs (see docs/nested_cut_model.md for the nested model + algorithm)
-input/              model input data (grids, NUTS geometries, Eurostat)  [tracked]
-output/             all model outputs / batches / reports   [git-ignored, regenerable]
+  score_nested_cut.R                                 scoring (used by run/score.R)
+  master_test_suite_sym.R                            35-check sampler gate
+  mnl_aux_func.R, prior_model_predict.R, spatial_utils.R, MNL_*.R
+drivers (root):   run_prior_module_pixel_level_model.R   (pixel MNL / design assembly)
+                  run_prior_module_count_model.R         (livestock count)
+                  run_nested_cut.R                       (nested)
+                  — env-driven; run/ wraps them. Run from the repo ROOT.
+prep/             data assembly: data_preparation_pixel_panel.R, compile_complete_LUM_map.R,
+                  prepare_eurostat_livestock_shares.R, prepare_composition_training.R
+composition/      subtype composition: fit_composition.R, fit_delta_contrast.R, fit_organic.R,
+                  build_subclass_parameters.R, consolidate_composition.R
+postprocess/      engine.R, render_maps.R, render_heatplot.R, build_html.R (fit report),
+                  calculate_fit_metrics.R, plot_results_heatmap.R, count_validation_report.R
+experiments/      measurement harnesses (mixing/re_idx_tradeoff.R, focal/, count/, nested/)
+tests/            synthetic validation of the nested framework (see tests/README.md)
+aux_files/        LUM_Code_to_macro_model_mapping.csv — CURATED class + nest taxonomy (source of truth)
+docs/             model specs (docs/nested_cut_model.md = nested model + algorithm)
+input/            model input data (grids, NUTS geometries, Eurostat)   [tracked]
+output/           all model outputs / batches / reports                 [git-ignored, regenerable]
+_local/           scratch + superseded scripts                          [git-ignored]
 ```
 
 ## Running
 
-All scripts use paths **relative to the repo root** — run from the repo root:
+**Quick reference for every model and every way to launch it: [`run/README.md`](run/README.md).**
+
+Everything is run **from the repo root**. Open `gamble-core.Rproj` in RStudio (which sets the working
+directory), then edit the CONTROL PANEL at the top of a `run/` script and source it.
 
 ```r
-# pixel land-use model (env-driven config; see the driver header for DRIVER_* vars)
-Rscript run_prior_module_pixel_level_model.R
+# 1. build the design (choose the classification inside the file), then
+source("run/flat.R")      # BUILD_DESIGN_ONLY = TRUE -> output/pixel_model_inputs.rds
 
-# livestock count model
-Rscript run_prior_module_count_model.R
+# 2. fit the nested model on it (variant / RE block / symmetric HS inside the file)
+source("run/nested.R")
 
-# nested model:  <BRANCH> [SUBSAMPLE] [M] [NITER] [USE_RE] [IVMODE]
-Rscript run_nested_cut.R AGMIP 0 25 1000 TRUE auto
-
-# nested-framework synthetic validation
-Rscript test_nested_cut.R
+# 3. livestock count model, and scoring
+source("run/count.R")
+source("run/score.R")
 ```
 
-Outputs are written under `output/` (created on demand; git-ignored). The Rcpp cores in `codes/*.cpp`
-compile on first use.
+Non-interactive equivalents:
+
+```bash
+run/fit_nested.sh smoke factorized intercept diag     # ~10-15 min sanity run
+run/fit_nested.sh prod  factorized intercept diag     # full run (~24 h), backgrounded + resumable
+Rscript codes/master_test_suite_sym.R                 # sampler gate (35 checks)
+Rscript tests/test_nested_cut.R                       # nested-framework validation
+```
+
+The nested runners write a **resumable node store**; a killed run picks up at the last completed node.
+A store fingerprints the data/niter/M but **not** the sampler version — never point a run at a store
+built by a different version of `codes/mnlogit_rcpp_sym.R`.
+
+Outputs go to `output/` (git-ignored). The Rcpp cores in `codes/*.cpp` compile on first use.
 
 ## Requirements
 

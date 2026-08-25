@@ -1,0 +1,22 @@
+# --- R / RStudio -------------------------------------------------------------
+.Rproj.user
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# --- macOS -------------------------------------------------------------------
+.DS_Store
+
+# --- model outputs: multi-GB and fully regenerable ---------------------------
+# Everything the pipelines write (posterior batches, fitted objects, design dumps,
+# node stores, logs, reports). Keep the directory itself so a fresh clone can run.
+output/*
+!output/.gitkeep
+
+# --- local scratch and experiments -------------------------------------------
+# Ad-hoc scripts, one-off probes, superseded runners. Never pushed.
+_local/
+scratch/
+experiments/
+.tmp*

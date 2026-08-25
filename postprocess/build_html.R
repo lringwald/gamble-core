@@ -16,6 +16,17 @@ D <- D[!sapply(D,is.null)]
 tile <- function(label,val,sub="") sprintf('<div class="tile"><div class="tval">%s</div><div class="tlabel">%s</div>%s</div>',
   val, esc(label), if(nzchar(sub)) sprintf('<div class="tsub">%s</div>',sub) else "")
 
+fmt_tile <- function(val, cred_dist, vlim, title, txt, full_cell = FALSE) {
+  if (is.na(val)) return(sprintf('<td class="hm"><div class="tbg"></div><span class="hval"></span></td>'))
+  cred <- min(max(2 * pnorm(abs(cred_dist)) - 1, 0.1), 1)
+  size_pct <- if (full_cell) 100 else cred * 94
+  intensity <- min(abs(val) / vlim, 1) * 0.85
+  col <- if (val >= 0) sprintf("rgba(178,24,43,%.3f)", 0.05 + intensity)
+         else sprintf("rgba(33,102,172,%.3f)", 0.05 + intensity)
+  sprintf('<td class="hm" title="%s"><div class="tbg"></div><div class="tile" style="width:%.1f%%;height:%.1f%%;background:%s"></div><span class="hval">%s</span></td>',
+    esc(title), size_pct, size_pct, col, txt)
+}
+
 branch_section <- function(b){
   R<-D[[b]]; cats<-R$cats; J<-R$J
   fitm<-as.data.table(R$fitm)[order(-obs_share)]
@@ -27,10 +38,22 @@ branch_section <- function(b){
     tile("grid pixels (10 km)", fnum(R$n)),
     tile("land-use classes", J),
     tile(paste0("RE regions (",esc(R$cfg$re),")"), length(R$glev)),
-    tile("McFadden R² (spatial)", sprintf("%.3f", R$McF_recon), "in-sample, exact slopes"),
     tile("R-hat < 1.01 (slopes)", sprintf("%.0f%%", 100*conv$frac_rhat_lt_1.01), sprintf("%.0f%% < 1.1", 100*conv$frac_rhat_lt_1.1)),
     tile("median ESS (slopes)", fnum(conv$median_ess), sprintf("%d posterior draws", R$ndraw_used))
   )
+  
+  mean_pr <- mean(fitm$pixel_corr, na.rm=TRUE)
+  perf_html <- sprintf('<div class="note" style="margin-bottom:20px;font-size:12px;background:#f0f7ff;padding:10px;border-left:4px solid #1c6ca1">
+    <strong style="font-size:13px;display:block;margin-bottom:4px">Model Performance</strong>
+    <table style="width:100%%;border-collapse:collapse">
+      <tr>
+        <td style="padding-right:15px"><strong>Spatial Fit:</strong></td>
+        <td style="padding-right:15px">McFadden R&sup2;: <b>%.3f</b></td>
+        <td style="padding-right:15px">Mean Pixel Cor: <b>%.3f</b></td>
+        <td><em>(in-sample reconstruction, exact slopes)</em></td>
+      </tr>
+    </table>
+    </div>', R$McF_recon, mean_pr)
   # calibration table
   crows<-paste(apply(fitm,1,function(r){
     oc<-as.numeric(r[["obs_share"]]); pc<-as.numeric(r[["pred_share"]]); pr<-as.numeric(r[["pixel_corr"]])
@@ -58,12 +81,50 @@ branch_section <- function(b){
   brows<-paste(sapply(seq_len(nrow(wide_est)),function(i){
     cells<-paste(sapply(clsK,function(cl){ v<-wide_est[[cl]][i]; av<-wide_act[[cl]][i]
       al<-if(is.na(v)||mx<=0) 0 else min(1,v/mx)
-      sprintf('<td class="hm" style="background:rgba(15,122,103,%.3f)" title="%s / %s: est %.3f Mha (actual %.3f)">%s</td>',
+      sprintf('<td class="hm" style="background:rgba(15,122,103,%.3f)" title="%s / %s: est %.3f Mha (actual %.3f)"><span class="hval">%s</span></td>',
         0.08+0.85*al, esc(wide_est$group[i]), esc(cl), if(is.na(v))0 else v, if(is.na(av))0 else av,
         if(is.na(v)) "" else sprintf("%.2f", v)) }),collapse="")
     sprintf('<tr><td class="cl sticky">%s</td>%s</tr>', esc(wide_est$group[i]), cells)
   }),collapse="")
-  ctytab<-sprintf('<div class="scrollx"><table class="dt heat"><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>', hh, brows)
+  ctytab<-sprintf('<div class="scrollx"><table class="dt heat"><thead><tr>%s</tr></thead><tbody>%s</tbody><tfoot><tr>%s</tr></tfoot></table></div>', hh, brows, hh)
+  
+  # MNL Country RE heatmap
+  re_heat <- ""
+  if (!is.null(R$meanBt)) {
+    Bt <- R$meanBt
+    covnames <- R$meta$cov_names
+    
+    class_opts <- paste(sprintf('<option value="%d">%s</option>', seq_along(cats), esc(cats)), collapse="")
+    class_sel <- sprintf('<select class="re-class-sel" data-b="%s" style="margin-left:10px;padding:2px 8px;border-radius:4px">%s</select>', b, class_opts)
+    
+    re_heat_html <- paste(sapply(seq_along(cats), function(j) {
+      vals <- Bt[, j, ]  # [P, G]
+      vlim <- as.numeric(quantile(abs(vals), 0.95, na.rm = TRUE))
+      if (is.na(vlim) || vlim == 0) vlim <- 1
+      
+      hh2 <- paste0('<th>driver</th>', paste(sprintf('<th class="rot"><span>%s</span></th>', esc(countries)), collapse=""))
+      brows2 <- paste(sapply(seq_along(covnames), function(p) {
+        cells <- paste(sapply(seq_along(countries), function(g) {
+          v <- vals[p, g]
+          txt <- if (abs(v) >= 0.01) sprintf("%.2f", v) else if (abs(v) >= 1e-4) sprintf("%.1e", v) else ""
+          c_sd <- sd(vals[p, ], na.rm=TRUE)
+          cd <- if (c_sd > 1e-8) abs(v) / c_sd else Inf
+          fmt_tile(v, cd, vlim, sprintf("%s / %s / %s", covnames[p], cats[j], countries[g]), txt, full_cell = FALSE)
+        }), collapse = "")
+        sprintf('<tr><td class="cl sticky">%s</td>%s</tr>', esc(covnames[p]), cells)
+      }), collapse = "")
+      
+      sprintf('<div class="scrollx re-class-tab re-class-tab-%s-%d" %s><table class="dt heat"><thead><tr>%s</tr></thead><tbody>%s</tbody><tfoot><tr>%s</tr></tfoot></table></div>', 
+              b, j, if(j==1) 'style="display:block"' else 'style="display:none"', hh2, brows2, hh2)
+    }), collapse = "\n")
+    
+    re_heat <- sprintf('
+      <h3>Country total effects (MNL fixed + random) <span class="sub">posterior mean &#946;<sub>total</sub> &middot; tile size = deviation from mean</span> %s</h3>
+      <p class="note">These are the absolute coefficients applied to each country for the selected land-use class. <span style="color:#B2182B;font-weight:bold">Red</span> = pushes share up, <span style="color:#2166AC;font-weight:bold">Blue</span> = pushes share down. Color intensity scaled relative to cross-country standard deviation.</p>
+      %s
+    ', class_sel, re_heat_html)
+  }
+  
   # maps
   files<-list.files(file.path(MAPDIR,b), pattern="\\.png$", full.names=TRUE)
   dom<-files[grepl("00_dominant",files)]; heat<-files[grepl("heatplot",files)]
@@ -80,8 +141,10 @@ branch_section <- function(b){
   <section class="branch" id="br-%s" %s>
     <div class="tiles">%s</div>
     %s
+    %s
     <div class="two"><div>%s</div><div>%s</div></div>
     <h3>Totals per RE region <span class="sub">estimated median, Mha · hover for actual</span></h3>
+    %s
     %s
     <h3>Driver effects <span class="sub">exact recovered slopes</span></h3>
     <figure class="wide"><img loading="lazy" src="%s" alt="driver effect heatplot"></figure>
@@ -89,10 +152,10 @@ branch_section <- function(b){
     <figure class="wide"><img loading="lazy" src="%s" alt="dominant class map"></figure>
     <h3>Observed vs predicted share — all %d classes</h3>
     <div class="mapgrid">%s</div>
-  </section>', b, if(b==names(D)[1]) "" else "hidden", tiles, header_block,
+  </section>', b, if(b==names(D)[1]) "" else "hidden", tiles, perf_html, header_block,
     sprintf('<h3>Calibration <span class="sub">per-class share &amp; spatial correlation</span></h3>%s', cal),
     sprintf('<h3>Class totals <span class="sub">Mha</span></h3>%s', tot),
-    ctytab, b64(heat), b64(dom), J, mapcards)
+    ctytab, re_heat, b64(heat), b64(dom), J, mapcards)
 }
 tabs<-paste(sprintf('<button class="tab%s" data-b="%s">%s<span class="tscheme">%s</span></button>',
   ifelse(names(D)==names(D)[1]," active",""), names(D), names(D), sapply(D,function(x)esc(x$cfg$scheme))), collapse="")
@@ -140,8 +203,10 @@ td.warn2{color:var(--warn)} td.ok{color:var(--mut)}
 .scrollx{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:#fff}
 table.heat{font-size:11px;border-collapse:separate;border-spacing:0;background:#fff;color:#14211E}
 table.heat th.rot{height:96px;white-space:nowrap;vertical-align:bottom;padding:0}
-table.heat th.rot span{display:inline-block;transform:rotate(-90deg);transform-origin:left;translate:12px -6px;font-size:10px;color:#5E6E69}
-table.heat td.hm{text-align:right;font-variant-numeric:tabular-nums;padding:3px 6px;color:#0a1512;border-bottom:1px solid rgba(255,255,255,.5)}
+table.heat td.hm{position:relative;padding:0;height:24px;vertical-align:middle;text-align:center;font-variant-numeric:tabular-nums;color:#0a1512;border-bottom:1px solid rgba(255,255,255,.5)}
+table.heat .tbg{position:absolute;top:0;left:0;right:0;bottom:0;background:#f9f9f9;z-index:0}
+table.heat .tile{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1;border-radius:1px}
+table.heat .hval{position:relative;z-index:2;display:block;padding:0 4px;font-size:10.5px}
 table.heat td.sticky{position:sticky;left:0;background:#fff;color:#14211E;font-weight:600}
 figure{margin:0}
 figure.wide img,figure.mapc img{width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:10px;background:var(--surf)}
@@ -156,6 +221,18 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
  document.getElementById('br-'+t.dataset.b).hidden=false;window.scrollTo({top:0,behavior:'smooth'});}));
 const tb=document.getElementById('themebtn');function cur(){return document.documentElement.getAttribute('data-theme')|| (matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light')}
 tb.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);tb.textContent=n==='dark'?'☀ light':'☾ dark'});
+document.querySelectorAll('.re-class-sel').forEach(s=>s.addEventListener('change', (e) => {
+  const b = e.target.dataset.b;
+  const j = e.target.value;
+  document.querySelectorAll(`.re-class-tab-${b}`).forEach(el => el.style.display = 'none');
+  const target = document.querySelector(`.re-class-tab-${b}-${j}`);
+  if(target) target.style.display = 'block';
+}));
+// add generic class for hiding easily
+document.querySelectorAll('.re-class-tab').forEach(el => {
+  const match = el.className.match(/re-class-tab-([A-Z]+)-/);
+  if (match) el.classList.add(`re-class-tab-${match[1]}`);
+});
 "
 n_cond <- sum(!sapply(D, function(x) isTRUE(x$use_true_int)))
 caveat_banner <- if (n_cond > 0) sprintf('<div class="caveat"><b>Data-integrity note.</b> %s of the %d branch batch sets were written before a July-21 back-transform fix and carry a <b>corrupted intercept</b> (verified; the reconstructed log-likelihood misses the stored value entirely on the intercept alone). The regression <b>slopes recover exactly</b>, so driver effects, spatial patterns and fit skill shown here are trustworthy. For those branches intercepts were re-solved conditional on the exact slopes; <b>genuine class-total credible intervals require a re-fit</b> with the corrected sampler (verified clean, round-trip d≈0.2). Branches marked “genuine posterior” use clean re-fit batches.</div>',
@@ -168,7 +245,10 @@ html <- sprintf('<title>Prior land-use model — fit report</title>
 <div class="wrap">
 %s
 %s
-<footer>Reconstructed from on-disk posterior batches (slopes exact, %s draws/branch) · conditional-intercept prediction · generated %s. Totals in Mha (1 Mha = 10,000 km²).</footer>
+<footer>
+Reconstructed from on-disk posterior batches (slopes exact, %s draws/branch) &middot; conditional-intercept prediction &middot; generated %s. Totals in Mha (1 Mha = 10,000 km²).<br>
+<strong>Sampler Config (mnlogit_rcpp_sym):</strong> use_horseshoe = TRUE, symmetric_hs = TRUE, estimate_c2 = TRUE (slab_df = 20, slab_s2 = 4), estimate_slab_c2 = TRUE (collapse_slab_c2 = 4, slab_df_re = 10), bart_symmetric = TRUE, use_wls_init = TRUE, use_bart = FALSE.
+</footer>
 </div>
 <button class="themebtn" id="themebtn">☾ dark</button>
 <script>%s</script>', css, tabs, caveat_banner, sections, D[[1]]$ndraw_used, format(Sys.Date()), js)

@@ -75,3 +75,29 @@ write_train <- function(resp, tag) {
 write_train(bov, "bov")
 write_train(sgt, "sgt")
 cat(sprintf("drivers (%d): %s\n", length(c(area_cols,meanv)), paste(c(area_cols,meanv), collapse=", ")))
+
+# =============================================================================
+# ORGANIC composition training — NUTS3 native (finer than D/O/F, which Eurostat caps at NUTS2).
+# Organic livestock has NO sub-national head count, so the {organic,conventional} RESPONSE uses the
+# organic-grassland proxy off the Livestock_organic 1km map: n_org = Pasture_HIO+LIO (organic grassland),
+# n_conv = Pasture_HI+LI (conventional). Drivers = native NUTS3 (log1p areas + intensive means), but the
+# organic LU areas are EXCLUDED from the drivers (same map lineage as the response -> circular). The
+# national LEVEL is later anchored to Eurostat BOV_org/SGT_org in build_subclass_parameters.R.
+org_num  <- intersect(c("lu_area_Pasture_HIO","lu_area_Pasture_LIO"), names(d))
+conv_den <- intersect(c("lu_area_Pasture_HI","lu_area_Pasture_LI"),  names(d))
+if (length(org_num) && length(conv_den)) {
+  org_excl  <- grep("HIO|LIO|other_O", area_cols, value=TRUE)             # every organic LU col (response lineage)
+  org_areas <- setdiff(area_cols, org_excl)
+  do3 <- d[, c(
+    .(nuts3 = RESOLUTION, country = NUTS0,
+      n_org  = rowSums(as.matrix(.SD[, org_num,  with=FALSE]), na.rm=TRUE),
+      n_conv = rowSums(as.matrix(.SD[, conv_den, with=FALSE]), na.rm=TRUE)),
+    lapply(.SD[, org_areas, with=FALSE], function(x) log1p(pmax(x, 0))),  # native NUTS3 area -> log1p (as totals X)
+    .SD[, meanv, with=FALSE])]                                            # intensive vars already per-NUTS3
+  do3 <- do3[is.finite(n_org + n_conv) & (n_org + n_conv) > 0]
+  fwrite(do3, file.path(OUT, "organic_training_nuts3.csv"))
+  cat(sprintf("ORGANIC: %d NUTS3 regions x %d drivers | mean organic-grassland share=%.3f (range %.3f-%.3f)\n",
+              nrow(do3), length(c(org_areas, meanv)),
+              mean(do3$n_org/(do3$n_org+do3$n_conv)),
+              min(do3$n_org/(do3$n_org+do3$n_conv)), max(do3$n_org/(do3$n_org+do3$n_conv))))
+} else cat("ORGANIC: no organic-pasture columns in dat_admin -> organic training skipped.\n")

@@ -70,6 +70,7 @@ sumP <- matrix(0, n, J)
 tot_draws <- list()                                  # per-draw class totals [J]
 totc_draws <- list()                                 # per-draw per-country totals [J x G]
 pooled_slopes <- vector("list", 4)                   # exact slope draws for convergence/betas
+sumBt <- NULL                                        # accumulation of total effects (FE + RE) [P x J x G]
 nchain <- 4L; ndraw_used <- 0L
 a_warm <- lapply(uq, function(x) rep(0, length(nb)))  # warm-start intercepts per group
 
@@ -81,6 +82,7 @@ for(ch in 1:nchain){
   pooled_slopes[[ch]] <- r$postb_pooled[, , keep, drop=FALSE]     # [P,J,K] exact slopes(+corrupt intercept row, dropped later)
   for(s in keep){
     Bt <- r$postb_total[,,,s]                                     # [P,J,G] (intercept row corrupt, slopes exact)
+    if (is.null(sumBt)) sumBt <- Bt else sumBt <- sumBt + Bt
     Ps <- matrix(0, n, J); totc <- matrix(0, J, length(uq))
     for(gi2 in seq_along(uq)){
       B25 <- Bt[,,gi2]                                            # [P,J] already J cols (zero-sum expanded)
@@ -103,6 +105,7 @@ for(ch in 1:nchain){
   cat(sprintf("  chain %d done (%.1f min elapsed)\n", ch, as.numeric(difftime(Sys.time(),t0,units="mins"))))
 }
 pointP <- sumP / ndraw_used
+meanBt <- sumBt / ndraw_used  # [P, J, G] posterior mean of total effects (FE + RE)
 
 # ---- exact slope summary (pooled symmetric), convergence on slopes ----
 PS <- abind::abind(pooled_slopes, along=4)             # [P,J,K,chain]
@@ -152,7 +155,8 @@ saveRDS(list(branch=BR, cfg=cfg, meta=meta, n=n, J=J, cats=cats, baseline=cats[b
              obs=Y, pred=pointP, parea=parea,
              class_tot=class_tot, ctry_tot=ctry_tot, fitm=fitm, rot=rot, conv=conv,
              McF_recon=McF_recon, LLn=LLn, LLp=LLp, ndraw_used=ndraw_used,
-             use_true_int=use_true_int, intercept_mode=intercept_mode),
+             use_true_int=use_true_int, intercept_mode=intercept_mode,
+             meanBt=meanBt),
         file.path(OUT, paste0(BR, ".rds")))
 cat(sprintf("[%s] DONE. draws used=%d | McFadden(recon)=%.3f | rhat<1.01: %.1f%% | median ESS(slopes)=%.0f\n",
     BR, ndraw_used, McF_recon, 100*conv$frac_rhat_lt_1.01, conv$median_ess))

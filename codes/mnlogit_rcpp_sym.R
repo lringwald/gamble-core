@@ -129,13 +129,16 @@ draw_beta_symhs_pooled <- function(X, Xt, kappa_w, omega, c_j_mat, prior_P,
     P_joint[idx, idx] <- P_joint[idx, idx] + c_v[v] * Msym
   }
   if (!is.null(block_sym)) {
+      # V3: the block term must be category-symmetric TOO. `Mb` alone is applied within each
+      # equation (implicitly Mb %x% I_p), whose quadratic form swings 2.7x with the arbitrary
+      # baseline choice; kron(Msym, Mb) is invariant to 7 s.f. and equals the zero-sum penalty
+      # exactly (scratchpad/kron_check.R). Index order is column-fastest within equation, which
+      # is what kronecker(Msym, M) expects.
     for (bs_id in seq_along(block_sym)) {
       bs <- block_sym[[bs_id]]
       if (!bs$hs_on || c_block[bs_id] <= 0) next
-      for (ip in seq_len(p)) {
-        rows <- (ip - 1) * k + bs$ret
-        P_joint[rows, rows] <- P_joint[rows, rows] + c_block[bs_id] * bs$M
-      }
+      ix <- as.vector(vapply(seq_len(p), function(ip) (ip - 1) * k + bs$ret, numeric(length(bs$ret))))
+      P_joint[ix, ix] <- P_joint[ix, ix] + c_block[bs_id] * kronecker(Msym, bs$M)
     }
   }
   matrix(chol_sample_precision_cpp(P_joint, Pb_joint), k, p)
@@ -168,6 +171,24 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
                                   re_cor_min_groups = 0.5,
                                   store_f = FALSE,
                                   symmetric = FALSE,
+                                  # ---- ALTERNATIVE-SPECIFIC term (conditional-logit style) ----
+                                  # alt_spec_Z: n x p_all matrix whose column j is an attribute OF
+                                  # ALTERNATIVE j (e.g. the spatial Y lag = neighbourhood share of
+                                  # class j). Enters every utility with ONE SHARED coefficient delta:
+                                  #     V_ij = x_i'beta_j + delta * z_ij
+                                  # WHY IT EXISTS. With only CASE-specific covariates (one x_i per
+                                  # pixel, identical across alternatives) a nested logit's lambda is
+                                  # identified solely by the curvature of the log-sum-exp -- the
+                                  # textbook fragile case, and what we measure on the real GLOBIOM
+                                  # root (lambda_Cropland -0.131 [-0.245,-0.056] at 25k pixels).
+                                  # An alternative-specific regressor is the classical fix: it makes
+                                  # IV_c depend on the PATTERN of z across alternatives, which the
+                                  # root design cannot reproduce. Validated by maximum likelihood in
+                                  # experiments/nested/altspec_identification_proof.R: SE(lambda)
+                                  # falls 1.4x-5.5x, the gain GROWING as identification degrades.
+                                  # delta's full conditional is a conjugate 1-D Gaussian given the
+                                  # PG weights, so this costs one scalar draw per sweep.
+                                  alt_spec_Z = NULL, alt_spec_prior_sd = 10, alt_spec_allow_unvalidated = FALSE,
                                   positive_constraints = NULL, negative_constraints = NULL,
                                   use_ncp = TRUE, calc_loo = FALSE,
                                   support_prior_strength = 0, re_asis = FALSE, init_jitter = 0,
@@ -179,11 +200,78 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
                                   use_horseshoe = FALSE, horseshoe_idx = NULL,
                                   equation_specific_hs = FALSE,
                                   estimate_c2 = FALSE, slab_df = 4, slab_s2 = 4, slab_s2_re = 4,
+                                  # SEPARATE df for the RE slab. `slab_df` is the FE slab's and must
+                                  # stay at the permissive P&V default (nu=4), where the slab exists to
+                                  # let genuinely large coefficients ESCAPE shrinkage. The RE slab has
+                                  # the opposite job -- impose a bound the data do not ask for -- so a
+                                  # heavy tail there is self-defeating: at nu=4 the prior on c2 has
+                                  # INFINITE variance (a = nu/2 = 2) and a 90% range of [1.7, 22.5],
+                                  # i.e. a sigma cap anywhere in [1.3, 4.7]. nu=20 gives c2 90%
+                                  # [2.6, 7.4] -> sigma cap [1.60, 2.72]: bounded, still free to move
+                                  # if a node needs it. This also DISSOLVES the identifiability worry --
+                                  # if the likelihood cannot inform c2 the posterior rests on the prior,
+                                  # which IS the intended bound, instead of drifting as the learned tau did.
+                                  slab_df_re = 10,   # MEASURED 2026-08-13 (Forests, both c2 starts):
+                                  # nu=10 is where identification is cleanest (starts at c2=4 and
+                                  # c2=100 both land at 4.12, agreement to 3 s.f.) AND held-out is best
+                                  # (-725.5 vs -732.2 at nu=20 and -728.3 at FIXED c2=4). nu=6 gains
+                                  # nothing and its starts diverge more (3.76 vs 3.40) with a much
+                                  # heavier tail (90% upper 14.1). So the data DO locate c2 ~ 3.5-4.1 --
+                                  # this is not the prior answering itself.
                                   p0_mu = NULL, tau0_mu = NULL,
                                   standardize = TRUE, method = c("standardize", "center", "scale", "QR", "none"),
                                   gamma_matched_pg = FALSE,
                                   init_state = NULL, prior_a_re = 0.01, prior_b_re = 0.01,
                                   use_half_cauchy_re = TRUE, re_scale_A = 1.0,
+                                  # ── HIERARCHICAL HORSESHOE ON THE RE SCALES (2026-08-13) ──
+                                  # OFF: each (cov,cat) cell gets an INDEPENDENT half-Cauchy(0, re_scale_A)
+                                  # on sigma -- a local lambda with a FIXED scale and NO global tau, i.e.
+                                  # not a horseshoe. Nothing supplies sparsity pressure, so at 2-20
+                                  # obs/param the Cauchy tail wins: measured sigma median 2.16, q90 24.9,
+                                  # max 87.7 on STANDARDISED covariates (61% above 1.0). Consequence:
+                                  # random SLOPES scored worse than no REs at all (McFadden 0.188 vs
+                                  # 0.331) -- see the re-block-size-tradeoff memory.
+                                  # ON: sigma_k ~ C+(0, tau), tau ~ C+(0, re_hs_tau0) SHARED across all RE
+                                  # cells, so most sigma_k are pulled toward 0 while a genuinely varying
+                                  # covariate escapes on its heavy-tailed local lambda. The intercept is
+                                  # deliberately NOT special-cased: the country level really does vary
+                                  # (+36 held-out LL) so its own lambda lets it escape -- that is the
+                                  # mechanism working, not a leak.
+                                  # Conjugate given the existing aux (xi = 1/tau^2):
+                                  #   xi | {a_k}, b ~ Gamma((K+1)/2, sum(a_k) + b);  b | xi ~ Exp(xi + 1/tau0^2)
+                                  # and passing re_scale_A = tau into the C++ makes ITS aux draw
+                                  # a_k ~ Exp(prec_k + 1/tau^2) the correct conditional -> no C++ change.
+                                  # tau0 small = "few drivers truly vary" (measured ~0 of 8 on Forests).
+                                  re_hs_global = FALSE, re_hs_tau0 = 0.1,
+                                  # FULL BAYES ON THE RE SLAB. estimate_slab_c2 = TRUE samples c2
+                                  # instead of fixing it, with the standard Finnish-horseshoe prior
+                                  # c2 ~ InvGamma(slab_df/2, slab_df*slab_s2_re/2) (Piironen-Vehtari).
+                                  # NOT conjugate: c2 enters through v~ = c2*s2/(c2+s2), so this is a
+                                  # 1-D slice on log(c2), the same device the tau_raw draw already uses.
+                                  # Motivation: the cap IS part of the estimation, so tuning it by an
+                                  # external held-out criterion both burns a data split and biases any
+                                  # number reported on that split. Sampling it costs no split, adapts
+                                  # PER NODE (Forests carries 54 params/country, Pasture 36) and
+                                  # propagates c2 uncertainty into the coefficients.
+                                  # RISK TO WATCH: the slab works BECAUSE it imposes a bound the data
+                                  # do not ask for. If the likelihood cannot constrain sigma (2-20
+                                  # obs/param here) c2 may simply drift up and reproduce the
+                                  # unregularised funnel -- exactly how the learned global tau failed
+                                  # (re_hs_global: tau tracked the average sigma instead of shrinking
+                                  # it). Trace `post_slab_c2` and check it settles rather than drifts.
+                                  estimate_slab_c2 = FALSE,
+                                  # PARAMETER-COUNT-AWARE SLAB. collapse_slab_c2 = "auto" sets the cap
+                                  # from the number of RE covariates: the country deviation in the
+                                  # linear predictor is eta_g = sum_v x_v * b_{v,g}, so with K
+                                  # STANDARDISED covariates each of deviation SD sigma the TOTAL country
+                                  # shift has SD ~ sigma*sqrt(K). Fixing a defensible total shift R (in
+                                  # logits) gives sigma <= R/sqrt(K), i.e. c2 = R^2 / K. Adding
+                                  # covariates then tightens each one's cap so the AGGREGATE country
+                                  # effect stays plausible, instead of K of them each free to reach R.
+                                  # R = 3 logits is a generous country-level shift in composition
+                                  # log-odds. K=9 -> c2=1; K=1 -> c2=9 (a lone random intercept may be
+                                  # larger precisely because it is the only one).
+                                  re_slab_range = 3,
                                   # ── Phase 1: Empirical Bayes + Precision-weighted HS ──
                                   use_wls_init = TRUE,
                                   use_precision_hs = TRUE,
@@ -206,7 +294,66 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
                                   b_spatial = 0.5,
                                   # ── Reference Coding (static drop-one per const-sum block) ──
                                   const_sum_blocks = NULL,
-                                  symmetric_hs = FALSE) {
+                                  # ── General rank guard: drop constant / duplicate / exactly-collinear
+                                  #    columns (data-quality) for a full-rank fit; reconstruct them as 0.
+                                  handle_rank_deficiency = TRUE, rank_tol = 1e-7,
+                                  symmetric_hs = FALSE,
+                                  # CHANNEL-SPLIT HORSESHOE (symmetric_hs only, default OFF = historical).
+                                  # Under symmetric_hs the const-sum block columns are shrunk by their own
+                                  # within-block kernel (c_block) and are explicitly EXEMPTED from the
+                                  # across-category kernel c_v. They nevertheless remained in hs_idx, so
+                                  # they contributed k_block * p to the SHAPE of the global tau2 update
+                                  # while their (c_block-crushed) coefficients contributed ~0 to its RATE
+                                  # -- a one-way ratchet that collapses tau2 and crushes the unconstrained
+                                  # drivers. TRUE gives the block channel its own global scale
+                                  # (blk_tau2 / blk_xi) and restricts the covariate channel's pool to the
+                                  # non-block columns, so neither channel's shape count includes columns
+                                  # the other channel governs.
+                                  hs_channel_split = FALSE,
+                                  # LIVE FE-HORSESHOE KERNEL (diagonal path only, default OFF =
+                                  # historical). hs_prec_kernel is bound ONCE before the Gibbs loop,
+                                  # to a hs_prec_mat that is still all zeros; hs_prec_mat is only
+                                  # populated inside the loop, and R copies on assignment, so the
+                                  # binding never rebinds. The three C++ fast paths
+                                  # (gibbs_step_pooled / gibbs_step_re / gibbs_step_re_ncp) therefore
+                                  # receive a ZERO FE-horseshoe precision for the whole run; only the
+                                  # R-level TMVN and ASIS-CP blocks read the live hs_prec_mat. This
+                                  # was previously measured as inert, but that measurement predates
+                                  # the NULL -> integer(0) fix, when hs_idx was empty and hs_prec_mat
+                                  # never became non-zero. TRUE refreshes the binding each sweep.
+                                  # It changes every diagonal-horseshoe fit -- gate on held-out
+                                  # log-likelihood before adopting.
+                                  hs_kernel_live = FALSE,
+                                  # RE-SIDE SYMMETRIC VARIANCE, separable from the FE side.
+                                  # NULL = follow symmetric_hs (historical). update_re_precision_hc_sym
+                                  # forms its sum of squares from CATEGORY-CENTRED deviations
+                                  # (d - mean(d) over p_all) but the resulting sigma is applied to an
+                                  # UNCENTRED draw in gibbs_step_re_ncp -- the same CLR deflation the FE
+                                  # side had. Set FALSE to keep symmetric FE shrinkage while routing the
+                                  # RE variance through the plain update_re_precision_hc.
+                                  re_prec_sym = NULL,
+                                  # NULL (default) = CORRECT BY CONSTRUCTION: resolves to FALSE
+                                  # whenever the symmetric RE updater is in use, TRUE otherwise.
+                                  # update_re_precision_hc_sym builds its sum of squares from
+                                  # category-CENTRED deviations while gibbs_step_re_ncp draws the REs
+                                  # UNCENTRED, and nothing constrains them to the zero-sum subspace,
+                                  # so the centred statistic is never the right one there -- it zeroes
+                                  # the random effects (measured: RE sd 0.0000, -51.6 nats held-out).
+                                  # That is a BUG, not a modelling option, so no caller should have to
+                                  # remember to opt out: TRUE is reachable only by asking for it
+                                  # explicitly, to reproduce a pre-2026-08-21 fit.
+                                  re_prec_center = NULL,
+                                  # PER-FAMILY GLOBAL SCALES. NULL = one tau over every shrunk column
+                                  # (historical). Otherwise a NAMED LIST OF REGEXES matched against
+                                  # colnames(X), e.g. list(topo = "^(Slope_rad|Elevation|Aspect)",
+                                  # socio = "^(log1p_|GHM_|CISI)"). Each family gets its OWN (tau2, xi)
+                                  # with a shape from its OWN column count, and each const-sum block
+                                  # gets its own too. Rationale: one global tau over heterogeneous
+                                  # columns lets a family of near-null covariates drag down a family of
+                                  # strong ones -- lambda is per-column but cannot rescue a covariate
+                                  # once tau has collapsed underneath it. Implies hs_channel_split.
+                                  # Columns matching nothing fall into a "_rest" family.
+                                  hs_groups = NULL) {
   # --- 1. SETUP (identical to original) ---
   # Store-time self-check (default OFF): options(mnlogit.selfcheck=TRUE) prints,
   # for the first N stored draws, the log-lik recomputed from the exact stored
@@ -260,6 +407,40 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
   p <- p_all - 1
   pp <- (1:p_all)[-baseline]
 
+  # --- ALTERNATIVE-SPECIFIC design: to BASELINE-REMOVED coordinates -------------------------
+  # Utilities are carried as differences from the baseline alternative, so an attribute of
+  # alternative j contributes (z_ij - z_i,baseline) to utility j -- the standard conditional-logit
+  # transform. Only these differences are identified; a common shift across alternatives cancels.
+  use_alt_spec <- !is.null(alt_spec_Z)
+  Zt <- NULL
+  if (use_alt_spec && !isTRUE(alt_spec_allow_unvalidated)) stop(
+    "alt_spec_Z is IMPLEMENTED BUT NOT CORRECT -- delta is not recovered. Do not use for results.\n",
+    "  Attempt 1 (conjugate PG draw treating c_j as fixed): delta biased by a clean factor ~2\n",
+    "     true 1/2/3 -> 0.489/0.999/1.462 (ratios 2.046/2.002/2.053). Cause: this sampler carries a\n",
+    "     ONE-VS-REST decomposition, predictor (psi_j - c_j) with c_j = log sum_{k!=j} exp(psi_k);\n",
+    "     delta enters psi_k for EVERY alternative so c_j depends on delta, and the correct effective\n",
+    "     regressor is Zt_j - d c_j/d delta, not Zt_j.\n",
+    "  Attempt 2 (random-walk Metropolis on the exact likelihood): WORSE -- true 1/2/3 -> -1.301/\n",
+    "     -1.109/0.623, no consistent relation, i.e. the utility reconstruction inside the MH step\n",
+    "     does not match what the sweep actually uses.\n",
+    "  A correct implementation needs the conditional derived properly against the c_j decomposition\n",
+    "  (or an MH step that reuses the sweep's own utility path rather than rebuilding it).\n",
+    "  The STATISTICAL case for the term is sound and independently validated by maximum likelihood in\n",
+    "  experiments/nested/altspec_identification_proof.R (SE(lambda) 1.4x-5.5x tighter).\n",
+    "  Pass alt_spec_allow_unvalidated=TRUE only to work ON this feature.")
+  if (use_alt_spec) {
+    alt_spec_Z <- as.matrix(alt_spec_Z)
+    if (nrow(alt_spec_Z) != nrow(Y) || ncol(alt_spec_Z) != p_all)
+      stop(sprintf("alt_spec_Z must be %d x %d (n x p_all); got %d x %d",
+                   nrow(Y), p_all, nrow(alt_spec_Z), ncol(alt_spec_Z)))
+    Zt <- alt_spec_Z[, pp, drop = FALSE] - alt_spec_Z[, baseline]
+    Zt[!is.finite(Zt)] <- 0
+    cat(sprintf("Alternative-specific term ON: 1 shared delta over %d alternatives (sd(Zt)=%.4f)\n",
+                p_all, stats::sd(Zt)))
+  }
+  curr_delta <- 0
+  delta_mh_sd <- 0.5; delta_acc_n <- 0L; delta_acc_k <- 0L   # adaptive RW-Metropolis state for delta
+
   # --- 2. PREPROCESSING ---
   if (missing(method)) {
     methods_chosen <- if (standardize) "standardize" else "none"
@@ -279,7 +460,22 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
       length(unique(x)) > 2 &&
       max(abs(x), na.rm = TRUE) > 1.0
   })
-  
+
+  # ── Native constant-sum handling ──
+  # const_sum_blocks = "auto": detect compositional (sum-to-constant) blocks HERE on the raw design
+  # (row-sums intact, before centering). Downstream this drops one reference per block for a full-rank
+  # fit and reconstructs the block MEAN-CENTERED (sum-to-zero) over ALL original columns (see the
+  # do_block_rotation reconstruction), so a RAW X goes in and a clean full-column posterior comes out.
+  # Continuous indices/values (e.g. yield_index) are not compositional and are never flagged.
+  if (is.character(const_sum_blocks) && length(const_sum_blocks) == 1L && const_sum_blocks == "auto") {
+    const_sum_blocks <- tryCatch(detect_constant_sum_blocks(X), error = function(e) NULL)
+    if (length(const_sum_blocks)) {
+      .bn <- names(const_sum_blocks); if (is.null(.bn)) .bn <- as.character(seq_along(const_sum_blocks))
+      cat(sprintf("Auto-detected %d constant-sum block(s): %s\n", length(const_sum_blocks),
+                  paste(sprintf("%s(%d cols)", .bn, lengths(const_sum_blocks)), collapse = ", ")))
+    } else { const_sum_blocks <- NULL; cat("Auto const-sum: no compositional blocks detected.\n") }
+  }
+
   if (!is.null(const_sum_blocks)) {
     block_col_idx <- unique(unlist(const_sum_blocks))
     # Note: block_col_idx indices are currently wrt full X_mat from the wrapper.
@@ -445,56 +641,86 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
   
   horseshoe_idx_pre_drop <- horseshoe_idx
   
-  # --- Fixed Central Reference Coding Setup ---
+  # --- Design reduction: const-sum reference coding (mean-centered reconstruction) + rank guard ---
+  # (1) const-sum blocks -> drop one reference each, reconstruct MEAN-CENTERED over the block.
+  # (2) rank guard -> drop constant / duplicate / exactly-collinear columns, reconstructed as 0.
+  # Both feed ONE keep_mask; the do_block_rotation reconstruction returns a FULL-column posterior.
+  block_info <- list(); cs_drop <- integer(0)
   if (!is.null(const_sum_blocks) && length(const_sum_blocks) > 0) {
-    do_block_rotation <- TRUE
-    n_blocks <- length(const_sum_blocks)
-    
-    block_info <- lapply(const_sum_blocks, function(idx) {
-      K_blk <- length(idx)
-      vars <- apply(X[, idx, drop = FALSE], 2, var)
-      drop_col <- as.integer(which.max(vars))
-      list(
-        all_idx = idx,
-        K = K_blk,
-        current_drop = drop_col,
-        active = setdiff(1:K_blk, drop_col)
-      )
-    })
-    
-    drop_cols <- sapply(block_info, function(b) b$all_idx[b$current_drop])
-    keep_mask <- rep(TRUE, k)
-    keep_mask[drop_cols] <- FALSE
-    
-    X_full <- X
-    X <- X[, keep_mask, drop = FALSE]
-    Xt <- as.matrix(unname(t(X)))
-    k_active <- ncol(X)
-    
-    full_to_active <- rep(NA, k)
-    full_to_active[keep_mask] <- 1:k_active
-    
-    if (use_re) {
-      for (idx in const_sum_blocks) {
-        n_re <- sum(idx %in% re_idx)
-        if (n_re > 0 && n_re < length(idx)) {
-          stop("Block contains a mix of fixed and random effects. This breaks normalization in symmetric projection. Blocks must be all fixed or all RE.")
-        }
-      }
+    if (use_re) for (idx in const_sum_blocks) {
+      n_re <- sum(idx %in% re_idx)
+      if (n_re > 0 && n_re < length(idx))
+        stop("Block contains a mix of fixed and random effects. Blocks must be all fixed or all RE.")
     }
-    
-    re_idx <- as.integer(unname(na.omit(full_to_active[re_idx])))
-    horseshoe_idx <- as.integer(unname(na.omit(full_to_active[horseshoe_idx])))
-    positive_constraints <- as.integer(unname(na.omit(full_to_active[positive_constraints])))
-    negative_constraints <- as.integer(unname(na.omit(full_to_active[negative_constraints])))
-    int_idx <- as.integer(unname(na.omit(full_to_active[int_idx])))
-    
+    block_info <- lapply(const_sum_blocks, function(idx) {
+      K_blk <- length(idx); vars <- apply(X[, idx, drop = FALSE], 2, var)
+      drop_col <- as.integer(which.max(vars))
+      # `const` = the block's (near-)constant row sum. The reconstruction re-centres the block
+      # (b_j -> b_j - mean_k), which changes each class utility by -mean_k * rowSum(block) =
+      # -mean_k * const: a PER-CLASS constant. Without compensating the intercept by
+      # +mean_k*const the exported full-column coefficients are NOT softmax-equivalent to the
+      # fitted model (verified: mean|P_hat - P_true| 0.27 vs 0.003). See the reconstruction below.
+      rs <- rowSums(X[, idx, drop = FALSE]); rs <- rs[is.finite(rs) & rs > 1e-4]
+      list(all_idx = idx, K = K_blk, current_drop = drop_col, active = setdiff(1:K_blk, drop_col),
+           const = if (length(rs)) stats::median(rs) else 0)
+    })
+    cs_drop <- vapply(block_info, function(b) b$all_idx[b$current_drop], integer(1))
+    # intercept column (pre-drop coordinates) that absorbs the re-centring shift. Without one
+    # the shift cannot be compensated -> warn rather than silently export biased coefficients.
+    .cs_int <- which(apply(X, 2, function(z) all(is.finite(z) & z == 1)))
+    cs_int_col <- if (length(.cs_int)) as.integer(.cs_int[1]) else NA_integer_
+    if (is.na(cs_int_col))
+      warning("const_sum_blocks: no intercept column found; the zero-sum reconstruction shifts ",
+              "each class utility by a constant that cannot be absorbed -> the returned ",
+              "coefficients will not reproduce the fitted probabilities. Add an intercept column.")
+  } else cs_int_col <- NA_integer_
+  rd_drop <- integer(0)
+  if (isTRUE(handle_rank_deficiency)) {
+    int_cols  <- which(apply(X, 2, function(z) all(z == 1)))                 # intercept(s): never dropped
+    protected <- unique(c(int_cols, unlist(const_sum_blocks)))               # const-sum blocks handled above
+    cand   <- setdiff(seq_len(k), protected)
+    consts <- cand[vapply(cand, function(j) { v <- var(X[, j]); is.na(v) || v < rank_tol }, logical(1))]
+    keep0  <- setdiff(cand, consts)
+    extra  <- integer(0)
+    if (length(keep0) >= 1) {
+      allc <- sort(unique(c(int_cols, keep0)))
+      qq <- qr(X[, allc, drop = FALSE], tol = rank_tol)
+      if (qq$rank < length(allc)) extra <- setdiff(allc[qq$pivot[(qq$rank + 1):length(allc)]], int_cols)
+    }
+    rd_drop <- setdiff(unique(c(consts, extra)), protected)
+    if (length(rd_drop)) {
+      nm <- if (!is.null(colnames(X))) colnames(X)[rd_drop] else as.character(rd_drop)
+      cat(sprintf("Rank guard: dropped %d degenerate column(s) (constant/duplicate/collinear) -> coef 0: %s\n",
+                  length(rd_drop), paste(nm, collapse = ", ")))
+    }
+  }
+  drop_all <- unique(c(cs_drop, rd_drop))
+  if (length(drop_all) > 0) {
+    do_block_rotation <- TRUE
+    keep_mask <- rep(TRUE, k); keep_mask[drop_all] <- FALSE
+    X_full <- X; X <- X[, keep_mask, drop = FALSE]; Xt <- as.matrix(unname(t(X))); k_active <- ncol(X)
+    full_to_active <- rep(NA, k); full_to_active[keep_mask] <- 1:k_active
+    # PRESERVE NULL. `full_to_active[NULL]` yields integer(0), NOT NULL, which silently broke two
+    # downstream is.null() guards whenever ANY column was dropped (const-sum ref or rank guard):
+    #  (1) hs_idx <- if (is.null(horseshoe_idx)) 1:k else horseshoe_idx -> EMPTY -> k_hs = 0, so the
+    #      FE horseshoe applied to NO covariate (log signature: "tau0_pooled=-0.0331 (p0=-0.5)";
+    #      p0 = min(p0, k_hs-0.5) = -0.5 and tau0 goes NEGATIVE).
+    #  (2) has_constraints <- !is.null(positive_constraints) || ... -> TRUE with none requested, so
+    #      the sampler ran the constrained TMVN branch: a few Gibbs sweeps instead of an exact
+    #      Cholesky draw -> slower mixing. Measured (Forests n=4000, 600 iter, horseshoe OFF):
+    #      held-out -744.7 -> -714.4 (+30.3 LL), 1.11x faster once fixed.
+    .remap <- function(idx) if (is.null(idx)) NULL else
+                            as.integer(unname(na.omit(full_to_active[idx])))
+    re_idx <- .remap(re_idx)
+    horseshoe_idx <- .remap(horseshoe_idx)
+    positive_constraints <- .remap(positive_constraints)
+    negative_constraints <- .remap(negative_constraints)
+    int_idx <- .remap(int_idx)
     k <- k_active
   } else {
-    do_block_rotation <- FALSE
-    X_full <- X
-    full_to_active <- 1:k
+    do_block_rotation <- FALSE; X_full <- X; full_to_active <- 1:k
   }
+  n_blocks <- length(block_info)
 
   curr_beta <- matrix(0, k, p)
   bart_shifts <- matrix(0, if (bart_symmetric) p_all else p, 1)  # one row per ensemble (p_all if CLR)
@@ -539,9 +765,20 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
 
   # Baseline RE precision: set to effectively infinite (1e12) to lock fixed effects
   # Initialize at the half-Cauchy prior mode for re_scale_A for early iteration exploration
+  if (is.character(collapse_slab_c2) && identical(collapse_slab_c2[1], "auto")) {
+    .Kre <- max(1L, length(re_idx))
+    collapse_slab_c2 <- (re_slab_range^2) / .Kre
+    if (isTRUE(use_re)) cat(sprintf("Auto slab: %d RE covariate(s), total country shift R=%.1f -> c2 = R^2/K = %.3f (sigma <= %.3f)\n",
+        .Kre, re_slab_range, collapse_slab_c2, sqrt(collapse_slab_c2)))
+  }
   prec_init <- 1 / (re_scale_A^2)
   prec_beta_pooled <- matrix(prec_init, k, p)
   sigma_beta_pooled <- matrix(re_scale_A, k, p)
+  # global horseshoe scale state: tau_cur is what gets passed as the half-Cauchy scale each sweep.
+  # Starts at re_scale_A so re_hs_global = FALSE reproduces the previous behaviour EXACTLY.
+  re_tau_cur <- re_scale_A
+  re_hs_xi   <- 1 / (re_scale_A^2)     # xi = 1/tau^2
+  re_hs_b    <- 1 / (re_hs_tau0^2)     # aux for tau's own half-Cauchy
 
   if (length(re_idx) < k) {
     fixed_idx <- setdiff(seq_len(k), re_idx)
@@ -1345,17 +1582,21 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
       if (is_global_intercept[v]) {
         return(n)
       }
-      sum(sapply(seq_len(n_groups), function(m) {
+      vals <- sapply(seq_len(n_groups), function(m) {
         idx_m <- idx_list[[m]]
-        om_bar <- mean(omega_init[idx_m, ])
-        var_xv <- var(X[idx_m, v])
+        if (length(idx_m) <= 1) return(0)
+        om_bar <- mean(omega_init[idx_m, ], na.rm = TRUE)
+        var_xv <- var(X[idx_m, v], na.rm = TRUE)
+        if (is.na(var_xv) || is.na(om_bar)) return(0)
         om_bar * var_xv * length(idx_m)
-      }))
+      })
+      sum(vals, na.rm = TRUE)
     })
     n_eff_per_var <- pmax(n_eff_per_var, 1)
 
     # Scale factor: sqrt(n_eff / n) -> more info = wider allowed range
     tau_v_scale <- sqrt(n_eff_per_var / n)
+    tau_v_scale[!is.finite(tau_v_scale)] <- 1
     tau_v_scale <- pmax(pmin(tau_v_scale, 5), 0.02)
 
     # Modulate initial lambda2: data-dense predictors start less shrunk
@@ -1561,6 +1802,10 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
   post_kappa_pooled <- if (use_horseshoe && !save_posterior_to_disk) matrix(0, k_hs * p, nretain) else NULL
   post_c2 <- if (use_horseshoe && !save_posterior_to_disk) numeric(nretain) else NULL
   post_sigma_re <- if (use_re && !save_posterior_to_disk) matrix(0, ncol(X_full) * p_all, nretain) else NULL
+  # global horseshoe scale trace (nretain is only defined here, not at the state init above)
+  post_re_tau <- if (isTRUE(use_re) && isTRUE(re_hs_global) && !save_posterior_to_disk) numeric(nretain) else NULL
+  post_slab_c2 <- if (isTRUE(use_re) && isTRUE(estimate_slab_c2) && !save_posterior_to_disk) numeric(nretain) else NULL
+  post_delta <- if (use_alt_spec) numeric(nretain) else NULL   # alternative-specific coefficient draws
   tree_store <- if ((store_bart_trees || save_bart_to_disk) && use_bart && !save_posterior_to_disk) vector("list", nretain) else NULL
 
   # --- Batched Disk Buffers ---
@@ -1640,6 +1885,75 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
   c_block <- if (!is.null(block_sym)) numeric(length(block_sym)) else numeric(0)
   block_lambda2 <- if (!is.null(block_sym)) rep(1, length(block_sym)) else numeric(0)
   block_nu <- if (!is.null(block_sym)) rep(1, length(block_sym)) else numeric(0)
+
+  # --- CHANNEL SPLIT: two disjoint horseshoe hierarchies ------------------------------
+  # hs_pool  = the covariate channel governed by c_v * Msym (across-category coupling)
+  # hs_blk_ids / blk_tau2 = the compositional channel governed by c_block * kron(Msym, Mb)
+  .hs_idx_safe <- if (use_horseshoe) hs_idx else integer(0)
+  hs_blk_ids <- if (!is.null(block_sym)) {
+    which(vapply(block_sym, function(b) isTRUE(b$hs_on), logical(1)))
+  } else integer(0)
+  blk_ret_all <- if (length(hs_blk_ids) > 0) {
+    sort(unique(unlist(lapply(block_sym[hs_blk_ids], `[[`, "ret"))))
+  } else integer(0)
+  # Per-family tau is available on BOTH kernels. The compositional channel only exists where
+  # block_sym does (symmetric only), so under the diagonal kernel hs_pool is simply all of hs_idx
+  # and the families partition that.
+  hs_grouped <- isTRUE(use_horseshoe) && !is.null(hs_groups) && length(hs_groups) > 0
+  hs_split_on <- (isTRUE(use_horseshoe) && isTRUE(symmetric_hs) && isTRUE(hs_channel_split) &&
+    length(blk_ret_all) > 0 && length(setdiff(.hs_idx_safe, blk_ret_all)) > 0) ||
+    (hs_grouped && length(blk_ret_all) > 0)
+  hs_pool <- if (hs_split_on) setdiff(.hs_idx_safe, blk_ret_all) else .hs_idx_safe
+  if (hs_grouped && length(hs_pool) == 0) { hs_grouped <- FALSE }
+
+  # Compositional channel: ONE shared scale when only hs_channel_split is on, one PER BLOCK when
+  # families are requested. blk_tau2 starts at the shared tau0^2 so every variant begins identically.
+  .blk_n   <- if (hs_grouped && hs_split_on && !is.null(block_sym)) length(block_sym) else 1L
+  blk_tau2 <- rep(if (use_horseshoe) hs_tau2[1] else 1, max(.blk_n, 1L))
+  blk_xi   <- rep(1, max(.blk_n, 1L))
+
+  # Covariate channel: partition hs_pool into families by regex against the column names.
+  hs_grp <- integer(0); hs_grp_names <- character(0)
+  hs_tau2_g <- numeric(0); hs_xi_g <- numeric(0)
+  if (hs_grouped) {
+    # X is unnamed by the pre-loop hoist; recover the ACTIVE column names by mapping the
+    # pre-drop names (cov_names_save) through full_to_active.
+    .cn <- colnames(X)
+    if (is.null(.cn) && !is.null(cov_names_save) && length(cov_names_save) == length(full_to_active)) {
+      .cn <- rep(NA_character_, k)
+      .ok <- !is.na(full_to_active)
+      .cn[full_to_active[.ok]] <- cov_names_save[.ok]
+    }
+    if (is.null(.cn)) .cn <- paste0("V", seq_len(k))
+    .cn[is.na(.cn)] <- paste0("V", which(is.na(.cn)))
+    .nm <- .cn[hs_pool]
+    hs_grp <- rep(NA_integer_, length(hs_pool))
+    for (gi_ in seq_along(hs_groups)) {
+      hit <- is.na(hs_grp) & grepl(hs_groups[[gi_]], .nm, perl = TRUE)
+      hs_grp[hit] <- gi_
+    }
+    hs_grp_names <- names(hs_groups)
+    if (is.null(hs_grp_names)) hs_grp_names <- paste0("g", seq_along(hs_groups))
+    if (any(is.na(hs_grp))) {                       # unmatched columns get their own family
+      hs_grp[is.na(hs_grp)] <- length(hs_grp_names) + 1L
+      hs_grp_names <- c(hs_grp_names, "_rest")
+    }
+    .keep <- sort(unique(hs_grp))                   # drop empty families, renumber densely
+    hs_grp <- match(hs_grp, .keep)
+    hs_grp_names <- hs_grp_names[.keep]
+    hs_tau2_g <- rep(hs_tau2[1], length(hs_grp_names))
+    hs_xi_g   <- rep(1, length(hs_grp_names))
+    cat(sprintf("Horseshoe PER-FAMILY tau: %d covariate families (%s) + %d const-sum block(s)\n",
+                length(hs_grp_names),
+                paste(sprintf("%s:%d", hs_grp_names, tabulate(hs_grp, length(hs_grp_names))),
+                      collapse = ", "),
+                length(hs_blk_ids)))
+  } else if (hs_split_on) {
+    cat(sprintf(
+      "Horseshoe CHANNEL SPLIT: covariate channel %d cols, compositional channel %d cols in %d block(s)\n",
+      length(hs_pool), length(blk_ret_all), length(hs_blk_ids)
+    ))
+  }
   
   block_id_vec <- NULL
   block_size_vec <- NULL
@@ -1655,13 +1969,22 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
         # Note: Design choice - block members shrink within-block instead of across-categories, not in addition to.
         # Zeroing out c_v here ensures they don't get double-shrunk.
         c_v[bs$ret] <- 0
-        var_eff_blk <- hs_tau2[1] * block_lambda2[bs_id]
+        var_eff_blk <- (if (hs_split_on) blk_tau2[min(bs_id, length(blk_tau2))] else hs_tau2[1]) *
+          block_lambda2[bs_id]
         var_eff_blk <- .reg_hs_var(var_eff_blk, hs_c2)
         c_block[bs_id] <- 1 / max(var_eff_blk, 1e-12)
       }
     }
   }
   
+  re_prec_sym <- if (is.null(re_prec_sym)) isTRUE(symmetric_hs) else isTRUE(re_prec_sym)
+  # Resolve the centring default AFTER re_prec_sym is known: the centred statistic is only ever used
+  # by the symmetric updater, and it is wrong there, so switch it off exactly when that updater runs.
+  if (is.null(re_prec_center)) re_prec_center <- !isTRUE(re_prec_sym)
+  if (isTRUE(re_prec_center) && isTRUE(re_prec_sym))
+    warning("re_prec_center=TRUE with the symmetric RE updater reproduces the pre-2026-08-21 RE ",
+            "collapse (variance estimated on centred deviations, REs drawn uncentred). ",
+            "Use only to reproduce an old fit.", call. = FALSE)
   hs_prec_kernel <- if (use_horseshoe && symmetric_hs) matrix(0, k, p) else hs_prec_mat
   # Support-aware FIXED-effect prior: global participation-ratio shrinkage of sparse covariates'
   # fixed effects (mirrors CLR); scales the per-predictor precision c_v / hs_prec rows in-loop.
@@ -1677,6 +2000,9 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
   }
   nburn_half <- max(1L, floor(nburn / 4))
   for (iter in 1:niter) {
+    # Refresh the kernel's HS precision from the LIVE hs_prec_mat (updated at the end of the
+    # previous sweep). Without this the binding above is frozen at its pre-loop value.
+    if (isTRUE(hs_kernel_live) && use_horseshoe && !symmetric_hs) hs_prec_kernel <- hs_prec_mat
     if (use_tempering && iter <= nburn_half && nburn > 0) {
       temp_iter <- tempering_T0 + (1.0 - tempering_T0) * (iter / nburn_half)
     } else {
@@ -1727,7 +2053,9 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
     # =================================================================
     # A. UPDATE UTILITIES + C_J  —  delegated to C++
     # =================================================================
+    # The additive n x p utility channel carries BART and/or the alternative-specific term.
     f_bart_mat <- if (use_bart) bart_alpha * curr_f else matrix(0, n, p)
+    if (use_alt_spec) f_bart_mat <- f_bart_mat + curr_delta * Zt
 
     if (use_re) {
       uc <- update_utilities_and_cj_re(
@@ -1795,12 +2123,16 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
           re_mask, y_mask, as.integer(is_global_intercept),
           re_support_mat,
           if (use_half_cauchy_re && !is.null(a_re)) a_re else matrix(1, k, p),   # half-Cauchy aux for RE-scale ASIS
-          isTRUE(re_asis) && use_half_cauchy_re && !is.null(a_re)                 # RE-scale ASIS interweave
+          isTRUE(re_asis) && use_half_cauchy_re && !is.null(a_re),                # RE-scale ASIS interweave
+          # return X'Omega X + linear term per equation so the NON-RE covariates can get the symmetric
+          # coupling below (this kernel draws mu one equation at a time and cannot couple them itself)
+          isTRUE(use_horseshoe) && isTRUE(symmetric_hs) && length(re_complement) > 0
         )
 
         curr_beta_c <- re_res$beta_c
         mu_pooled <- re_res$mu
         z_c <- re_res$z_c
+        P_lik_ip <- re_res$P_lik; Pb_lik_ip <- re_res$Pb_lik   # NULL unless requested above
       } else {
         re_res <- gibbs_step_re(
           X, Xt, kappa_weighted_iter, omega, c_j_mat,
@@ -2112,7 +2444,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
         # Symmetric HS coupling across equations, at each HS predictor that is an RE
         hs_re <- intersect(hs_idx, re_idx)
         for (v in hs_re) {
-          if (c_v[v] <= 0) next
+          if (is.na(c_v[v]) || c_v[v] <= 0) next
           r  <- match(v, re_idx)                 # position within re_idx
           ix <- r + (seq_len(p) - 1) * kr
           P_blk[ix, ix] <- P_blk[ix, ix] + c_v[v] * Msym
@@ -2128,11 +2460,10 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
             
             sub_idx <- match(ret_re, bs$ret)
             M_sub <- bs$M[sub_idx, sub_idx, drop = FALSE]
-            
-            for (ip in seq_len(p)) {
-              rows <- (ip - 1) * kr + match(ret_re, re_idx)
-              P_blk[rows, rows] <- P_blk[rows, rows] + c_block[bs_id] * M_sub
-            }
+            # V3: couple columns AND categories (see draw_beta_symhs_pooled)
+            ixb <- as.vector(vapply(seq_len(p), function(ip) (ip - 1) * kr + match(ret_re, re_idx),
+                                    numeric(length(ret_re))))
+            P_blk[ixb, ixb] <- P_blk[ixb, ixb] + c_block[bs_id] * kronecker(Msym, M_sub)
           }
         }
 
@@ -2147,7 +2478,50 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
         } else {
           mu_draw <- chol_sample_precision_cpp(P_blk, Pb_blk)
         }
+        # V4 = V3 + stale-conditioning fix. Pb_lik was accumulated with the bdev implied by the
+        # PRE-draw mu_R (ASIS holds beta fixed and recomputes z in the tail), so the complement
+        # redraw must remove X_R %*% mu_R_OLD, not the freshly drawn value.
+        mu_re_prev <- mu_pooled[re_idx, , drop = FALSE]
         mu_pooled[re_idx, ] <- matrix(mu_draw, kr, p)
+
+        # ---- SYMMETRIC COUPLING FOR THE NON-RE COVARIATES ------------------------------------
+        # The block above couples equations only at intersect(hs_idx, re_idx). Everything else was
+        # drawn by gibbs_step_re_ncp, which works one equation at a time (k x k per ip) and takes a
+        # DIAGONAL precision, so it cannot apply c_v * Msym. Redraw the complement jointly across
+        # equations here, conditioning on the mu[re_idx] just drawn -- the mirror image of the block
+        # above. `r_mu` inside the kernel subtracts the RE deviation and BART but NOT mu, so
+        # Pb_lik is the correct linear term for the full mu vector and the conditioning is standard.
+        # bdev depends on z_c, which the block above does not change, so Pb_lik stays valid.
+        if (!is.null(P_lik_ip) && length(re_complement) > 0) {
+          nc <- length(re_complement)
+          Pc_blk <- matrix(0, nc * p, nc * p); Pbc_blk <- numeric(nc * p)
+          for (ip in seq_len(p)) {
+            P_full  <- prior_P + P_lik_ip[, , ip]
+            Pb_full <- prior_Pb[, ip] + Pb_lik_ip[, ip]
+            rows <- ((ip - 1) * nc + 1):(ip * nc)
+            Pc_blk[rows, rows] <- P_full[re_complement, re_complement, drop = FALSE]
+            Pbc_blk[rows] <- Pb_full[re_complement] -
+              P_full[re_complement, re_idx, drop = FALSE] %*% mu_re_prev[, ip]   # pre-draw mu_R
+          }
+          for (v in intersect(hs_idx, re_complement)) {
+            if (is.na(c_v[v]) || c_v[v] <= 0) next
+            r <- match(v, re_complement); ix <- r + (seq_len(p) - 1) * nc
+            Pc_blk[ix, ix] <- Pc_blk[ix, ix] + c_v[v] * Msym
+          }
+          if (!is.null(block_sym)) for (bs_id in seq_along(block_sym)) {
+            bs <- block_sym[[bs_id]]
+            if (!bs$hs_on || c_block[bs_id] <= 0) next
+            ret_c <- intersect(bs$ret, re_complement); if (!length(ret_c)) next
+            M_sub <- bs$M[match(ret_c, bs$ret), match(ret_c, bs$ret), drop = FALSE]
+            # V3: couple columns AND categories (see draw_beta_symhs_pooled)
+            ixc <- as.vector(vapply(seq_len(p), function(ip) (ip - 1) * nc + match(ret_c, re_complement),
+                                    numeric(length(ret_c))))
+            Pc_blk[ixc, ixc] <- Pc_blk[ixc, ixc] + c_block[bs_id] * kronecker(Msym, M_sub)
+          }
+          mu_pooled[re_complement, ] <- matrix(chol_sample_precision_cpp(Pc_blk, Pbc_blk), nc, p)
+          for (ip in seq_len(p)) for (m in seq_len(n_groups))
+            curr_beta_c[re_complement, ip, m] <- mu_pooled[re_complement, ip]   # no RE => beta == mu
+        }
 
         # recover z_c / pin spiked & complement cells (unchanged from current ASIS tail)
         for (ip in seq_len(p)) {
@@ -2449,10 +2823,45 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
     # NOTE: Placed BEFORE Sections D/D2 so that BART intercept absorption
     #       is reflected in the subsequent sigma/horseshoe updates.
     # =================================================================
+    # =================================================================
+    # ALTERNATIVE-SPECIFIC delta  —  one shared coefficient on Zt (n x p)
+    # =================================================================
+    # RANDOM-WALK METROPOLIS on the EXACT multinomial likelihood -- NOT a conjugate PG draw.
+    # WHY NOT CONJUGATE: this sampler carries a one-vs-rest decomposition, so category j's predictor
+    # is (psi_j - c_j) with c_j = log sum_{k != j} exp(psi_k). delta enters psi_k for EVERY
+    # alternative, so c_j depends on delta as well; a Gibbs step that treats c_j as fixed uses the
+    # effective regressor Zt_j instead of Zt_j - d c_j/d delta. Measured: that biases delta by a
+    # clean factor of ~2 (true 1/2/3 -> 0.489/0.999/1.462, ratio 2.046/2.002/2.053). MH sidesteps
+    # the whole issue: delta is one scalar, so two likelihood evaluations per sweep is cheap and
+    # correct by construction. Step size adapts during burn-in toward a ~0.30 acceptance rate.
+    if (use_alt_spec) {
+      .lp_all <- function(dl) {                       # utilities (n x p) at a candidate delta
+        f_add <- (if (use_bart) bart_alpha * curr_f else matrix(0, n, p)) + dl * Zt
+        uu <- if (use_re) update_utilities_and_cj_re(Xm_list, idx_list, n, curr_beta_c, f_add,
+                                                     pp_int, baseline, p_all, use_bart)
+              else        update_utilities_and_cj(X, curr_beta, f_add, pp_int, baseline, p_all, use_bart)
+        compute_loglik(uu$U, Y, as.numeric(y_weight))$total
+      }
+      d_prop <- curr_delta + rnorm(1, 0, delta_mh_sd)
+      lp_cur <- .lp_all(curr_delta) + dnorm(curr_delta, 0, alt_spec_prior_sd, log = TRUE)
+      lp_new <- .lp_all(d_prop)     + dnorm(d_prop,     0, alt_spec_prior_sd, log = TRUE)
+      acc <- is.finite(lp_new) && (log(runif(1)) < (lp_new - lp_cur))
+      if (acc) curr_delta <- d_prop
+      delta_acc_n <- delta_acc_n + 1L; delta_acc_k <- delta_acc_k + as.integer(acc)
+      if (iter <= nburn && delta_acc_n >= 50L) {      # adapt only during burn-in
+        rate <- delta_acc_k / delta_acc_n
+        delta_mh_sd <- delta_mh_sd * exp((rate - 0.30) * 1.5)
+        delta_mh_sd <- min(max(delta_mh_sd, 1e-4), 10)
+        delta_acc_n <- 0L; delta_acc_k <- 0L
+      }
+    }
+
     if (use_bart && iter > bart_warmup && !bart_symmetric) {
       for (ip in 1:p) {
         j <- pp[ip]
         lp <- if (use_re) rowSums(X * t(curr_beta_c[, ip, group_idx_0 + 1L])) else X %*% curr_beta[, ip]
+        # net out the alternative-specific term so BART does not re-absorb it
+        if (use_alt_spec) lp <- lp + curr_delta * Zt[, ip]
 
         y_star <- (kappa_weighted_iter[, j] / omega[, ip]) + c_j_mat[, ip] - lp
         # Robustness: Cap y_star to prevent exploding intercepts during burn-in
@@ -2664,7 +3073,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
         a_re <- a_new_mat
         re_prec <- list(prec = prec_new, sigma = 1 / sqrt(prec_new + 1e-12), a_aux = a_re)
       } else if (use_half_cauchy_re) {
-        if (symmetric_hs) {
+        if (re_prec_sym) {
           re_prec <- update_re_precision_hc_sym(
             beta_c = target_for_prec,
             mu_pooled = mu_pooled,
@@ -2676,12 +3085,13 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
             prec_prev = prec_beta_pooled,
             a_aux_prev = a_re,
             p_all = p_all,
-            re_scale_A = re_scale_A,
+            re_scale_A = re_tau_cur,
             block_id_opt = block_id_vec,
             block_size_opt = block_size_vec,
             re_regularize = isTRUE(re_regularize),
             slab_c2 = collapse_slab_c2,
-            re_support_opt = re_support_mat   # support-consistent variance: whiten ss by 1/rs^2 (matches the support-scaled RE draw)
+            re_support_opt = re_support_mat,  # support-consistent variance: whiten ss by 1/rs^2 (matches the support-scaled RE draw)
+            center_ss = isTRUE(re_prec_center)
           )
         } else {
           re_prec <- update_re_precision_hc(
@@ -2694,10 +3104,58 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
             is_intercept = as.integer(is_global_intercept),
             prec_prev = prec_beta_pooled,
             a_aux_prev = a_re,
-            re_scale_A = re_scale_A
+            re_scale_A = re_tau_cur,
+            re_regularize = isTRUE(re_regularize), slab_c2 = collapse_slab_c2
           )
         }
         a_re <- re_prec$a_aux
+        # ---- FULL BAYES: sample the slab c2 (1-D slice on log c2) --------------------------------
+        if (isTRUE(estimate_slab_c2) && isTRUE(re_regularize) && collapse_slab_c2 > 0) {
+          .inv_c2 <- 1 / collapse_slab_c2
+          # prec_beta_pooled stores tau_EFF = tau_raw + 1/c2; recover the raw half-Cauchy precision
+          .tau_raw <- pmax(prec_beta_pooled[re_idx, , drop = FALSE] - .inv_c2, 1e-10)
+          # per-cell sufficient statistics of the group deviations, over ACTIVE cells only
+          .SS <- .NN <- matrix(0, length(re_idx), p)
+          for (.ip in seq_len(p)) {
+            .act_ip <- if (length(y_mask)) y_mask[.ip, ] > 0.5 else rep(TRUE, n_groups)
+            for (.i in seq_along(re_idx)) { .v <- re_idx[.i]
+              .act <- (re_mask[.v, ] > 0.5) & (is_global_intercept[.v] == 1 | .act_ip)
+              if (!any(.act)) next
+              .d <- curr_beta_c[.v, .ip, ] - mu_pooled[.v, .ip]
+              .SS[.i, .ip] <- sum(.d[.act]^2); .NN[.i, .ip] <- sum(.act) }
+          }
+          .keep <- .NN > 0
+          if (any(.keep)) {
+            .tr <- .tau_raw[.keep]; .ss <- .SS[.keep]; .nn <- .NN[.keep]
+            .nu <- slab_df_re; .s0 <- slab_s2_re
+            .lp <- function(lc) { c2 <- exp(lc); ve <- 1 / (.tr + 1 / c2)
+              -0.5 * sum(.nn * log(ve) + .ss / ve) -            # N(0, v~) over active cells
+                (.nu / 2 + 1) * lc - (.nu * .s0 / 2) / c2 + lc } # InvGamma prior + log-scale Jacobian
+            .lt <- log(collapse_slab_c2); .y0 <- .lp(.lt) - stats::rexp(1)
+            .L <- .lt - stats::runif(1); .R <- .L + 1; .g <- 0L
+            while (.lp(.L) > .y0 && .g < 60L) { .L <- .L - 1; .g <- .g + 1L }; .g <- 0L
+            while (.lp(.R) > .y0 && .g < 60L) { .R <- .R + 1; .g <- .g + 1L }
+            .ln <- .lt
+            for (.s2i in 1:60) { .q <- .L + stats::runif(1) * (.R - .L)
+              if (.lp(.q) > .y0) { .ln <- .q; break }
+              if (.q < .lt) .L <- .q else .R <- .q }
+            collapse_slab_c2 <- min(max(exp(.ln), 1e-4), 1e6)
+          }
+        }
+        # ---- global horseshoe scale tau (shared across ALL RE cells) --------------------
+        # xi = 1/tau^2 | {a_k}, b ~ Gamma((K+1)/2, sum(a_k) + b);  b | xi ~ Exp(xi + 1/tau0^2).
+        # a_k are the half-Cauchy auxiliaries the C++ just drew AT the current tau, so this is a
+        # valid Gibbs sweep. Only ACTIVE RE cells contribute (finite, positive aux).
+        if (isTRUE(re_hs_global)) {
+          aa <- a_re[re_idx, , drop = FALSE]
+          aa <- aa[is.finite(aa) & aa > 0]
+          if (length(aa)) {
+            re_hs_xi <- stats::rgamma(1, shape = 0.5 * (length(aa) + 1), rate = sum(aa) + re_hs_b)
+            re_hs_xi <- min(max(re_hs_xi, 1e-10), 1e10)
+            re_hs_b  <- stats::rexp(1, rate = re_hs_xi + 1 / (re_hs_tau0^2))
+            re_tau_cur <- min(max(1 / sqrt(re_hs_xi), 1e-4), 1e3)
+          }
+        }
       } else {
         re_prec <- update_re_precision(
           target_for_prec, mu_pooled,
@@ -2761,42 +3219,112 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
         full <- matrix(0, k, p_all); full[, pp] <- beta_for_hs
         beta_for_hs <- sweep(full, 1, rowMeans(full), "-")         # zero-sum (CLR) centering
       }
+      # COVARIATE CHANNEL. Under hs_channel_split, hs_pool excludes the const-sum block
+      # columns: they are governed by c_block, contribute nothing to this channel's rate,
+      # and must therefore not inflate its shape either (see hs_channel_split above).
+      if (hs_grouped) {
+        # PER-FAMILY GLOBAL SCALES. lambda stays per-column but is driven by its OWN family's tau,
+        # and each family's tau draw counts only its own columns in the shape. Same Makalic-Schmidt
+        # auxiliaries; the slab stays shared (it is a cap, not a pooling scale).
+        tau_col <- hs_tau2_g[hs_grp]
+        hs_nu[hs_pool] <- 1 / rgamma(length(hs_pool), shape = 1, rate = 1 + 1 / hs_lambda2[hs_pool])
+        ss_k <- rowSums(beta_for_hs[hs_pool, , drop = FALSE]^2)
+        hs_lambda2[hs_pool] <- 1 / rgamma(length(hs_pool), shape = (p + 1) / 2,
+                                          rate = 1 / hs_nu[hs_pool] + ss_k / (2 * tau_col))
+        hs_lambda2[hs_pool] <- pmin(pmax(hs_lambda2[hs_pool], 1e-10), 1e4)
+
+        ss_col <- ss_k / hs_lambda2[hs_pool]
+        for (g_ in seq_along(hs_tau2_g)) {
+          ii_ <- which(hs_grp == g_)
+          if (!length(ii_)) next
+          hs_xi_g[g_] <- 1 / rgamma(1, shape = 1, rate = 1 + 1 / hs_tau2_g[g_])
+          hs_tau2_g[g_] <- 1 / rgamma(1, shape = (length(ii_) * p + 1) / 2,
+                                      rate = 1 / hs_xi_g[g_] + sum(ss_col[ii_]) / 2)
+          hs_tau2_g[g_] <- min(max(hs_tau2_g[g_], 1e-10), 1e4)
+        }
+        if (estimate_c2) {
+          hs_zeta <- rig(1, 1 + 1 / hs_c2)
+          hs_c2 <- rig((slab_df + length(hs_pool) * p) / 2,
+                       (slab_df * slab_s2) / 2 + sum(beta_for_hs[hs_pool, ]^2) / 2)
+        } else hs_c2 <- slab_s2
+        hs_tau2 <- mean(hs_tau2_g)                      # reported/stored summary only
+        var_eff <- .reg_hs_var(hs_tau2_g[hs_grp] * hs_lambda2[hs_pool], hs_c2)
+      } else {
       hs <- update_horseshoe(
         beta_for_hs, hs_lambda2, hs_nu, hs_tau2, hs_xi,
-        hs_c2, hs_zeta, k, p, hs_idx,
+        hs_c2, hs_zeta, k, p, hs_pool,
         estimate_c2 = estimate_c2, slab_df = slab_df, slab_s2 = slab_s2,
         equation_specific = equation_specific_hs
       )
       hs_lambda2 <- hs$lambda2; hs_nu <- hs$nu; hs_tau2 <- hs$tau2
       hs_xi <- hs$xi; hs_c2 <- hs$c2; hs_zeta <- hs$zeta
 
-      var_eff <- .reg_hs_var(.hs_lam2_tau2(equation_specific_hs, hs_tau2, hs_lambda2, hs_idx, k_hs, p), hs_c2)
+      var_eff <- .reg_hs_var(.hs_lam2_tau2(equation_specific_hs, hs_tau2, hs_lambda2, hs_pool, length(hs_pool), p), hs_c2)
+      }
         
       c_v <- numeric(k)
-      c_v[hs_idx] <- if (is.matrix(var_eff)) 1 / pmax(var_eff[, 1], 1e-12) else 1 / pmax(var_eff, 1e-12)   # per-predictor precision
-      if (support_prior_strength > 0) c_v[hs_idx] <- c_v[hs_idx] * fe_support[hs_idx]   # FE support-aware shrinkage (feeds the symmetric kernel)
+      c_v[hs_pool] <- if (is.matrix(var_eff)) 1 / pmax(var_eff[, 1], 1e-12) else 1 / pmax(var_eff, 1e-12)   # per-predictor precision
+      if (support_prior_strength > 0) c_v[hs_pool] <- c_v[hs_pool] * fe_support[hs_pool]   # FE support-aware shrinkage (feeds the symmetric kernel)
 
       # Under symmetric_hs we use c_v + Msym below; the diagonal hs_prec_mat is unused.
-      hs_prec_mat[hs_idx, ] <- 1 / pmax(var_eff, 1e-12)            # kept only for !symmetric_hs paths
-      if (support_prior_strength > 0) hs_prec_mat[hs_idx, ] <- hs_prec_mat[hs_idx, ] * fe_support[hs_idx]
+      hs_prec_mat[hs_pool, ] <- 1 / pmax(var_eff, 1e-12)            # kept only for !symmetric_hs paths
+      if (support_prior_strength > 0) hs_prec_mat[hs_pool, ] <- hs_prec_mat[hs_pool, ] * fe_support[hs_pool]
       
       if (!is.null(block_sym)) {
+        # COMPOSITIONAL CHANNEL. Pass 1 draws the per-block local scales from the CURRENT
+        # global scale; pass 2 (split only) draws that global scale from the new locals;
+        # pass 3 rebuilds c_block. Splitting the passes leaves the RNG stream unchanged
+        # when hs_channel_split = FALSE, so that path stays bit-identical.
+        blk_sq <- numeric(length(block_sym))
+        blk_df <- numeric(length(block_sym))
+        .blk_tau_of <- function(b) if (!hs_split_on) hs_tau2[1] else blk_tau2[min(b, length(blk_tau2))]
+        blk_tau_cur <- .blk_tau_of(1L)
         for (bs_id in seq_along(block_sym)) {
           bs <- block_sym[[bs_id]]
           if (!bs$hs_on) next
           
+          blk_tau_cur <- .blk_tau_of(bs_id)
           gamma_ret <- beta_for_hs[bs$ret, , drop = FALSE]
           sq_norm <- sum(gamma_ret * (bs$M %*% gamma_ret))
+          blk_sq[bs_id] <- sq_norm
+          # effective d.o.f.: each block of Kb columns is rank Kb-1 after the const-sum
+          # constraint, times p equations.
+          blk_df[bs_id] <- p * (bs$Kb - 1)
           
           nu_rate <- 1 + 1 / block_lambda2[bs_id]
           block_nu[bs_id] <- 1 / rgamma(1, shape = 1, rate = nu_rate)
           
-          lam_rate <- 1 / block_nu[bs_id] + sq_norm / (2 * hs_tau2[1])
-          shape_lam <- (p * (bs$Kb - 1) + 1) / 2
+          lam_rate <- 1 / block_nu[bs_id] + sq_norm / (2 * blk_tau_cur)
+          shape_lam <- (blk_df[bs_id] + 1) / 2
           block_lambda2[bs_id] <- 1 / rgamma(1, shape = shape_lam, rate = lam_rate)
           block_lambda2[bs_id] <- min(max(block_lambda2[bs_id], 1e-10), 1e4)
+        }
+        
+        if (hs_split_on) {
+          # Makalic-Schmidt half-Cauchy auxiliary for the compositional global scale(s):
+          # one shared scale under hs_channel_split, one PER BLOCK under hs_groups.
+          if (length(blk_tau2) > 1L) {
+            for (b_ in hs_blk_ids) {
+              blk_xi[b_] <- 1 / rgamma(1, shape = 1, rate = 1 + 1 / blk_tau2[b_])
+              blk_tau2[b_] <- 1 / rgamma(1, shape = (blk_df[b_] + 1) / 2,
+                                         rate = 1 / blk_xi[b_] + (blk_sq[b_] / block_lambda2[b_]) / 2)
+              blk_tau2[b_] <- min(max(blk_tau2[b_], 1e-10), 1e4)
+            }
+          } else {
+            blk_xi[1] <- 1 / rgamma(1, shape = 1, rate = 1 + 1 / blk_tau2[1])
+            ss_blk <- sum(blk_sq[hs_blk_ids] / block_lambda2[hs_blk_ids])
+            blk_tau2[1] <- 1 / rgamma(1, shape = (sum(blk_df[hs_blk_ids]) + 1) / 2,
+                                      rate = 1 / blk_xi[1] + ss_blk / 2)
+            blk_tau2[1] <- min(max(blk_tau2[1], 1e-10), 1e4)
+          }
+        }
+        
+        for (bs_id in seq_along(block_sym)) {
+          bs <- block_sym[[bs_id]]
+          if (!bs$hs_on) next
           
-          var_eff_bs <- .reg_hs_var(block_lambda2[bs_id] * hs_tau2[1], hs_c2)
+          blk_tau_cur <- .blk_tau_of(bs_id)
+          var_eff_bs <- .reg_hs_var(block_lambda2[bs_id] * blk_tau_cur, hs_c2)
           c_block[bs_id] <- 1 / max(var_eff_bs, 1e-12)
           
           # We zero out the independent HS precision for these rows so they are ONLY shrunk symmetrically 
@@ -2875,6 +3403,19 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
              sigma_mean <- colMeans(sigma_beta_pooled[state_idx, , drop=FALSE])
              sigma_beta_pooled_full[drop_col, ] <- sigma_mean
            }
+
+           # --- UTILITY-PRESERVING COMPENSATION -------------------------------------------
+           # Re-centring subtracted mean_k from every block coefficient, which subtracts
+           # mean_k * rowSum(block) = mean_k * const from each class utility. Put that
+           # per-class constant back into the intercept so X %*% beta_full reproduces the
+           # fitted probabilities exactly (the block coefficients stay zero-sum, which is the
+           # point of the reference coding). Skipped when there is no intercept (warned above).
+           if (!is.na(cs_int_col) && blk$const != 0) {
+             mu_pooled_full[cs_int_col, ] <- mu_pooled_full[cs_int_col, ] + mu_mean   * blk$const
+             curr_beta_full[cs_int_col, ] <- curr_beta_full[cs_int_col, ] + beta_mean * blk$const
+             if (use_re)
+               curr_beta_c_full[cs_int_col, , ] <- curr_beta_c_full[cs_int_col, , ] + beta_c_mean * blk$const
+           }
         }
         
         if (use_horseshoe) {
@@ -2938,6 +3479,8 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
           postb_total[, , , s] <- beta_c_zs
           postb_pooled[, , s] <- mu_zs
           post_sigma_re[, s] <- as.vector(sigma_zs)
+          if (!is.null(post_re_tau)) post_re_tau[s] <- re_tau_cur   # global HS scale trace
+          if (!is.null(post_slab_c2)) post_slab_c2[s] <- collapse_slab_c2
         } else {
           postb_total[, , s] <- beta_zs
           postb_pooled[, , s] <- beta_zs
@@ -2977,6 +3520,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
           post_c2[s] <- hs_c2
         }
         post_log_lik[s] <- ll$total
+        if (use_alt_spec) post_delta[s] <- curr_delta
         if (calc_loo) post_ll_pw[s, ] <- ll$pointwise
 
         # Adaptive Phase Storage
@@ -3202,7 +3746,8 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
   if (use_horseshoe) {
     horseshoe_state <- list(
       lambda2 = hs_lambda2, tau2 = hs_tau2, nu = hs_nu, xi = hs_xi, zeta = hs_zeta,
-      c2 = hs_c2
+      c2 = hs_c2,
+      blk_tau2 = blk_tau2, blk_xi = blk_xi, block_lambda2 = block_lambda2, block_nu = block_nu
     )
   }
 
@@ -3363,10 +3908,13 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
     loglik = mean(post_log_lik)
   )
   res <- list(
+    post_delta = post_delta,      # alternative-specific coefficient (NULL unless alt_spec_Z given)
     postb = postb_total, postb_total = postb_total, postb_pooled = postb_pooled,
     postb_total_std = postb_total_std,
     postb_pooled_std = postb_pooled_std,
     post_sigma_re = post_sigma_re,
+    post_re_tau = post_re_tau,
+    post_slab_c2 = post_slab_c2,
     sigma_beta_pooled = sigma_beta_pooled,
     post_log_lik = post_log_lik, post_log_lik_pointwise = post_ll_pw,
     diagnostics = diagnostics, baseline = baseline,
@@ -3397,7 +3945,11 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
       c2 = hs_c2,
       post_kappa_pooled = post_kappa_pooled,
       post_c2 = post_c2,
-      nu = hs_nu, xi = hs_xi, zeta = hs_zeta
+      nu = hs_nu, xi = hs_xi, zeta = hs_zeta,
+      hs_pool = hs_pool, channel_split = hs_split_on,
+      blk_tau2 = blk_tau2, block_lambda2 = block_lambda2,
+      grouped = hs_grouped, tau2_by_family = if (hs_grouped) setNames(hs_tau2_g, hs_grp_names) else NULL,
+      family_of_col = if (hs_grouped) setNames(hs_grp_names[hs_grp], .nm) else NULL
     )
   }
   return(res)

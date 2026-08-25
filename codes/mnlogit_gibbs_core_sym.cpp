@@ -524,7 +524,14 @@ List gibbs_step_re_ncp(SEXP X_s, SEXP Xt_s, SEXP kappa_w_s, SEXP omega_s,
                        SEXP Xm_list_s, SEXP Xmt_list_s, int n_groups,
                        SEXP f_bart_s, bool use_bart, SEXP re_idx_0_s,
                        SEXP re_mask_s, SEXP y_mask_s, SEXP is_intercept_s,
-                       SEXP re_support_s, SEXP a_re_s, bool re_asis) {
+                       SEXP re_support_s, SEXP a_re_s, bool re_asis,
+                       bool return_lik = false) {
+  // return_lik: hand back P_mu_acc (= X' Omega X) and Pb_mu_acc PER EQUATION. This kernel draws
+  // mu one equation at a time (k x k per ip), so it structurally CANNOT apply the symmetric
+  // horseshoe coupling c_v * Msym, which couples equations for a covariate. Returning the
+  // likelihood pieces lets R assemble the joint (k*p) system for whichever covariates need the
+  // coupling, without recomputing X'Omega X or re-deriving the PG conventions. Off by default and
+  // allocation-free when off, so the existing path is untouched.
   NumericMatrix X_m = as<NumericMatrix>(X_s);
   NumericMatrix Xt_m = as<NumericMatrix>(Xt_s);
   NumericMatrix kappa_w_m = as<NumericMatrix>(kappa_w_s);
@@ -610,6 +617,11 @@ List gibbs_step_re_ncp(SEXP X_s, SEXP Xt_s, SEXP kappa_w_s, SEXP omega_s,
     is_re(re_idx_0(i)) = 1;
 
   // 5. Gibbs Sampling
+  // buffers for the opt-in likelihood return (function scope: the return statement is
+  // outside the ip loop, so these cannot live inside it)
+  arma::cube P_lik_out; arma::mat Pb_lik_out;
+  if (return_lik) { P_lik_out.set_size(k, k, p); P_lik_out.zeros();
+                    Pb_lik_out.set_size(k, p);  Pb_lik_out.zeros(); }
   for (int ip = 0; ip < p; ip++) {
     int j = pp(ip) - 1;
 
@@ -714,6 +726,7 @@ List gibbs_step_re_ncp(SEXP X_s, SEXP Xt_s, SEXP kappa_w_s, SEXP omega_s,
       Pb_mu_acc += Xmt * r_mu;
     }
 
+    if (return_lik) { P_lik_out.slice(ip) = P_mu_acc; Pb_lik_out.col(ip) = Pb_mu_acc; }
     arma::mat P_mu = prior_P + P_mu_acc;
     P_mu.diag() += hs_prec_mu.col(ip);
     arma::vec Pb_mu = prior_Pb.col(ip) + Pb_mu_acc;
@@ -790,6 +803,10 @@ List gibbs_step_re_ncp(SEXP X_s, SEXP Xt_s, SEXP kappa_w_s, SEXP omega_s,
   std::copy(z_c_out.begin(), z_c_out.end(), z_c_v.begin());
   z_c_v.attr("dim") = Dimension(k, p, n_groups);
 
+  if (return_lik)
+    return List::create(Named("beta_c") = beta_c_v, Named("mu") = mu_out,
+                        Named("z_c") = z_c_v,
+                        Named("P_lik") = P_lik_out, Named("Pb_lik") = Pb_lik_out);
   return List::create(Named("beta_c") = beta_c_v, Named("mu") = mu_out,
                       Named("z_c") = z_c_v);
 }
@@ -835,7 +852,9 @@ List update_re_precision_hc(const arma::cube   &beta_c,
                             const arma::uvec   &is_intercept,
                             const arma::mat    &prec_prev,
                             const arma::mat    &a_aux_prev,
-                            double              re_scale_A = 1.0) {
+                            double              re_scale_A = 1.0,
+                            bool                re_regularize = false,
+                            double              slab_c2 = 100.0) {
 
   int k = beta_c.n_rows;
   int p = beta_c.n_cols;
@@ -845,6 +864,15 @@ List update_re_precision_hc(const arma::cube   &beta_c,
   arma::mat a_aux_out = a_aux_prev;   // carry forward for inactive cells
 
   const double inv_A2 = 1.0 / (re_scale_A * re_scale_A);
+  // REGULARISED (Finnish) horseshoe cap, ported from update_re_precision_hc_sym 2026-08-13.
+  // It lived ONLY in the _sym variant, but `symmetric_hs` defaults FALSE so the sampler calls THIS
+  // function -- meaning `re_regularize`/`collapse_slab_c2` were silently inert on every production
+  // fit (proved by bit-identical results at slab_c2 = 100 vs 4). Effective variance
+  // v~ = c2*s2/(c2+s2) <=> effective precision tau_eff = tau_raw + 1/c2, so sigma <= sqrt(c2).
+  // We STORE tau_eff (the RE draw uses the regularised precision) and infer tau_raw, whose
+  // conditional is NOT Gamma -> 1-D slice on log(tau_raw). inv_c2 = 0 reproduces the exact
+  // unregularised Gamma, so re_regularize = false is bit-identical to the previous behaviour.
+  const double inv_c2 = (re_regularize && slab_c2 > 0.0 && std::isfinite(slab_c2)) ? 1.0 / slab_c2 : 0.0;
 
   for (int ip = 0; ip < p; ip++) {
     for (arma::uword ri = 0; ri < re_idx.n_elem; ri++) {
@@ -872,18 +900,35 @@ List update_re_precision_hc(const arma::cube   &beta_c,
       // ---- Step 1: update auxiliary  a | τ^{t-1} --------------------------
       //   a ~ Gamma(1,  τ^{t-1} + 1/A²)  ≡  Exponential(τ^{t-1} + 1/A²)
       double tau_prev = std::max(prec_prev(v, ip), 1e-8);
-      double rate_a   = tau_prev + inv_A2;
+      // aux conditions on tau_RAW, so strip the slab offset that is stored in prec_prev
+      double rate_a   = std::max(tau_prev - inv_c2, 1e-8) + inv_A2;
       double a_new    = R::rgamma(1.0, 1.0 / rate_a);
       a_new           = std::max(a_new, 1e-12);
       a_aux_out(v, ip) = a_new;
 
       // ---- Step 2: update precision  τ | a^t, data  -----------------------
       //   τ ~ Gamma( 0.5 + N_active/2,  a^t + SS/2 )
-      double shape_tau = 0.5 + n_active / 2.0;
-      double rate_tau  = a_new + ss / 2.0;
-      if (!std::isfinite(rate_tau) || rate_tau <= 0.0) rate_tau = inv_A2;
-
-      double prec = R::rgamma(shape_tau, 1.0 / rate_tau);
+      double prec;
+      if (inv_c2 <= 0.0) {
+        double shape_tau = 0.5 + n_active / 2.0;
+        double rate_tau  = a_new + ss / 2.0;
+        if (!std::isfinite(rate_tau) || rate_tau <= 0.0) rate_tau = inv_A2;
+        prec = R::rgamma(shape_tau, 1.0 / rate_tau);
+      } else {
+        // slice log(tau_raw); store tau_eff = tau_raw + inv_c2 (same kernel as the _sym variant)
+        auto lp = [&](double lt) { double tr = std::exp(lt), te = tr + inv_c2;
+          return 0.5 * n_active * std::log(te) - 0.5 * te * ss - 0.5 * lt - a_new * tr + lt; };
+        double lt = std::log(std::max(tau_prev - inv_c2, 1e-8));
+        double y0 = lp(lt) - R::exp_rand();
+        double Lb = lt - R::unif_rand(), Rb = Lb + 1.0; int gi = 0;
+        while (lp(Lb) > y0 && gi < 80) { Lb -= 1.0; ++gi; } gi = 0;
+        while (lp(Rb) > y0 && gi < 80) { Rb += 1.0; ++gi; }
+        double ln = lt;
+        for (int s2i = 0; s2i < 100; ++s2i) { double q = Lb + R::unif_rand() * (Rb - Lb);
+          if (lp(q) > y0) { ln = q; break; }
+          if (q < lt) Lb = q; else Rb = q; }
+        prec = std::exp(ln) + inv_c2;
+      }
       prec = std::min(std::max(prec, 1e-4), 1e6);
 
       prec_out(v, ip)  = prec;
@@ -900,6 +945,11 @@ List update_re_precision_hc(const arma::cube   &beta_c,
 // ==========================================================================
 // NEW FUNCTION: Symmetric pooled RE precision update
 // ==========================================================================
+// center_ss = true (historical) builds ss from CATEGORY-CENTRED deviations, but the sigma it
+// produces is applied to an UNCENTRED draw in gibbs_step_re_ncp. For an RE that is largely a common
+// shift across categories the centring removes the signal (the 1/p_all deflation), precision is
+// inferred too high, and it feeds back until the REs vanish. center_ss = false estimates the variance
+// in the SAME coordinates the draw uses, keeping the across-category pooling intact.
 // [[Rcpp::export]]
 List update_re_precision_hc_sym(const arma::cube   &beta_c,
                                 const arma::mat    &mu_pooled,
@@ -916,7 +966,8 @@ List update_re_precision_hc_sym(const arma::cube   &beta_c,
                                 Rcpp::Nullable<Rcpp::IntegerVector> block_size_opt = R_NilValue,
                                 bool                re_regularize = false,
                                 double              slab_c2 = 100.0,
-                                Rcpp::Nullable<Rcpp::NumericMatrix> re_support_opt = R_NilValue) {
+                                Rcpp::Nullable<Rcpp::NumericMatrix> re_support_opt = R_NilValue,
+                                bool                center_ss = true) {
 
   int k = beta_c.n_rows;
   int p = beta_c.n_cols; // p = p_all - 1
@@ -1112,7 +1163,7 @@ List update_re_precision_hc_sym(const arma::cube   &beta_c,
         }
 
         if (num_active_in_group > 0) {
-          double mean_diff = sum_diff / p_all;
+          double mean_diff = center_ss ? (sum_diff / p_all) : 0.0;
           double ss_m = 0.0;
           for (int ip = 0; ip < p; ip++) {
             if (re_mask(v, ip, m) > 0.5 && (is_intercept(v) == 1 || y_mask(ip, m) > 0.5)) {
@@ -1121,8 +1172,10 @@ List update_re_precision_hc_sym(const arma::cube   &beta_c,
               ss_m += d_centered * d_centered;
             }
           }
-          double d_baseline = 0.0 - mean_diff;
-          ss_m += d_baseline * d_baseline;
+          if (center_ss) {
+            double d_baseline = 0.0 - mean_diff;   // the pinned baseline category
+            ss_m += d_baseline * d_baseline;
+          }
 
           double inv_rs2 = 1.0;                                   // support-consistent whitening
           if (have_support) { double rsv = re_support(v, m); if (rsv > 1e-12) inv_rs2 = 1.0 / (rsv * rsv); }
@@ -1160,5 +1213,99 @@ List update_re_precision_hc_sym(const arma::cube   &beta_c,
                       Named("sigma") = sigma_out,
                       Named("a_aux") = a_aux_out);
 }
+
+// ==========================================================================
+// Country-Gatekeeper Shrinkage: Half-Cauchy Gibbs update for tau_country
+//
+// Model:
+//   u_{m, v, ip} = (beta_c(v, ip, m) - mu(v, ip)) / (sigma(v, ip) * rs(v, m))
+//   u_{m, v, ip} ~ N(0, tau_m^2)   for v in re_idx (slopes, is_intercept == 0)
+//   tau_m ~ Half-Cauchy(0, tau0_country)
+//
+// Makalic-Schmidt auxiliary representation:
+//   tau_m^2 | nu_m ~ Inv-Gamma(1/2, 1/nu_m)
+//   nu_m           ~ Inv-Gamma(1/2, 1/tau0^2)
+// ==========================================================================
+// [[Rcpp::export]]
+List update_country_shrinkage_hc_cpp(
+    const arma::cube &beta_c,
+    const arma::mat  &mu_pooled,
+    const arma::mat  &sigma_mat,
+    const arma::uvec &re_idx,
+    const arma::cube &re_mask,
+    const arma::mat  &y_mask,
+    const arma::uvec &is_intercept,
+    const arma::vec  &tau_prev,
+    const arma::vec  &nu_prev,
+    double            tau0_country = 1.0,
+    double            slab_c2_country = 4.0,
+    Rcpp::Nullable<Rcpp::NumericMatrix> re_support_opt = R_NilValue,
+    bool              include_intercept = false)
+{
+  int p = beta_c.n_cols;
+  int n_groups = beta_c.n_slices;
+
+  bool have_support = re_support_opt.isNotNull();
+  arma::mat re_support;
+  if (have_support) re_support = Rcpp::as<arma::mat>(re_support_opt);
+
+  arma::vec tau_out(n_groups, arma::fill::ones);
+  arma::vec nu_out(n_groups, arma::fill::ones);
+  const double inv_tau0_sq = 1.0 / (tau0_country * tau0_country);
+
+  for (int m = 0; m < n_groups; m++) {
+    double ss_m = 0.0;
+    double n_active = 0.0;
+
+    for (int ip = 0; ip < p; ip++) {
+      for (arma::uword ri = 0; ri < re_idx.n_elem; ri++) {
+        int v = static_cast<int>(re_idx(ri));
+        if (!include_intercept && is_intercept(v) == 1) continue;
+
+        if (re_mask(v, ip, m) > 0.5 && (is_intercept(v) == 1 || y_mask(ip, m) > 0.5)) {
+          double rs = 1.0;
+          if (have_support) {
+            double rsv = re_support(v, m);
+            if (rsv > 1e-12) rs = rsv;
+          }
+          double base_sd = std::max(sigma_mat(v, ip) * rs, 1e-8);
+          double diff = (beta_c(v, ip, m) - mu_pooled(v, ip)) / base_sd;
+          ss_m += diff * diff;
+          n_active += 1.0;
+        }
+      }
+    }
+
+    if (n_active < 1.0) {
+      tau_out(m) = 0.0;
+      nu_out(m)  = 1.0;
+      continue;
+    }
+
+    // Step 1: Draw nu_m | tau_m^2
+    double tau_sq_prev = std::max(tau_prev(m) * tau_prev(m), 1e-8);
+    double rate_nu = inv_tau0_sq + 1.0 / tau_sq_prev;
+    double nu_new = 1.0 / std::max(R::rgamma(1.0, 1.0 / rate_nu), 1e-12);
+    nu_out(m) = nu_new;
+
+    // Step 2: Draw tau_m^2 | SS_m, nu_m
+    double shape_tau = 0.5 * (n_active + 1.0);
+    double rate_tau  = 1.0 / std::max(nu_new, 1e-12) + 0.5 * ss_m;
+    if (!std::isfinite(rate_tau) || rate_tau <= 0.0) rate_tau = inv_tau0_sq;
+    double tau_sq_new = 1.0 / std::max(R::rgamma(shape_tau, 1.0 / rate_tau), 1e-12);
+
+    // Regularized Finnish slab cap on country shrinkage: tau_eff = sqrt( c2 * tau^2 / (c2 + tau^2) )
+    double tau_val = std::sqrt(std::max(tau_sq_new, 1e-8));
+    if (slab_c2_country > 0.0) {
+      tau_val = std::sqrt((slab_c2_country * tau_sq_new) / (slab_c2_country + tau_sq_new));
+    }
+    double max_cap = (slab_c2_country > 0.0) ? std::sqrt(slab_c2_country) : 50.0;
+    tau_out(m) = std::min(std::max(tau_val, 1e-4), max_cap);
+  }
+
+  return List::create(Named("tau_country") = tau_out,
+                      Named("nu_country")  = nu_out);
+}
+
 
 

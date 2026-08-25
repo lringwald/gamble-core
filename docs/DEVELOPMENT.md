@@ -110,6 +110,17 @@ full resume ~instant, λ/convergence identical.
 - Nests cache with `children` stripped (rebuilt from their own caches on load), so there's no draw
   duplication across the tree. `stream_disk` and `store_dir` are independent and compose.
 
+### 1.4 Per-fit progress heartbeat — `fit_progress`
+Each sub-fit's own iteration bar is normally silenced (there are many fits). With `fit_progress = TRUE`
+(default; interactive knob `FIT_PROGRESS_SEC`) every chain / leaf / imputation prints a **throttled
+heartbeat** relaying the sampler's `Iteration i / niter [Burn-in|Sampling]`, labelled by node path and chain,
+e.g. `[nested_cut]  root/Forests ch2/4  Iteration 2500 / 6000 [Sampling]`. `fit_progress_sec` sets the
+throttle (default 30 s). Passing a `chain_id` to the sampler also **removes the stray `Sampling…0%`
+`txtProgressBar`** that used to sit stuck at 0. In **parallel** mode (`n_cores>1`) the forked chains'
+heartbeats interleave, but each line is self-labelled (`ch1/4`, `ch2/4`, …) so you can watch all chains
+advance at once. During burn-in no disk batches are written, so this heartbeat is the *only* signal that a
+fit is progressing then. Set `fit_progress = FALSE` to restore full silence.
+
 ---
 
 ## 2. `iv_mode` — how leaf uncertainty is carried up

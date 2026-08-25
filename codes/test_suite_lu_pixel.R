@@ -1,5 +1,5 @@
 # =============================================================================
-# master_test_suite_sym.R
+# test_suite_lu_pixel.R
 #
 # Feature-specific validation for the SYMMETRIC additions in mnlogit_rcpp_sym.R
 # / mnlogit_gibbs_core_sym.cpp — the parts that distinguish this sampler from
@@ -15,7 +15,7 @@
 #   PART A  Exact unit tests of the symmetric kernels (machine precision / MC)
 #   PART B  Symmetric feature behaviour in the full sampler (end-to-end)
 #
-# Run:  Rscript codes/master_test_suite_sym.R
+# Run:  Rscript codes/test_suite_lu_pixel.R
 # Exit code is non-zero on any failure.
 # =============================================================================
 
@@ -37,7 +37,7 @@ approx <- function(a, b, tol = 1e-10) max(abs(as.numeric(a) - as.numeric(b))) < 
 maxerr <- function(a, b) max(abs(as.numeric(a) - as.numeric(b)))
 
 cat("================================================================\n")
-cat(" master_test_suite_sym.R — symmetric-feature validation\n")
+cat(" test_suite_lu_pixel.R — symmetric-feature validation\n")
 cat(sprintf(" BLAS: %s\n", extSoftVersion()["BLAS"]))
 cat("================================================================\n\n")
 
@@ -257,6 +257,202 @@ d <- make_data_sym()
     check("B3 symHS shrinks null predictor", null_mag < 0.5 * active_mag,
           sprintf("|xnull|=%.3f vs |x1|=%.3f", null_mag, active_mag))
   }
+}
+
+
+# =============================================================================
+cat("\nPART C — 2026-08-13 fixes and new functionality\n")
+# WHY PART C EXISTS. PART B never caught the NULL-index bug because `fit_sym` passes an EXPLICIT
+# `horseshoe_idx` (so it is never NULL) and its design has no prefix-grouped columns (so no const-sum
+# reference is ever dropped and the post-drop remap never runs). Both conditions are required to
+# reproduce the failure, so the suite was blind to it. C1/C2 close that gap.
+
+# design WITH a constant-sum block, so `cs_drop` is non-empty and the remap at the drop block fires
+make_data_cs <- function(n = 1200, p_all = 3, ng = 10, seed = 11) {
+  set.seed(seed)
+  w <- matrix(rgamma(n * 3, 1), n, 3); w <- w / rowSums(w)     # sums to EXACTLY 1 -> const-sum block
+  X <- cbind(intercept = 1, x1 = rnorm(n), soil_s1 = w[,1], soil_s2 = w[,2], soil_s3 = w[,3])
+  k <- ncol(X); gi <- sample(1:ng, n, replace = TRUE)
+  bt <- matrix(0, k, p_all); bt[2, 1:(p_all-1)] <- c(1.0, -0.6)[1:(p_all-1)]
+  Y <- matrix(0, n, p_all)
+  for (i in 1:n) { eta <- sapply(1:p_all, function(j) sum(X[i,] * bt[,j]))
+    pr <- exp(eta - max(eta)); pr <- pr/sum(pr); Y[i,] <- rmultinom(1, 40, pr) }
+  colnames(Y) <- paste0("cat", 1:p_all)
+  list(X = X, Y = Y, group_idx = gi)
+}
+dcs <- make_data_cs()
+fit_cs <- function(..., seed = 3) { set.seed(seed)
+  suppressWarnings(mnlogit_rcpp_sym(X = dcs$X, Y = dcs$Y, baseline = 1, group_idx = dcs$group_idx,
+    niter = 260, nburn = 120, use_re = TRUE, use_ncp = TRUE, use_horseshoe = TRUE,
+    const_sum_blocks = "auto", re_idx = c(1, 2), chain_id = 1L, ...)) }
+
+## C1. REGRESSION for the NULL -> integer(0) bug. With horseshoe_idx = NULL AND a const-sum drop,
+##     the post-drop remap used to turn NULL into integer(0), emptying hs_idx (k_hs = 0). The
+##     signature is a NEGATIVE global scale: "tau0_pooled=-0.0331 (p0=-0.5)".
+{
+  out <- capture.output(fit_cs(), type = "output")
+  ln  <- grep("Horseshoe Calibration", out, value = TRUE)
+  ok_found <- length(ln) > 0
+  tau0 <- if (ok_found) as.numeric(sub(".*tau0_pooled=([-0-9.eE]+).*", "\\1", ln[1])) else NA
+  p0   <- if (ok_found) as.numeric(sub(".*\\(p0=([-0-9.eE]+)\\).*", "\\1", ln[1])) else NA
+  check("C1 horseshoe calibration emitted", ok_found)
+  check("C1 tau0 POSITIVE (was -0.0331 when hs_idx empty)", isTRUE(tau0 > 0), sprintf("tau0=%.5f", tau0))
+  check("C1 p0 >= 1 (was -0.5 when k_hs = 0)", isTRUE(p0 >= 1), sprintf("p0=%.2f", p0))
+}
+
+## C2. The calibrated horseshoe must actually REACH the draw: changing p0 must change the fit.
+##     Before the fix these were bit-identical because hs_idx was empty.
+{
+  # NB pick a p0 that DIFFERS from the default. This design has 4 active covariates after the
+  # const-sum drop, so the default is max(1, round(4*0.3)) = 1 -- comparing against p0_mu = 1
+  # compares a value with itself and trivially "passes" as identical (my first version did).
+  a <- fit_cs(p0_mu = NULL); b <- fit_cs(p0_mu = 3)
+  Ba <- apply(a$postb_pooled, c(1,2), mean); Bb <- apply(b$postb_pooled, c(1,2), mean)
+  check("C2 p0_mu changes the posterior (HS reaches the draw)", !identical(Ba, Bb),
+        sprintf("max|diff|=%.4g", maxerr(Ba, Bb)))
+}
+
+## C3. gibbs_step_re_ncp(return_lik) — opt-in likelihood return must be EXACT and INERT when off.
+{
+  set.seed(2); k <- 4; p <- 2; p_all <- 3; ng <- 5; n <- 200
+  Xk <- cbind(1, matrix(rnorm(n*(k-1)), n, k-1)); gi <- sample(ng, n, TRUE)
+  idx <- lapply(1:ng, function(m) which(gi == m))
+  args <- list(Xk, t(Xk), matrix(rnorm(n*p_all), n, p_all), matrix(runif(n*p,.5,1.5), n, p),
+               matrix(0, n, p), diag(1, k), matrix(0, k, p), matrix(0, k, p),
+               matrix(0, k, p), matrix(.5, k, p), array(0, c(k,p,ng)), as.integer(1:p),
+               idx, lapply(idx, function(i) Xk[i,,drop=FALSE]),
+               lapply(idx, function(i) t(Xk[i,,drop=FALSE])), ng, matrix(0, n, p_all), FALSE,
+               as.integer(0:(k-1)), matrix(1, k, ng), matrix(1, p, ng), as.integer(c(1, rep(0,k-1))),
+               matrix(1, k, ng), matrix(1, k, p), FALSE)
+  set.seed(9); r0 <- do.call(gibbs_step_re_ncp, c(args, list(FALSE)))
+  set.seed(9); r1 <- do.call(gibbs_step_re_ncp, c(args, list(TRUE)))
+  check("C3 return_lik=TRUE leaves the draw unchanged", identical(r0$mu, r1$mu),
+        sprintf("max|diff|=%.3g", maxerr(r0$mu, r1$mu)))
+  check("C3 P_lik returned with correct shape", !is.null(r1$P_lik) && all(dim(r1$P_lik) == c(k,k,p)))
+  check("C3 Pb_lik returned with correct shape", !is.null(r1$Pb_lik) && all(dim(r1$Pb_lik) == c(k,p)))
+  check("C3 P_lik symmetric (X'Omega X)", isTRUE(approx(r1$P_lik[,,1], t(r1$P_lik[,,1]), 1e-10)))
+  check("C3 P_lik absent when return_lik=FALSE", is.null(r0$P_lik))
+}
+
+## C4. Regularised (Finnish) slab in update_re_precision_hc — the NON-symmetric variant. The cap
+##     lived only in the _sym variant, so `re_regularize`/`collapse_slab_c2` were inert on the path
+##     the sampler actually uses (proved by bit-identical fits at slab_c2 = 100 vs 4).
+{
+  set.seed(4); kk <- 5; pp_ <- 3; G <- 20; TRUE_SD <- 3
+  bc <- array(rnorm(kk*pp_*G, 0, TRUE_SD), c(kk,pp_,G)); mu0 <- matrix(0, kk, pp_)
+  chain <- function(c2, reg, nit = 40) { pr <- matrix(1, kk, pp_); au <- matrix(.5, kk, pp_)
+    for (i in seq_len(nit)) { r <- update_re_precision_hc(beta_c = bc, mu_pooled = mu0,
+        re_idx = as.integer(0:(kk-1)), n_groups = G, re_mask = array(1, c(kk,pp_,G)),
+        y_mask = matrix(1, pp_, G), is_intercept = as.integer(c(1, rep(0, kk-1))),
+        prec_prev = pr, a_aux_prev = au, re_scale_A = 1.0, re_regularize = reg, slab_c2 = c2)
+      pr <- r$prec; au <- r$a_aux }
+    median(r$sigma) }
+  s_loose <- chain(100, TRUE); s_tight <- chain(1, TRUE); s_off <- chain(1, FALSE)
+  check("C4 loose cap recovers the true RE sd", abs(s_loose - TRUE_SD) < 1.2,
+        sprintf("sigma=%.3f (true %.1f, cap 10)", s_loose, TRUE_SD))
+  check("C4 tight cap clips sigma at sqrt(c2)", s_tight <= 1.02, sprintf("sigma=%.3f (cap 1)", s_tight))
+  check("C4 re_regularize=FALSE ignores slab_c2", s_off > 1.5, sprintf("sigma=%.3f (uncapped)", s_off))
+}
+
+## C5. Parameter-count-aware slab: collapse_slab_c2 = "auto" must give c2 = R^2 / K.
+{
+  out <- capture.output(fit_cs(collapse_slab_c2 = "auto", re_slab_range = 3), type = "output")
+  ln <- grep("Auto slab", out, value = TRUE)
+  got <- if (length(ln)) as.numeric(sub(".*c2 = R\\^2/K = ([0-9.]+).*", "\\1", ln[1])) else NA
+  check("C5 auto slab emitted", length(ln) > 0)
+  check("C5 auto slab c2 == R^2/K", isTRUE(abs(got - 9/2) < 1e-6), sprintf("c2=%.4f expected %.4f", got, 9/2))
+}
+
+## C6. Hierarchical horseshoe on the RE scales (re_hs_global) — must be OFF by default and inert.
+{
+  a <- fit_cs(); b <- fit_cs(re_hs_global = FALSE)
+  check("C6 re_hs_global=FALSE is the default (bit-identical)",
+        identical(apply(a$postb_pooled, c(1,2), mean), apply(b$postb_pooled, c(1,2), mean)))
+  cc <- fit_cs(re_hs_global = TRUE, re_hs_tau0 = 0.1)
+  check("C6 re_hs_global=TRUE runs and returns a tau trace",
+        !is.null(cc$post_re_tau) && all(is.finite(cc$post_re_tau)) && all(cc$post_re_tau > 0))
+}
+
+## C7. Symmetric coupling now covers the NON-RE covariates too (complement block). Its defining
+##     property is BASELINE-INVARIANCE of the zero-sum posterior; the diagonal penalty is not
+##     invariant because it acts in baseline-removed coordinates.
+##
+##     `hs_kernel_live = !sym` IS LOAD-BEARING (added 2026-08-21). The symmetric penalty travels
+##     through c_v and is always applied, but the DIAGONAL penalty travels through hs_prec_kernel,
+##     which is bound once before the Gibbs loop to a still-zero hs_prec_mat and never rebinds -- so
+##     without this flag the "diagonal" arm carries NO FE horseshoe at all and C7 silently compares
+##     symmetric-HS-plus-ridge against RIDGE ALONE. The 1.80x it used to report for diagonal was the
+##     ridge's baseline dependence, not the diagonal horseshoe's. Both arms now apply their own
+##     penalty, which is what the test claims to compare.
+{
+  zs <- function(bl, sym, seed) { set.seed(seed)
+    f <- suppressWarnings(mnlogit_rcpp_sym(X = dcs$X, Y = dcs$Y, baseline = bl,
+      group_idx = dcs$group_idx, niter = 300, nburn = 140, use_re = TRUE, use_ncp = TRUE,
+      use_horseshoe = TRUE, symmetric_hs = sym, hs_kernel_live = !sym,
+      const_sum_blocks = "auto",
+      re_idx = c(1, 2), chain_id = 1L))
+    apply(f$postb_pooled, c(1,2), mean) }
+  ratio <- function(sym) { a1 <- zs(1, sym, 11); a2 <- zs(1, sym, 22); cr <- zs(3, sym, 11)
+    mean(abs(a1 - cr)) / max(mean(abs(a1 - a2)), 1e-12) }
+  r_diag <- ratio(FALSE); r_sym <- ratio(TRUE)
+  # The old comparative assertion ("symmetric is MORE baseline-invariant than diagonal") is GONE.
+  # It was never measurable here: with both horseshoes live it reverses (symmetric 1.06x vs diagonal
+  # 0.67x), and both sit inside MC noise because on a 1200-row, 3-category synthetic the likelihood
+  # swamps the prior. It is a PRIOR property, so C7a below asserts it EXACTLY instead; what remains
+  # end-to-end is the claim that actually holds and is worth regression-testing.
+  check("C7 symmetric cross-baseline shift is within MC noise", r_sym < 1.6,
+        sprintf("symmetric=%.2fx (diagonal=%.2fx, both live)", r_sym, r_diag))
+}
+
+## C7a. BASELINE INVARIANCE OF THE PENALTY ITSELF — exact, no MCMC, no noise.
+##      For a zero-sum coefficient vector z (sum z = 0), baseline coding with baseline j gives
+##      b_k = z_k - z_j. Then  b'Msym b = ||b||^2 - (sum b)^2/p_all = sum z^2  for EVERY j, while the
+##      diagonal penalty ||b||^2 = sum z^2 + p_all * z_j^2 moves with the arbitrary baseline choice.
+##      That identity is the entire reason symmetric_hs exists, so test it directly.
+{
+  set.seed(4)
+  p_all <- 6
+  z <- rnorm(p_all); z <- z - mean(z)                    # a zero-sum coefficient vector
+  Msym <- diag(1, p_all - 1) - matrix(1 / p_all, p_all - 1, p_all - 1)
+  q_sym <- q_diag <- numeric(p_all)
+  for (j in seq_len(p_all)) {
+    b <- (z - z[j])[-j]                                  # baseline-removed coords for baseline j
+    q_sym[j]  <- as.numeric(t(b) %*% Msym %*% b)
+    q_diag[j] <- sum(b^2)
+  }
+  check("C7a symmetric penalty is EXACTLY baseline-invariant",
+        max(abs(q_sym - q_sym[1])) < 1e-10,
+        sprintf("spread=%.2e (value %.6f == sum z^2 %.6f)", max(abs(q_sym - q_sym[1])),
+                q_sym[1], sum(z^2)))
+  check("C7a symmetric quadratic form equals the zero-sum norm",
+        abs(q_sym[1] - sum(z^2)) < 1e-10, sprintf("diff=%.2e", abs(q_sym[1] - sum(z^2))))
+  check("C7a diagonal penalty is NOT baseline-invariant (the motivation)",
+        diff(range(q_diag)) > 1e-6,
+        sprintf("range %.4f-%.4f (%.2fx)", min(q_diag), max(q_diag), max(q_diag)/min(q_diag)))
+}
+
+
+## C8. FULL BAYES ON THE RE SLAB (estimate_slab_c2). c2 must be (a) traced, (b) IDENTIFIED -- two very
+##     different starting values must converge to the same neighbourhood, which is exactly the check
+##     the learned global tau (re_hs_global) FAILED -- and (c) inert when off.
+{
+  c2run <- function(est, start, seed = 5) { set.seed(seed)
+    suppressWarnings(mnlogit_rcpp_sym(X = dcs$X, Y = dcs$Y, baseline = 1, group_idx = dcs$group_idx,
+      niter = 400, nburn = 180, use_re = TRUE, use_ncp = TRUE, use_horseshoe = TRUE,
+      const_sum_blocks = "auto", re_idx = c(1, 2), re_regularize = TRUE,
+      collapse_slab_c2 = start, estimate_slab_c2 = est, slab_df_re = 10, slab_s2_re = 4,
+      chain_id = 1L)) }
+  off <- c2run(FALSE, 4)
+  check("C8 estimate_slab_c2=FALSE leaves no c2 trace", is.null(off$post_slab_c2))
+  a <- c2run(TRUE, 4); b <- c2run(TRUE, 100)
+  ok_tr <- !is.null(a$post_slab_c2) && all(is.finite(a$post_slab_c2)) && all(a$post_slab_c2 > 0)
+  check("C8 c2 traced, finite and positive", ok_tr)
+  ma <- median(a$post_slab_c2); mb <- median(b$post_slab_c2)
+  # identified => the ratio of the two posterior medians is near 1 despite a 25x gap in starting value
+  check("C8 c2 IDENTIFIED (starts 4 and 100 converge)", max(ma, mb) / min(ma, mb) < 2.5,
+        sprintf("median from 4 = %.2f vs from 100 = %.2f (ratio %.2f)", ma, mb, max(ma,mb)/min(ma,mb)))
+  check("C8 c2 does not run off to the funnel regime", mb < 25,
+        sprintf("median from start 100 = %.2f (start was 100)", mb))
 }
 
 # =============================================================================

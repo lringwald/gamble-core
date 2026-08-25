@@ -407,7 +407,7 @@ combine_chains <- function(res_list, keep_chains = FALSE) {
     
     # Identify all summary fields to combine
     fields <- c("postb_pooled", "postb_total", "post_log_lik", 
-                "post_f", "post_sigma_re", "post_r", "post_log_lik_pointwise")
+                "post_f", "post_sigma_re", "post_r", "post_tau_country", "post_log_lik_pointwise")
 
     for (f in fields) {
       if (is.null(out[[f]])) next
@@ -1019,13 +1019,27 @@ reorder_mnl_covariates <- function(cov_names, cat_names = NULL) {
 
 # --- Detect Sum-to-Constant Blocks ---
 detect_constant_sum_blocks <- function(X, tol = 1e-4, mean_tol = 0.05,
-                                        cv_tol = 0.05, robust = TRUE) {
+                                        cv_tol = 0.05, robust = TRUE,
+                                        dev_tol = 0.01, max_dev_frac = 0.02, verbose = FALSE) {
   # Detect groups of columns whose row sums are (more or less) constant.
   # `tol` is the empty-row threshold; a block qualifies if the row-sum over valid rows is
   # near a constant ~1 within RELATIVE tolerances (mean within mean_tol of 1, robust
   # coefficient-of-variation < cv_tol). Robust (median/MAD) by default so a handful of
   # partial-coverage outlier rows (e.g. focal-neighbourhood border pixels: most sum ~1, a
   # few ~0.5) don't disqualify an otherwise-constant block the way plain mean/sd did.
+  #
+  # COVERAGE GATE (dev_tol / max_dev_frac) — added 2026-08-12. The robust centre/spread are
+  # computed on VALID rows only, but the fit uses EVERY row, and the whole point of admitting a
+  # block is the zero-sum reconstruction, which shifts each class utility by
+  #     -mean_k * rowSum_i(block)
+  # (see the const-sum comment in mnlogit_rcpp_sym.R). An intercept can absorb that ONLY if
+  # rowSum_i is the same on every row. MAD is blind to exactly the rows that break this: on the
+  # real pixel design OC_TOP has MAD 0 (the modal row sums to 1) yet is constant-sum on just 42.9%
+  # of rows — 15.5% are all-zero — so admitting it introduced a row-varying error the intercept
+  # compensation cannot remove, with mean |rowSum - const| = 0.34. So: also require the row sum to
+  # sit within `dev_tol` of the constant on at least (1 - max_dev_frac) of ALL rows, empty rows
+  # included. A block that fails this is still perfectly usable — it just gets plain contrast
+  # coding via the rank guard instead of the zero-sum treatment.
   # Returns a named list of integer vectors (column indices).
   k <- ncol(X)
   cn <- colnames(X)
@@ -1066,12 +1080,21 @@ detect_constant_sum_blocks <- function(X, tol = 1e-4, mean_tol = 0.05,
       ctr <- mean(valid_rs); spread <- sd(valid_rs)
     }
     cv <- spread / max(abs(ctr), 1e-8)
-    if (abs(ctr - 1) < mean_tol && cv < cv_tol) {
+    # coverage over ALL rows (not just valid ones) — the reconstruction has to hold everywhere
+    dev_frac <- mean(abs(rs - ctr) > dev_tol)
+    ok_ctr <- abs(ctr - 1) < mean_tol; ok_cv <- cv < cv_tol; ok_cov <- dev_frac <= max_dev_frac
+    if (ok_ctr && ok_cv && ok_cov) {
       blocks[[pfx]] <- matching
       assigned[matching] <- TRUE
+      if (verbose) message(sprintf("const-sum: ACCEPT %-10s (%d cols) const=%.4f cv=%.4f off-const rows=%.1f%%",
+                                   pfx, length(matching), ctr, cv, 100 * dev_frac))
+    } else if (verbose) {
+      message(sprintf("const-sum: reject %-10s (%d cols) const=%.4f cv=%.4f off-const rows=%.1f%%  [fails: %s]",
+                      pfx, length(matching), ctr, cv, 100 * dev_frac,
+                      paste(c("centre", "cv", "coverage")[!c(ok_ctr, ok_cv, ok_cov)], collapse = "+")))
     }
   }
-  
+
   return(blocks)
 }
 

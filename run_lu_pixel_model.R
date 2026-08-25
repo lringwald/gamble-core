@@ -270,13 +270,43 @@ organic_area_weight <- function(yr) {
   if (is.na(s) || is.na(r)) 1 else min(s / r, 1)
 }
 # Base land-use values folded into a single non-modelled "no_choice" class:
+# ---- NATURE / NO-CHOICE STRUCTURE --------------------------------------------------------------
+# The natural split now lives in the MAPPING, not here: `GLOBIOM_subclass` (built by
+# codes/build_globiom_subclass.R) resolves the old catch-all Natural_unmanaged into
+# Natural_grassland / Natural_shrubland using the BIOCLIMA_DS_reporting taxonomy, while
+# reproducing all 54 managed class names EXACTLY. Select it with
+#   DRIVER_CLASS_COLS="GLOBIOM_subclass"
+# Two consequences follow automatically and need no code here:
+#   * `nest_tree_by_prefix` groups on the first token, so >=2 Natural_* classes form a
+#     "Natural" nest by themselves -- Natural_unmanaged used to be a ROOT SINGLETON.
+#   * Natural_other stops being swallowed by no_choice (below), giving that nest 3 leaves.
+# no_choice keeps only what is genuinely non-choosable: water, wetlands, NODATA.
+# Natural_other (beaches, rock, sparse, burnt, ice) is a real unmanaged cover, so it is
+# promoted to its own class and nested with the naturals.
+PROMOTE_NATURAL_OTHER <- isTRUE(as.logical(Sys.getenv("DRIVER_PROMOTE_NATURAL_OTHER", "FALSE")))
 NO_CHOICE_LU <- c("Waterbodies_marine", "Waterbodies_inland", "Wetlands_natural", "Natural_other", "NODATA")
-BASELINE_CLASS <- "Natural_unmanaged"
+if (PROMOTE_NATURAL_OTHER) NO_CHOICE_LU <- setdiff(NO_CHOICE_LU, "Natural_other")
+
+# The baseline must EXIST in the fitted classes. Natural_unmanaged is gone under
+# GLOBIOM_subclass, so default to the largest class overall (Forests_MI, 16.4% of area);
+# the driver additionally self-heals to the most prevalent class if this is absent.
+BASELINE_CLASS <- Sys.getenv("DRIVER_BASELINE",
+                             if (any(grepl("GLOBIOM_subclass", CLASS_COLS))) "Forests_MI" else "Natural_unmanaged")
 
 # Where each input's mapping table + join key live.
 SOURCE_REGISTRY <- list(
   LUM = list(
-    mapping_file = "../LAMASUS_downscaling/aux_files/LAMASUS_LUM_thematic_mapping.csv",
+    # Prefer the CURATED copy inside this repo (aux_files/) -- gamble-core is meant to be
+    # self-contained, and the hand-maintained taxonomy (GLOBIOM_subclass + _nest) lives there.
+    # Falls back to the shared LAMASUS_downscaling copy so older checkouts keep working.
+    mapping_file = local({
+      .c <- c("aux_files/LUM_Code_to_macro_model_mapping.csv",
+              "../LAMASUS_downscaling/aux_files/LAMASUS_LUM_thematic_mapping.csv")
+      .c <- c(Sys.getenv("LUM_MAPPING_FILE", ""), .c); .c <- .c[nzchar(.c)]
+      .h <- .c[file.exists(.c)]
+      if (!length(.h)) stop("no LUM mapping found; looked in: ", paste(.c, collapse = ", "))
+      .h[1]
+    }),
     join_key = "LUM_Code", base_lu = "GLOBIOM_UNFCCC"
   ),
   CLC = list(
@@ -286,6 +316,7 @@ SOURCE_REGISTRY <- list(
 )
 .src <- SOURCE_REGISTRY[[OUTCOME_SOURCE]]
 if (is.null(.src)) stop("Unknown OUTCOME_SOURCE: ", OUTCOME_SOURCE)
+cat(sprintf("Class mapping: %s\n", .src$mapping_file))
 
 # ---- Single class-derivation function (target set, outcome, focal all use it) ----
 # Adds `model_class` to a mapping table. The base class is the make.names() of the
@@ -327,13 +358,32 @@ derive_model_class <- function(map_dt, class_cols = CLASS_COLS, base_lu = .src$b
     m[grepl("irrigat", lbl) & model_class != "NODATA" & !grepl("IR", gsub("_", "", model_class)),
       model_class := paste0(model_class, "_IR")]
   }
+  # ---- Natural split: key on LUM_Code (robust) rather than the free-text label ----
   m[, focal_class := model_class]
+  # Match on the DERIVED class as well as the raw base LU. Historically only base_lu was checked, so a
+  # hand-curated leaf name in CLASS_COLS could never be routed to no_choice however it was spelled.
+  # No-op on the current mapping (GLOBIOM_subclass copies GLOBIOM_UNFCCC on exactly the no_choice rows).
+  m[model_class %in% NO_CHOICE_LU, model_class := "no_choice"]
   if (base_lu %in% names(m)) m[get(base_lu) %in% NO_CHOICE_LU, model_class := "no_choice"]
   m[]
 }
 
 # ---- Load mapping + derive the target class set ---------------------------
 mapping_thematic <- as.data.table(fread(.src$mapping_file))
+
+# A CURATED nest column supersedes the no_choice COLLAPSE. NO_CHOICE_LU rewrites those classes to a
+# single "no_choice" column in derive_model_class -- i.e. BEFORE the tree is built -- so a curated
+# taxonomy that gives Waterbodies/NODATA their own leaves (or moves Wetlands_natural under Natural)
+# would be silently erased: the leaves simply would not exist in Y. When the curated column is present
+# the TREE does the grouping instead, so the collapse must stand down. DRIVER_KEEP_NO_CHOICE=TRUE
+# restores the historical behaviour.
+if ((Sys.getenv("DRIVER_NEST_COL", paste0(CLASS_COLS[1], "_nest")) %in% names(mapping_thematic)) &&
+    !isTRUE(as.logical(Sys.getenv("DRIVER_KEEP_NO_CHOICE", "FALSE")))) {
+  if (length(NO_CHOICE_LU))
+    cat(sprintf(">>> curated nests present -> no_choice COLLAPSE disabled (was: %s); these become real leaves.\n",
+                paste(NO_CHOICE_LU, collapse = ", ")))
+  NO_CHOICE_LU <- character(0)
+}
 # Drop irrigated/organic source rows when the switch is off, so their codes can
 # never appear as classes (their area is folded back by the carve-out logic).
 if ("LUM_label" %in% names(mapping_thematic)) {
@@ -382,15 +432,33 @@ cat("  Loading prior covariates...\n")
 # yield + ALL year-suffixed (_YYYY, covers the grep('_2000$') climate discovery, GDP/Pop/GHM_HI/spei48/bio per
 # year) + base bio/pr/tas/spei48/socioecon. Drops only columns outside that union (never used) -> result-
 # identical, but avoids loading the full 1.3GB parquet (memory + read time). Verified bit-identical X_mat.
-.pq_nm <- names(arrow::open_dataset(file.path(GRIDWORK_DIR, "prior_model_1km_master_inputs.parquet")))
+# The master 1km parquet and the one_kmID mapping DO NOT live in the same folder: gridwork moved to
+# cascadinggamble-core, and ../LAMASUS_gridwork/output (the GRIDWORK_DIR default, which still holds the
+# mapping) keeps a STALE copy. Resolving the parquet via GRIDWORK_DIR therefore silently picked the June
+# copy, which has GHM_HI/GHM_Ovr but NO GHM_TI -- so the GHM_VARS gate below dropped GHM_TI from the
+# design without failing. Pick the NEWEST parquet across both roots (same resolver the count driver
+# uses, GAMBLE_MASTER_PARQUET to override) and leave GRIDWORK_DIR for the mapping file.
+PRIOR_1KM_PARQUET <- Sys.getenv("GAMBLE_MASTER_PARQUET", "")
+if (!nzchar(PRIOR_1KM_PARQUET)) {
+  .cands <- c("../cascadinggamble-core/data/02_intermediate/prior_model_1km_master_inputs.parquet",
+              file.path(GRIDWORK_DIR, "prior_model_1km_master_inputs.parquet"))
+  .cands <- .cands[file.exists(.cands)]
+  if (!length(.cands)) stop("master 1km parquet not found in cascadinggamble-core or ", GRIDWORK_DIR)
+  PRIOR_1KM_PARQUET <- .cands[order(file.mtime(.cands), decreasing = TRUE)][1]
+}
+cat(sprintf(">>> master 1km parquet: %s  (modified %s)\n", PRIOR_1KM_PARQUET,
+            format(file.mtime(PRIOR_1KM_PARQUET), "%Y-%m-%d %H:%M")))
+.pq_nm <- names(arrow::open_dataset(PRIOR_1KM_PARQUET))
 .keep_1km <- unique(c("LAMASUS_1km_bufferID",
-  "Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "allPA_share", "RAI", "CISI",
+  # RAI removed 2026-08-04 (see the count driver): accessibility/human-footprint is carried by the
+  # GHM v3 threat groups GHM_HI + GHM_TI instead. GHM_TI is optional until the gridwork pull lands.
+  "Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "allPA_share", "CISI",
   "OC_TOP", "ROO", "AWC_TOP", "VS", "yield_index_Low", "yield_index_Med", "yield_index_High",
   "Growing_Degree_Days_gdd5", "Precipitation_Seasonality_bio15", "Annual_Precipitation_bio12",  # static CHELSA (descriptive names, no year suffix, don't match ^bio/pr/tas)
   grep("_[0-9]{4}$", .pq_nm, value = TRUE),
-  grep("^(bio|pr|tas|spei48|GHM_HI|GDP|Pop)", .pq_nm, value = TRUE)))
+  grep("^(bio|pr|tas|spei48|GHM_HI|GHM_TI|GDP|Pop)", .pq_nm, value = TRUE)))
 prior_1km <- as.data.table(dplyr::collect(dplyr::select(
-  arrow::open_dataset(file.path(GRIDWORK_DIR, "prior_model_1km_master_inputs.parquet")),
+  arrow::open_dataset(PRIOR_1KM_PARQUET),
   dplyr::any_of(intersect(.keep_1km, .pq_nm)))))
 cat(sprintf("  prior_1km: column-projected read %d of %d cols x %d rows\n", ncol(prior_1km), length(.pq_nm), nrow(prior_1km)))
 setnames(prior_1km, "spei48_2018", "spei48_2020")
@@ -399,8 +467,27 @@ for (.col in names(prior_1km)[sapply(prior_1km, is.double)]) {
   set(prior_1km, j = .col, value = fifelse(is.nan(prior_1km[[.col]]), NA_real_, prior_1km[[.col]]))
 }
 yield_cols <- c("yield_index_Low", "yield_index_Med", "yield_index_High")
+# GHM threat groups present for every modelled year (GHM_HI always; GHM_TI once gridwork pulls it).
+# They are SOCIO-ECONOMIC year-varying covariates, NOT climate -> excluded from the climate discovery.
+GHM_VARS <- c("GHM_HI", "GHM_TI")[vapply(c("GHM_HI", "GHM_TI"),
+  function(v) all(paste0(v, "_", COV_YEARS) %in% names(prior_1km)), logical(1))]
+.ghm_missing <- setdiff(c("GHM_HI", "GHM_TI"), GHM_VARS)
+cat(sprintf("  GHM threat groups available for all COV_YEARS: %s%s\n",
+  if (length(GHM_VARS)) paste(GHM_VARS, collapse = ", ") else "(none)",
+  if (length(.ghm_missing)) sprintf("   [MISSING: %s -> not modelled; run gridwork download_ghm.R]",
+                                    paste(.ghm_missing, collapse = ", ")) else ""))
+# Also raise it as a WARNING, not just a cat: silently dropping a requested driver variable is how
+# GHM_TI vanished from the 2026-08-12 design (stale parquet had no GHM_TI_2020) and was only caught by
+# diffing column names against the previous design afterwards.
+if (length(.ghm_missing))
+  warning(sprintf("GHM variable(s) %s NOT in %s for COV_YEARS=%s -> SILENTLY EXCLUDED from the design. ",
+                  paste(.ghm_missing, collapse = ", "), basename(PRIOR_1KM_PARQUET),
+                  paste(COV_YEARS, collapse = ",")),
+          "Check you are on the LIVE parquet (GAMBLE_MASTER_PARQUET) before using this design.",
+          call. = FALSE, immediate. = TRUE)
 climate_cols_raw_2000 <- grep("_2000$", names(prior_1km), value = TRUE)
-climate_cols <- sub("_2000$", "", setdiff(climate_cols_raw_2000, c("GHM_HI_2000", "GDP_2000", "Pop_2000")))
+climate_cols <- sub("_2000$", "", setdiff(climate_cols_raw_2000,
+  c(paste0(c("GHM_HI", "GHM_TI", "GHM_Ovr"), "_2000"), "GDP_2000", "Pop_2000")))
 
 cat(paste0("  Loading 1km -> ", PIXEL_RES, "km grid mapping...\n"))
 grid_map_pixel <- arrow::read_parquet(file.path(GRIDWORK_DIR, mapping_file)) %>% as.data.table()
@@ -922,10 +1009,9 @@ dat_pixel_list <- lapply(T_PAIRS, function(tp) {
   }
 
   # 2. COVARIATES (X-Temporal)
-  ghm_hi_col <- paste0("GHM_HI_", tp$cov_year)
   # yield_cols is now globally defined
   climate_cols <- c("spei48", grep("^(bio|pr|tas)", names(prior_1km), value = TRUE))
-  climate_cols <- setdiff(climate_cols, c("GHM_HI", "GDP", "Pop"))
+  climate_cols <- setdiff(climate_cols, c(GHM_VARS, "GHM_Ovr", "GDP", "Pop"))
 
   gdp_col <- paste0("GDP_", tp$cov_year)
   pop_col <- paste0("Pop_", tp$cov_year)
@@ -939,7 +1025,7 @@ dat_pixel_list <- lapply(T_PAIRS, function(tp) {
 
   static_chelsa_cols <- intersect(c("Growing_Degree_Days_gdd5", "Precipitation_Seasonality_bio15", "Annual_Precipitation_bio12"), names(prior_1km))
 
-  temp_x_1km_yr <- prior_1km[, .SD, .SDcols = c("LAMASUS_1km_bufferID", "Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "allPA_share", "RAI", "CISI", yield_cols, static_chelsa_cols, climate_cols_raw)]
+  temp_x_1km_yr <- prior_1km[, .SD, .SDcols = c("LAMASUS_1km_bufferID", "Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "allPA_share", "CISI", yield_cols, static_chelsa_cols, climate_cols_raw)]
 
   # Rename climate columns to drop the year suffix so they are panel-consistent
   if (length(climate_cols_raw) > 0) {
@@ -948,7 +1034,7 @@ dat_pixel_list <- lapply(T_PAIRS, function(tp) {
 
   temp_x_1km_yr[, Pop := prior_1km[[pop_col]]]
   temp_x_1km_yr[, GDP := prior_1km[[gdp_col]]]
-  temp_x_1km_yr[, GHM_HI := prior_1km[[ghm_hi_col]]]
+  for (.g in GHM_VARS) temp_x_1km_yr[[.g]] <- prior_1km[[paste0(.g, "_", tp$cov_year)]]
   cont_vars <- setdiff(colnames(temp_x_1km_yr), "LAMASUS_1km_bufferID")
   # Distinguish aggregation type per variable to handle intensive vs extensive quantities
   mean_vars <- setdiff(cont_vars, c("Pop", "GDP"))
@@ -1053,11 +1139,20 @@ dat_pixel_list <- lapply(T_PAIRS, function(tp) {
     set(tier_dat, which(is.na(tier_dat[[j]])), j, 0)
   }
 
-  # Create focal_NODATA: 1 if pixel was dropped by terra (empty neighborhood), 0 otherwise
-  # tier_dat[, focal_NODATA := as.numeric(is.na(get(focal_cols_final[1])))]
-
   # Fill gaps for pixels dropped by terra focal (e.g. boundary pixels) with 0
   for (j in focal_cols_final) set(tier_dat, which(is.na(tier_dat[[j]])), j, 0)
+
+  # focal_NODATA = the UNCOVERED share of the neighbourhood, 1 - sum(class shares).
+  # WHY A COMPLEMENT, NOT THE OLD BINARY is.na() INDICATOR (which sat here commented out and, placed
+  # after the NA->0 fill above, would have been all-zero anyway): it makes the focal block sum to
+  # EXACTLY 1 on every row. That is the precondition for the zero-sum reconstruction -- it shifts each
+  # class utility by -mean_k * rowSum(block), which an intercept can absorb ONLY if rowSum is constant.
+  # Measured on the delivered design, the class columns alone sum to 1 on just 5% of rows (median
+  # 0.957, 8.25% entirely zero), so without this column the block cannot be treated as compositional.
+  # It also carries real information: partial neighbourhood coverage at coast/border pixels.
+  # NOT an LU class -- it is DERIVED, so it must stay out of the recipe's `lu_classes` and be
+  # recomputed as the complement at predict time.
+  tier_dat[, focal_NODATA := pmax(0, 1 - rowSums(.SD)), .SDcols = focal_cols_final]
 
   tier_dat[, out_year := tp$out_year]
   tier_dat[, cov_year := tp$cov_year]
@@ -1079,9 +1174,9 @@ if ("focal_dummy_fcl_class" %in% names(dat_pixel)) {
 }
 
 # Explicit Filtering
-skewed_vars <- c("GDP", "Pop", "RAI")
+skewed_vars <- c("GDP", "Pop")   # RAI removed 2026-08-04 (replaced by the GHM threat groups)
 static_chelsa_cols <- intersect(c("Growing_Degree_Days_gdd5", "Precipitation_Seasonality_bio15", "Annual_Precipitation_bio12"), names(dat_pixel))
-spatial_cont_cols <- c("Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "allPA_share", "GHM_HI", "CISI", skewed_vars, yield_cols, static_chelsa_cols, climate_cols)
+spatial_cont_cols <- c("Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "allPA_share", GHM_VARS, "CISI", skewed_vars, yield_cols, static_chelsa_cols, climate_cols)
 soil_cols <- grep("_s[0-9]+$", colnames(dat_pixel), value = TRUE)
 focal_cols <- grep("^focal_", colnames(dat_pixel), value = TRUE)
 
@@ -1096,7 +1191,7 @@ for (j in focal_cols) {
 # must never delete the dataset.
 model_cont_cols <- c(
   "Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean",
-  "allPA_share", "GHM_HI", "CISI", "spei48", skewed_vars, static_chelsa_cols
+  "allPA_share", GHM_VARS, "CISI", "spei48", skewed_vars, static_chelsa_cols
 )
 essential_cols <- intersect(c(model_cont_cols, soil_cols, focal_cols), colnames(dat_pixel))
 final_cats_pixel <- intersect(target_classes, colnames(dat_pixel))
@@ -1293,7 +1388,7 @@ for (.v in skewed_vars) {
 }
 
 spatial_cont_cols_trans <- c(
-  "Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "allPA_share", "GHM_HI", "CISI",
+  "Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "allPA_share", GHM_VARS, "CISI",
   paste0("log1p_", skewed_vars), static_chelsa_cols, climate_cols, yield_cols
 )
 focal_cov_cols <- grep("^focal_", colnames(dat_pixel), value = TRUE)
@@ -1347,35 +1442,28 @@ X_mat[!is.finite(X_mat)] <- 0
 # qualify: they ARE constant-sum (median rowsum 1.0, MAD 0 -> 99.4% of valid pixels sum to exactly
 # 1), but a plain mean/sd test was fooled by ~0.6% partial-coverage border pixels (lone 0.5 rowsums)
 # -> the old strict 1e-4 detector missed focal entirely, driving the high focal-share Rhats.
-const_sum_blocks <- detect_constant_sum_blocks(X_mat)
-cat(sprintf("Detected %d constant-sum blocks:\n", length(const_sum_blocks)))
-if (length(const_sum_blocks) > 0) {
-  cat(paste("  -", names(const_sum_blocks), " (", sapply(const_sum_blocks, length), " cols)\n", collapse = ""))
-}
+# DIAGNOSTIC ONLY -- the samplers run their own detection (const_sum_blocks = "auto"). Printed here
+# with verbose=TRUE so the accept/reject reason per block is visible in the driver log, and so a block
+# that silently stops qualifying (e.g. focal_NODATA missing) is obvious rather than a mystery Rhat.
+const_sum_blocks <- detect_constant_sum_blocks(X_mat, verbose = TRUE)
+cat(sprintf("Const-sum blocks the samplers will treat as compositional: %s\n",
+            if (length(const_sum_blocks))
+              paste(sprintf("%s(%d cols)", names(const_sum_blocks), lengths(const_sum_blocks)), collapse = ", ")
+            else "NONE (all blocks fall back to plain contrast coding via the rank guard)"))
 
-# DRIVER-LEVEL drop-one identification (uniform across ALL samplers): a compositional block has one
-# redundant all-equal direction. Drop the HIGHEST-VARIANCE column as the reference (deterministic ->
-# ORDER-INVARIANT, unlike Helmert contrasts which are assigned by column position), keep the other
-# Kb-1 ORIGINAL columns; the dropped reference's per-class effect is reconstructed as the zero-sum
-# -sum(kept) in build_fit_object(). One place, all samplers get the same reduced design + per-class
-# effects -> no sampler-internal block machinery / index remapping needed. `dropped_blocks` carries
-# {ref_name, kept_names} for the reconstruction.
+# DRIVER-LEVEL drop-one identification: REMOVED 2026-08-12. The samplers already own this -- every
+# caller passes const_sum_blocks = "auto" (e.g. .ncut_fit_block), and the sampler's path is the more
+# complete one: it drops one column for the fit AND reconstructs the full block as zero-sum WITH the
+# intercept compensation (mnlogit_rcpp_sym L3013-3016) that keeps the exported coefficients
+# softmax-equivalent to the fit. Doing it here as well left the two mechanisms half-applied: the
+# driver removed focal_Forests_HI, after which the remaining 21 focal columns no longer summed to a
+# constant, so the sampler correctly declined to treat them as a block and focal ended up plain
+# contrast-coded -- with no coefficient at all for the dropped class.
+#
+# With focal_NODATA now in the design the focal block sums to exactly 1 on every row, so the sampler
+# admits it and every focal class gets a symmetric, comparable coefficient. `dropped_blocks` stays an
+# empty list; build_fit_object() already no-ops on that.
 dropped_blocks <- list()
-.drop_cols <- integer(0)
-for (blk_name in names(const_sum_blocks)) {
-  idx <- const_sum_blocks[[blk_name]]
-  ref <- idx[which.max(apply(X_mat[, idx, drop = FALSE], 2, var))] # deterministic highest-variance reference
-  .drop_cols <- c(.drop_cols, ref)
-  dropped_blocks[[blk_name]] <- list(
-    ref_name = colnames(X_mat)[ref],
-    kept_names = colnames(X_mat)[setdiff(idx, ref)]
-  )
-  cat(sprintf(
-    "  %s: drop-one reference '%s' (highest var); keep %d cols, reconstruct ref as zero-sum.\n",
-    blk_name, colnames(X_mat)[ref], length(idx) - 1L
-  ))
-}
-if (length(.drop_cols) > 0) X_mat <- X_mat[, -.drop_cols, drop = FALSE]
 
 # Prepare for MNL
 # Baseline / reference class for the MNL (configured at the top). A baseline that is
@@ -1450,7 +1538,26 @@ if (isTRUE(as.logical(Sys.getenv("DRIVER_DUMP_INPUTS", "FALSE")))) {
                coord_X = if ("X" %in% names(dat_pixel)) dat_pixel$X else NULL,
                coord_Y = if ("Y" %in% names(dat_pixel)) dat_pixel$Y else NULL,
                row_ID  = if ("ID" %in% names(dat_pixel)) dat_pixel$ID else NULL,
-               out_year = if ("out_year" %in% names(dat_pixel)) dat_pixel$out_year else NULL),
+               out_year = if ("out_year" %in% names(dat_pixel)) dat_pixel$out_year else NULL,
+               # Hand-curated nesting, carried alongside the classes so the nested runner never has to
+               # locate the mapping CSV itself. Two columns: the LEAF class (CLASS_COLS[1]) and its
+               # ancestor path e.g. "Cropland/permanent" (blank = root leaf). Absent column -> NULL,
+               # and the runner falls back to the naming-prefix scheme exactly as before.
+               class_nest = local({
+                 .nc <- Sys.getenv("DRIVER_NEST_COL", paste0(CLASS_COLS[1], "_nest"))
+                 if (.nc %in% names(mapping_thematic) && CLASS_COLS[1] %in% names(mapping_thematic)) {
+                   cat(sprintf(">>> curated nests: %s -> %s\n", CLASS_COLS[1], .nc))
+                   unique(mapping_thematic[, c(CLASS_COLS[1], .nc), with = FALSE])
+                 } else {
+                   # NEVER fall back silently: a typo in the column name would otherwise look like a
+                   # successful run that quietly used the naming-prefix tree instead of the curated one.
+                   .near <- grep("nest|nets", names(mapping_thematic), value = TRUE, ignore.case = TRUE)
+                   warning(sprintf("no curated nest column '%s' in the mapping -> the nested runner will fall back to a NAMING-PREFIX tree.%s",
+                           .nc, if (length(.near)) paste0(" Did you mean: ", paste(.near, collapse = ", "), "?") else ""),
+                           call. = FALSE, immediate. = TRUE)
+                   NULL
+                 }
+               })),
           "output/pixel_model_inputs.rds")
   cat(sprintf(">>> DRIVER_DUMP_INPUTS: saved pixel inputs (X %dx%d, %d LUM classes, %d groups) -> output/pixel_model_inputs.rds\n",
               nrow(X_mat), ncol(X_mat), ncol(Y_pixel), length(unique(group_idx_vec))))
@@ -1469,7 +1576,10 @@ if (isTRUE(as.logical(Sys.getenv("DRIVER_DUMP_INPUTS", "FALSE")))) {
     source("codes/prior_model_predict.R"); source("experiments/focal/compute_focal_coord.R")
     .recipe <- list(
       feature_cols = setdiff(colnames(X_mat), c("intercept", focal_cov_cols)),
-      lu_classes = sub("^focal_", "", focal_cov_cols), outcome_classes = colnames(Y_pixel),
+      # focal_NODATA is DERIVED (1 - sum of the class shares), not an LU layer -- it must stay out of
+      # lu_classes or compute_focal_coord would look for a "NODATA" class; add_nodata rebuilds it.
+      lu_classes = sub("^focal_", "", setdiff(focal_cov_cols, "focal_NODATA")),
+      add_nodata = "focal_NODATA" %in% focal_cov_cols, outcome_classes = colnames(Y_pixel),
       coord = c("X", "Y"), slice = "out_year", group_col = "Grouping_Key",
       transforms = list(list(fn = "log1p", cols = skewed_vars, prefix = "log1p_")),
       res = PIXEL_RES * 1000, col_order = colnames(X_mat), focal_cols = focal_cov_cols,
@@ -1537,11 +1647,25 @@ sampler_extra <- switch(SAMPLER,
   mnlogit_rcpp_sym = list(
     bart_symmetric = TRUE, bart_base = 0.90, bart_power = 3.0, bart_k = 2.0,   # validated BART: symmetric (CLR) + tight depth prior (surface cor 0.74 vs 0.56); ignored when use_bart=FALSE
     store_bart_trees = TRUE, do_slim_trees = TRUE,                              # calibrated slim trees -> out-of-sample prediction via reconstruct_bart_f_mean
-    use_horseshoe = FALSE, equation_specific_hs = FALSE, symmetric_hs = TRUE,
+    use_horseshoe = TRUE, equation_specific_hs = FALSE, symmetric_hs = TRUE,   # HS ON 2026-08-13:
+    # +14.2 (Forests) / +15.5 (Pasture) held-out with the RE slab estimated. estimate_c2 stays FALSE
+    # (FE slab only weakly identified; estimating it gains nothing).
     use_wls_init = adaptive_use_wls_init, use_precision_hs = adaptive_use_precision_hs,
     use_spike_slab = adaptive_use_spike_slab, store_delta = adaptive_store_delta,
     use_car = adaptive_use_car, country_adjacency = NULL, car_rho = adaptive_car_rho,
-    support_prior_strength = 2, re_asis = FALSE, re_regularize = TRUE, init_jitter = 0.1, # const-sum blocks handled DRIVER-LEVEL (drop-one before dispatch) -> not passed to any sampler. participation-ratio RE prior + per-chain overdispersed init. re_regularize=TRUE: RE variance = PROPER regularised horseshoe via a 1-D SLICE on log tau_raw (NOT the old post-draw cap), effective precision tau_eff = tau_raw + 1/collapse_slab_c2 (default c2=100 -> SD<=10) used consistently in the C++ standard (update_re_precision_hc_sym) so the heavy half-Cauchy tail can't run off; stable + exact (exp9 + the oracle gate at c2=100). Also support-CONSISTENT variance (C++ weights ss by 1/rs^2, matching the support-scaled RE draw - fixes a pre-existing inconsistency). RE-scale ASIS OFF: measured to HURT MNL RE-var ESS (73->27). collapse_re_var OFF but REWORKED + validated standalone (per-covariate zero-sum-POOLED slice collapse, exp7/8/9) -> enable (collapse_re_var=TRUE + collapse_re_var_validated=TRUE) only AFTER experiments/mixing/gate_collapse_production.R PASSES on the real design. TUNE collapse_slab_c2 to the largest plausible group-slope SD (raise if sigma~10-12 cells are real; lower to regularise them harder). Retained draws now default to 12000 (niter 16000 - nburn 4000).
+    estimate_c2 = TRUE, slab_df = 20, slab_s2 = 4,   # FE slab estimated with a TIGHT prior (requested).
+                                 # Costs ~1.3 held-out LL vs FIXED on Pasture; kept for consistency with
+                                 # the RE slab, not because it improves fit. See nested_cut.R for detail.
+    estimate_slab_c2 = TRUE, collapse_slab_c2 = 4, slab_df_re = 10,  # full Bayes on the RE slab: the
+                                 # cap is estimated, not fixed (beats the best fixed value on held-out;
+                                 # c2 identified -- starts 4 and 100 both converge to ~4.1).
+    const_sum_blocks = "auto",   # 2026-08-13: the DRIVER-LEVEL drop-one was removed (the samplers own
+                                 # this, and their path also does the zero-sum reconstruction WITH the
+                                 # intercept compensation). Without passing this the flat driver got NO
+                                 # const-sum treatment at all -- the sampler default is NULL, so the
+                                 # redundant columns fell through to the rank guard instead. Matches
+                                 # .ncut_fit_block.
+    support_prior_strength = 2, re_asis = FALSE, re_regularize = TRUE, init_jitter = 0.1, # const-sum blocks now handled BY THE SAMPLER (see above) -> not passed to any sampler. participation-ratio RE prior + per-chain overdispersed init. re_regularize=TRUE: RE variance = PROPER regularised horseshoe via a 1-D SLICE on log tau_raw (NOT the old post-draw cap), effective precision tau_eff = tau_raw + 1/collapse_slab_c2 (default c2=100 -> SD<=10) used consistently in the C++ standard (update_re_precision_hc_sym) so the heavy half-Cauchy tail can't run off; stable + exact (exp9 + the oracle gate at c2=100). Also support-CONSISTENT variance (C++ weights ss by 1/rs^2, matching the support-scaled RE draw - fixes a pre-existing inconsistency). RE-scale ASIS OFF: measured to HURT MNL RE-var ESS (73->27). collapse_re_var OFF but REWORKED + validated standalone (per-covariate zero-sum-POOLED slice collapse, exp7/8/9) -> enable (collapse_re_var=TRUE + collapse_re_var_validated=TRUE) only AFTER experiments/mixing/gate_collapse_production.R PASSES on the real design. TUNE collapse_slab_c2 to the largest plausible group-slope SD (raise if sigma~10-12 cells are real; lower to regularise them harder). Retained draws now default to 12000 (niter 16000 - nburn 4000).
     separation_as_prior = adaptive_separation_as_prior, separation_soft = adaptive_separation_soft,
     sep_overlap_hard = adaptive_sep_overlap_hard, sep_overlap_neutral = adaptive_sep_overlap_neutral
   ),
@@ -1555,14 +1679,14 @@ sampler_file <- file.path("codes", paste0(SAMPLER, ".R"))
 # (LNM/CLR ridge their per-group RE precision internally so full random slopes stay PD.)
 # RE structure: attach random effects only to covariates whose EFFECT on land use plausibly varies BY COUNTRY
 # (policy/development-driven), + the country INTERCEPT (baseline), instead of random slopes on ALL covariates.
-# Default RE set: SOCIO-ECONOMIC (GDP/Pop/human-modification GHM_HI/rural-access RAI/infrastructure CISI) +
+# Default RE set: SOCIO-ECONOMIC (GDP/Pop/human-modification GHM_HI + GHM_TI/infrastructure CISI) +
 # PROTECTED-AREA share (allPA_share: LU-constraint varies by national enforcement) + TERRAIN (Slope_rad,
 # Elevation: the marginal-land/abandonment threshold varies by national agricultural intensity). Climate/soil
 # (biophysical, ~universal) and the focal block (mixing) stay POOLED. Far fewer REs (better mixing + parsimony)
 # while keeping the essential country-baseline intercept RE (carries most of the skill). re_regularize self-
 # prunes any RE whose effect doesn't actually vary by country. Env DRIVER_RE_VARS overrides; "all" = full slopes.
 # re_idx MUST be a subset of linear_cols (BART covariates are pooled/aspatial -> if a var sits in BART, auto-excluded).
-.re_spec <- Sys.getenv("DRIVER_RE_VARS", "log1p_GDP,log1p_Pop,GHM_HI,log1p_RAI,CISI,allPA_share,Slope_rad,Elevation")
+.re_spec <- Sys.getenv("DRIVER_RE_VARS", "log1p_GDP,log1p_Pop,GHM_HI,GHM_TI,CISI,allPA_share,Slope_rad,Elevation")
 if (identical(tolower(trimws(.re_spec)), "all")) {
   re_idx_use <- linear_cols
 } else {
@@ -1976,8 +2100,20 @@ cat("\nStep 4: Extracting Posterior Beta Means...\n")
 # Calculate the posterior median across MCMC draws
 if (length(dim(res_full$postb_total)) == 5) {
   # Random effects model: [covariates, categories, groups, draws, chains]
+  # GROUP LABELLING (fixed 2026-08-05). postb_total[, , k, , ] is the k-th group in APPEARANCE
+  # order: the sampler builds its per-group arrays from `groups <- unique(group_idx)`
+  # (mnlogit_rcpp_sym.R ~L595), NOT from the sorted factor levels. group_idx_vec =
+  # as.integer(factor) carries SORTED-level ids, so slice k is re_group_names[unique(group_idx_vec)[k]].
+  # Labelling with the sorted levels directly mislabelled ALL 26 countries here (the pixel rows are
+  # ordered spatially, not by country: slice 1 "Austria" was actually Portugal, "Belgium" was Spain).
+  # Affects the exported per-country betas / RE plots only -- predict_shares is passed
+  # group_levels = unique(group_idx) explicitly (recipe$group_levels_appear) and was never wrong.
   group_names_vec <- if (exists("re_group_names") && !is.null(re_group_names)) {
-    re_group_names
+    .appear <- if (exists("group_idx_vec") && !is.null(group_idx_vec)) unique(as.integer(group_idx_vec)) else seq_along(re_group_names)
+    if (length(.appear) != length(re_group_names))
+      stop(sprintf("group labelling: %d appearance-order groups vs %d level names -- cannot key postb_total safely.",
+                   length(.appear), length(re_group_names)))
+    re_group_names[.appear]
   } else if (!is.null(res_full$nuts0_names)) {
     res_full$nuts0_names
   } else {
@@ -2231,3 +2367,6 @@ if (length(dim(res_full$postb_total)) == 5) {
 # 10. PROMOTE TEST -> PRODUCTION (optional, DRIVER_PROMOTE=TRUE)
 # =========================================================================
 if (RUN_MODE == "test" && PROMOTE_TO_PRODUCTION) promote_test_to_production()
+
+cat("\nBuilding Diagnostic HTML Report...\n")
+source("postprocess/nested_report.R")

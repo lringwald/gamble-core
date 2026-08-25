@@ -55,6 +55,40 @@ Here $\beta_j$ are the terminal sub-utilities and $v_{i,c'}$ are the child utili
 
 **Behavioural reading.** A pixel whose best sub-alternative (e.g. wheat) scores high gets a high $\mathrm{IV}$, which raises $P(\text{parent nest})$ (e.g. Cropland) — the "attractiveness of the best crop feeds the farm-or-not decision" coupling that flat factorization severs.
 
+## 3b. Identification of λ: what design each level sees (focal routing)
+
+Equation (3.2) writes the node design as the same $x_i$ used by the leaves. That is **not innocuous**. Because $\mathrm{IV}_{i,c_k}$ is *constructed from* the leaf utilities (3.3), any covariate that feeds a leaf **and** also sits at that leaf's parent is a deterministic function of its own inclusive value:
+
+$$
+\mathrm{IV}_{i,c_k} \;=\; \log\!\sum_{j\in c_k}\exp\!\big(x_i^{\top}\beta_j\big) \;=\; g\big(x_i\big),
+\tag{3.4}
+$$
+
+so the parent regression contains both $x_i$ and a smooth function of $x_i$. Only the *nonlinearity* of the logsum separates them. The parent then cannot identify $\lambda_{c_k}$ (the effect **through** the nest) apart from the direct effect $\gamma_{c_k}$ — the likelihood is nearly flat along the trade-off, and $\lambda$ drifts out of $(0,1]$.
+
+**Focal LU composition is the natural worst case**, since neighbourhood persistence is the strongest leaf predictor, so $\mathrm{IV}_{c}$ is the closest to *linear* in the fine focal block of nest $c$.
+
+> **Evidence caveat (2026-08-04).** The figures that originally motivated this section — $R^2(\mathrm{IV}_{\text{Cropland}}\sim\text{focal block}) = 0.70$ on the GLOBIOM design, and $\hat\lambda_{\text{Forests}} = -1.00\,[-2.27,-0.09]$ with the Sweden/Finland *Urban* artifact — were computed from fits whose exported coefficients were corrupted by a **separate** const-sum reconstruction bug (missing per-class intercept compensation; fixed in `mnlogit_rcpp_sym.R`, see that file's reconstruction block). The inclusive values were built from those coefficients, so both numbers are unreliable. On a *fixed* synthetic replication the unrouted design gives $R^2 = 0.21$ and $\hat\lambda = 0.69\,[0.41,1.02]$ — collinear but **not** pathological, and routing moves $R^2$ to $0.07$ without materially moving $\hat\lambda$. The mechanism in (3.4) is exact and the routing is sound, but **how much routing the real EU design needs is currently unmeasured**: refit and read `nested_cut_identification(fit)` before treating `"macro_totals"` as necessary rather than merely defensible.
+
+**Resolution — route each covariate to the level of the choice it governs.**
+
+| level | focal columns seen |
+|---|---|
+| every **leaf** (within-nest sub-choice) | the **full fine focal block**, own *and* cross-class (`focal_Cropland_*`, `focal_Urban`, `focal_Water`, … beside `focal_Forests_*`) |
+| every **internal/IV node**, `focal_rule = "macro_totals"` (default) | one aggregate $\text{focal}\_c\_\text{tot}=\sum_{j\in c}\text{focal}_j$ per IV child, plus the untouched focals of singleton/context classes, plus the IVs |
+| internal node, `focal_rule = "leaf_only"` | no focal for IV children — the IV is the sole channel |
+| internal node, `focal_rule = "flat"` | legacy: fine focal everywhere (λ unidentified; comparison only) |
+
+Leaves keep the *full* block deliberately: the within-nest choice legitimately depends on **other** classes' neighbourhood shares ("this forest subtype appears next to cropland, that one next to urban"). Restricting a leaf to its own conditional composition would discard that, so no macro/conditional decomposition of the focal input is performed.
+
+**What `"macro_totals"` buys and costs.** It preserves a *direct macro-persistence* effect at the node ("how much forest is around" acting on Forests-vs-else) which the IV only proxies. The cost is explicit: $\lambda_c$ and the coefficient on $\text{focal}\_c\_\text{tot}$ are **jointly** identified — the aggregate is far less collinear with the IV than the fine block, but not orthogonal to it. Report the **combined macro effect**; do not read $\lambda$ as a pure dissimilarity under this rule. `"leaf_only"` gives the cleanly identified $\lambda$ at the price of dropping that direct term.
+
+**Everything is measured, not assumed.** Each internal node reports $R^2$ of the mean IV field on that node's own design (`fit$…$iv_r2`, walker `nested_cut_identification(fit)`), so weak identification is visible rather than inferred from an implausible $\lambda$. Values approaching 1 warrant a stricter rule. This diagnostic exists precisely because the first diagnosis was made from an implausible $\lambda$ and turned out to have a different cause.
+
+Validated in `test_nested_cut_focal.R` (known $\lambda=0.6$; leaf choice driven by the fine focal composition, macro choice by $\lambda\,\mathrm{IV}_B + \kappa\,\text{focal}\_B\_\text{tot}$): the design map is exact ($X T$ reproduces the node design, leaves keep the full block), $R^2$ falls $0.21\to0.07$ under routing, and all three rules recover $\lambda$ with CIs bracketing the truth and near-identical held-out log-likelihood.
+
+*Note.* (3.4) applies to **every** covariate present at both levels (terrain, climate, GDP …), not only focal; focal is simply the case where the collinearity is severe enough to invert $\lambda$. If $\lambda$ stays soft after routing, the classical remedy is to push covariates down to the leaves and leave the root with IVs and nest intercepts — a larger specification decision, not handled by `focal_rule`.
+
 ## 4. Symmetric zero-sum parameterisation and the λ rescaling
 
 Each node's choice model (3.2) is fit by the **symmetric (zero-sum) multinomial sampler** `mnlogit_rcpp_sym`, which parameterises coefficients on the $K$-simplex with the identifiability constraint

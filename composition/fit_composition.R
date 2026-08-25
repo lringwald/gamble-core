@@ -5,12 +5,15 @@
 # 2) Fit multinomial D/O/F ~ curated drivers via mnlogit_rcpp_sym (horseshoe + country RE).
 # 3) Report δ per subtype with posterior intervals: a driver is either visibly nonzero
 #    (CI excludes 0) or a SOLID ZERO (tight CI around 0).
-#   Env: D_SPECIES (bov|sgt), D_NITER (4000), D_NBURN (2000), D_CORTHRESH (0.7)
+#   Env: D_SPECIES (bov|sgt), D_NITER (20000), D_NBURN (10000), D_CORTHRESH (0.7)
 # =============================================================================
-suppressMessages({ library(data.table); source("codes/mnlogit_rcpp_sym.R") })
+# Fix macOS Accelerate/OpenMP fork bug
+Sys.setenv(OMP_NUM_THREADS = 1, VECLIB_MAXIMUM_THREADS = 1, OPENBLAS_NUM_THREADS = 1)
+suppressMessages({ library(data.table); library(future); library(future.apply); source("codes/mnlogit_rcpp_sym.R") })
 SP <- Sys.getenv("D_SPECIES", "bov")
 m  <- fread(file.path("output/composition", paste0(SP, "_training_nuts2.csv")))
-NITER <- as.integer(Sys.getenv("D_NITER","4000")); NBURN <- as.integer(Sys.getenv("D_NBURN","2000"))
+NITER <- as.integer(Sys.getenv("D_NITER","20000")); NBURN <- as.integer(Sys.getenv("D_NBURN","10000"))
+NCHAINS <- as.integer(Sys.getenv("D_NCHAINS","4"))
 CORTHRESH <- as.numeric(Sys.getenv("D_CORTHRESH","0.7"))
 
 drivers0 <- setdiff(names(m), c("nuts2","nD","nO","nF","country"))
@@ -72,14 +75,33 @@ Yr <- as.matrix(m[, .(D=nD, O=nO, F=nF)]); Yr[Yr<0] <- 0
 Yr <- Yr * (1000 / median(rowSums(Yr))); keep <- rowSums(round(Yr)) > 0
 X <- X[keep, ]; Yr <- Yr[keep, ]; grp <- as.integer(factor(m$country[keep])); Y <- round(Yr)
 
-set.seed(1)
-fit <- mnlogit_rcpp_sym(
-  X = X, Y = Y, intercept = FALSE, baseline = 3, niter = NITER, nburn = NBURN,
-  use_horseshoe = TRUE, horseshoe_idx = 2:k, symmetric_hs = TRUE, equation_specific_hs = FALSE,
-  use_re = TRUE, group_idx = grp, re_idx = 1L, use_car = FALSE, use_spike_slab = FALSE,
-  disable_separation_detection = TRUE, standardize = TRUE, method = c("center","scale"), calc_loo = FALSE)
+plan(multisession, workers = NCHAINS)
+cat(sprintf(">>> Running %d chains of mnlogit_rcpp_sym (%d iterations)...\n", NCHAINS, NITER))
 
-pb <- fit$postb_pooled; nd <- dim(pb)[3]                          # [k,3,draws]
+res_list <- future_lapply(1:NCHAINS, function(cid) {
+  source("codes/mnlogit_rcpp_sym.R")
+  set.seed(cid)
+  mnlogit_rcpp_sym(
+    X = X, Y = Y, intercept = FALSE, baseline = 3, niter = NITER, nburn = NBURN,
+    use_horseshoe = TRUE, horseshoe_idx = 2:k, symmetric_hs = TRUE, equation_specific_hs = FALSE,
+    use_re = TRUE, group_idx = grp, re_idx = 1L,   # INTERCEPT ONLY -- see note below
+    # re_idx = 1:k was tried and reverted 2026-08-21. This table is 189 rows / 26 countries
+    # (median 6 rows per country, min 1) and the decorrelation screen PROTECTS all 18 lu_area_*
+    # columns, so k stays ~22-30: re_idx = 1:k is ~1144-1560 RE parameters on 189 rows, i.e.
+    # 6-8 PER OBSERVATION. The count model removed a 0.30-per-obs configuration for exactly this
+    # reason -- there the RE variances ran to the slab cap and absorbed the fixed effects,
+    # leaving 2 of 37 pooled coefficients credible. Shrinkage cannot rescue random slopes that
+    # have no information behind them. Intercept-only is already 0.28/obs, at that same edge. use_car = FALSE, use_spike_slab = FALSE,
+    re_prec_center = FALSE,
+    # RE VARIANCE SHRINKAGE. The Finnish cap is ESTIMATED, not fixed at 100: full Bayes on this slab
+    # measured better held-out and is self-calibrating (starts of 4 and 100 both converge to ~4.1, so
+    # a fixed 100 only wastes burn-in sitting above the posterior).
+    re_regularize = TRUE, estimate_slab_c2 = TRUE, collapse_slab_c2 = 4, slab_df_re = 10,
+    disable_separation_detection = TRUE, standardize = TRUE, method = c("center","scale"), calc_loo = FALSE)
+}, future.seed = TRUE)
+
+pb <- do.call(abind::abind, c(lapply(res_list, function(f) f$postb_pooled), list(along = 3)))
+nd <- dim(pb)[3]                          # [k,3,draws]
 mu <- (pb[,1,] + pb[,2,]) / 3
 dD <- pb[,1,] - mu; dO <- pb[,2,] - mu; dF <- -mu                 # sum-to-zero δ per draw
 ci <- function(M) t(apply(M, 1, function(z) c(mean=mean(z), lo=quantile(z,.05), hi=quantile(z,.95))))
@@ -96,6 +118,7 @@ rep_sub <- function(M, lab) {
 rep_sub(dD, "DAIRY"); rep_sub(dO, "MEAT")
 
 # RE-aware fit
+fit <- res_list[[1]]
 tt <- fit$postb_total; S <- Y/rowSums(Y)
 if (length(dim(tt))==4) { tm <- apply(tt,c(1,2,3),mean); eta <- t(sapply(1:nrow(X), function(i) X[i,] %*% tm[,,grp[i]])) } else eta <- X %*% rbind(rowMeans(dD),rowMeans(dO),rowMeans(dF))
 P <- exp(eta)/rowSums(exp(eta))

@@ -35,9 +35,34 @@ get_latest_file <- function(dir_path, pattern) {
 # =========================================================================
 # 1. PATHS & CONFIGURATION
 # =========================================================================
-LS_DIR <- "/Users/leopoldringwald/Library/CloudStorage/OneDrive-IIASA/R/LAND_SUPPLY_ELASTICITY"
+LS_DIR <- Sys.getenv("GAMBLE_LS_DIR", "../LAND_SUPPLY_ELASTICITY")   # relative (sibling of gamble-core) + env-overridable; was a hardcoded OneDrive path, broke on the Google Drive migration
 DS_DIR <- "../LAMASUS_downscaling/"
 GRIDWORK_DIR <- "../LAMASUS_gridwork/output"
+# Master 1km covariate parquet: the gridwork pipeline MIGRATED to ../cascadinggamble-core (Snakemake),
+# whose data/02_intermediate copy is the LIVE one -- it carries the new GHM v3 threat groups (TI/NS/AG)
+# that the legacy LAMASUS_gridwork copy does not. Pick the NEWEST available; env GAMBLE_MASTER_PARQUET
+# overrides. The other inputs (1km mapping, LSU counts, organic) still come from GRIDWORK_DIR.
+PRIOR_1KM_PARQUET <- Sys.getenv("GAMBLE_MASTER_PARQUET", "")
+if (!nzchar(PRIOR_1KM_PARQUET)) {
+  .cands <- c("../cascadinggamble-core/data/02_intermediate/prior_model_1km_master_inputs.parquet",
+              file.path(GRIDWORK_DIR, "prior_model_1km_master_inputs.parquet"))
+  .cands <- .cands[file.exists(.cands)]
+  if (!length(.cands)) stop("master 1km parquet not found in cascadinggamble-core or ", GRIDWORK_DIR)
+  PRIOR_1KM_PARQUET <- .cands[order(file.mtime(.cands), decreasing = TRUE)][1]
+}
+cat(sprintf(">>> master 1km parquet: %s  (modified %s)\n", PRIOR_1KM_PARQUET,
+            format(file.mtime(PRIOR_1KM_PARQUET), "%Y-%m-%d %H:%M")))
+
+# GHM v3 threat groups arrive under one of TWO namings: the merged form GHM_<CODE>_<year> (HI, Ovr)
+# or the RAW Earth-Engine export name GHM_v3_<CODE>_<year>_EU_UK_<timestamp>_aggregated (TI, NS, AG --
+# merge_all_variables.R's get_clean_name only renamed HI|Overall). Resolve either, then rename to the
+# clean form on read so everything downstream sees GHM_<CODE>_<year>.
+.ghm_resolve <- function(schema_names, code, year) {
+  cn <- paste0("GHM_", code, "_", year)
+  if (cn %in% schema_names) return(cn)
+  raw <- grep(sprintf("^GHM_v3_%s_%s_", code, year), schema_names, value = TRUE)
+  if (length(raw)) raw[1] else NA_character_
+}
 
 # Run versioning (matches the pixel driver): bucket ALL outputs into a stable "production" or a
 # throwaway "test" namespace via MODEL_LABEL. A "test" run starts fresh (its saved-model dir is
@@ -48,7 +73,11 @@ if (!RUN_MODE %in% c("production", "test")) stop("RUN_MODE must be 'production' 
 PROMOTE_TO_PRODUCTION <- isTRUE(as.logical(Sys.getenv("DRIVER_PROMOTE", "FALSE")))
 # Label reflects the OBSERVATION RESOLUTION (the admin units are NUTS3), not a generic "Admin".
 RESOLUTION_LABEL <- Sys.getenv("DRIVER_RESOLUTION_LABEL", "NUTS3")
-MODEL_LABEL <- paste0(RESOLUTION_LABEL, "_Livestock_", RUN_MODE)
+# Sampler token woven into MODEL_LABEL so every artifact is traceable — mirrors the pixel driver, whose
+# label is <res>km_<sampler>_by_<intersect>_<scheme>_<mode> (e.g. 10km_mnlogit_rcpp_sym_by_NUTS3_GLOBIOM_production).
+# Count analogue: <units>_<sampler>_<scheme>_<mode> (units = NUTS3; sampler = count_rcpp; no separate intersect).
+SAMPLER <- Sys.getenv("DRIVER_SAMPLER", "count_rcpp")
+MODEL_LABEL <- paste0(RESOLUTION_LABEL, "_", SAMPLER)   # scheme + mode appended below (after CLASS_SCHEME is known)
 
 # =========================================================================
 # CLASSIFICATION CONFIGURATION (from pixel model)
@@ -57,7 +86,7 @@ MODEL_LABEL <- paste0(RESOLUTION_LABEL, "_Livestock_", RUN_MODE)
 CLASS_COLS <- strsplit(Sys.getenv("DRIVER_CLASS_COLS", "GLOBIOM_UNFCCC,GLOBIOM_mngmt"), ",")[[1]]
 OUTCOME_SOURCE <- Sys.getenv("DRIVER_OUTCOME_SOURCE", "LUM")
 CLASS_SCHEME <- toupper(sub("[0-9]+$", "", sub("_.*$", "", CLASS_COLS[1])))
-MODEL_LABEL <- paste0(MODEL_LABEL, "_", CLASS_SCHEME)
+MODEL_LABEL <- paste0(MODEL_LABEL, "_", CLASS_SCHEME, "_", RUN_MODE)   # -> e.g. NUTS3_count_rcpp_GLOBIOM_production (pixel-style ordering)
 
 INCLUDE_IRRIGATION <- FALSE # switch: carve irrigated cropland into its own ..._IR class
 INCLUDE_ORGANIC <- TRUE # switch: carve organic twins into their own ..._O class
@@ -79,8 +108,8 @@ organic_area_weight <- function(yr) {
 INCLUDE_SD_DRIVERS <- as.logical(Sys.getenv("DRIVER_INCLUDE_SD", "TRUE"))
 SD_VARS <- strsplit(Sys.getenv(
   "DRIVER_SD_VARS",
-  "Slope_rad,Elevation,GHM_HI,CISI,Growing_Degree_Days_gdd5,Annual_Precipitation_bio12"
-), ",")[[1]]
+  "Slope_rad,Elevation,GHM_HI,GHM_TI,CISI,Growing_Degree_Days_gdd5,Annual_Precipitation_bio12"
+), ",")[[1]]   # intersected with the vars actually present, so GHM_TI is a no-op until it lands
 
 # Derived terrain SHARE features: nonlinear summaries the mean Elevation/Aspect can't capture --
 # the fraction of the unit that is flat / steep / lowland / upland (e.g. "flat grazeable area").
@@ -145,6 +174,14 @@ class_lookup <- unique(mapping_thematic[, c(.src$join_key, "model_class", "focal
 N_CHAINS <- as.integer(Sys.getenv("DRIVER_NCHAINS", "4"))
 use_re <- TRUE # Random Effects enabled
 RE_GROUP_COL <- "GLOB_country"
+# POOLED RE VARIANCE across the outcome columns (one scale per predictor instead of one per
+# (predictor, column)). Ported from the MNL's category-pooled RE block, but UNCENTRED: the count
+# columns are independent rates with no baseline and no zero-sum constraint, so the category-centring
+# that zeroed the MNL's random effects has no meaning here. Off by default (bit-identical: verified
+# max|beta diff| = max|sigma diff| = 0.000e+00 vs the pre-port sampler).
+COUNT_RE_PREC_POOLED <- as.logical(Sys.getenv("COUNT_RE_PREC_POOLED", "TRUE"))
+COUNT_USE_COUNTRY_SHRINKAGE <- as.logical(Sys.getenv("COUNT_USE_COUNTRY_SHRINKAGE", "TRUE"))
+COUNT_SLAB_C2_COUNTRY <- as.numeric(Sys.getenv("COUNT_SLAB_C2_COUNTRY", "4.0"))
 use_bart <- FALSE
 n_trees_bart <- 20
 target_livestock <- c("BOV", "SGT") # BOV = bovines (cattle); SGT = small grazers (sheep + goats). Fit separately. (defined early for path setup)
@@ -259,15 +296,44 @@ cat("  Loading prior covariates...\n")
 # (terrain/soil/climate + year-varying Pop/GDP/GHM_HI). Reading ONLY those cuts peak memory drastically AND
 # avoids streaming the whole file from OneDrive (the OOM + mmap/read-timeout culprit). any_of() = drop missing
 # gracefully. Zero effect on results: the dropped columns were never touched downstream.
+# RAI (rural accessibility) REMOVED 2026-08-04 per spec; the accessibility/human-footprint signal is
+# carried by the GHM v3 threat groups instead: GHM_HI (human intrusion) + GHM_TI (transport
+# infrastructure). GHM_TI needs the upstream gridwork pull (download_ghm.R with selected_threat="TI"
+# -> aggregate_ee_data.R -> merge_all_variables.R); any_of() means the driver runs fine before it
+# lands and picks it up automatically afterwards -- the presence check below reports which arrived.
+.pq_nm <- names(arrow::open_dataset(PRIOR_1KM_PARQUET)$schema)
+# resolve each wanted GHM threat group x year to its physical column (clean or raw EE name)
+GHM_CODES <- trimws(strsplit(Sys.getenv("DRIVER_GHM_CODES", "HI,TI"), ",")[[1]])
+.ghm_map <- do.call(rbind, lapply(GHM_CODES, function(cd) data.frame(
+  code = cd, year = COV_YEARS,
+  phys = vapply(COV_YEARS, function(y) .ghm_resolve(.pq_nm, cd, y), character(1)),
+  clean = paste0("GHM_", cd, "_", COV_YEARS), stringsAsFactors = FALSE)))
+.ghm_map <- .ghm_map[!is.na(.ghm_map$phys), , drop = FALSE]
+
 .needed_1km <- unique(c("LAMASUS_1km_bufferID",
-  "Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "allPA_share", "RAI", "CISI",
+  "Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "allPA_share", "CISI",
   "OC_TOP", "ROO", "AWC_TOP", "VS",
   "Growing_Degree_Days_gdd5", "Precipitation_Seasonality_bio15", "Annual_Precipitation_bio12",
-  paste0("Pop_", COV_YEARS), paste0("GDP_", COV_YEARS), paste0("GHM_HI_", COV_YEARS)))
+  paste0("Pop_", COV_YEARS), paste0("GDP_", COV_YEARS), .ghm_map$phys))
 prior_1km <- as.data.table(dplyr::collect(dplyr::select(
-  arrow::open_dataset(file.path(GRIDWORK_DIR, "prior_model_1km_master_inputs.parquet")),
+  arrow::open_dataset(PRIOR_1KM_PARQUET),
   dplyr::any_of(.needed_1km))))
+# normalize raw EE export names -> GHM_<CODE>_<year>
+.ren <- .ghm_map[.ghm_map$phys != .ghm_map$clean & .ghm_map$phys %in% names(prior_1km), , drop = FALSE]
+if (nrow(.ren)) { setnames(prior_1km, .ren$phys, .ren$clean)
+  cat(sprintf(">>> renamed %d raw GHM export column(s) -> GHM_<CODE>_<year> (e.g. %s -> %s)\n",
+              nrow(.ren), .ren$phys[1], .ren$clean[1])) }
 cat(sprintf(">>> prior_1km: read %d of the parquet's columns (column-projected) x %d rows\n", ncol(prior_1km), nrow(prior_1km)))
+# Which GHM threat groups actually arrived? GHM_TI is optional until the gridwork pull is done.
+.ghm_want <- paste0("GHM_", GHM_CODES)
+GHM_VARS <- .ghm_want[vapply(.ghm_want,
+  function(v) all(paste0(v, "_", COV_YEARS) %in% names(prior_1km)), logical(1))]
+.ghm_missing <- setdiff(.ghm_want, GHM_VARS)
+cat(sprintf(">>> GHM threat groups available for all COV_YEARS: %s%s\n",
+  if (length(GHM_VARS)) paste(GHM_VARS, collapse = ", ") else "(none)",
+  if (length(.ghm_missing)) sprintf("   [MISSING: %s -> not modelled; run gridwork download_ghm.R for it]",
+                                    paste(.ghm_missing, collapse = ", ")) else ""))
+if (!length(GHM_VARS)) stop("No GHM threat group has full year coverage -- check the master parquet.")
 prior_1km[, LAMASUS_1km_bufferID := as.integer(LAMASUS_1km_bufferID)]
 for (.col in names(prior_1km)[sapply(prior_1km, is.double)]) {
   set(prior_1km, j = .col, value = fifelse(is.nan(prior_1km[[.col]]), NA_real_, prior_1km[[.col]]))
@@ -402,13 +468,14 @@ dat_admin_list <- lapply(T_PAIRS, function(tp) {
   }
 
   # 2. COVARIATES (X-Temporal)
-  ghm_hi_col <- paste0("GHM_HI_", tp$cov_year)
   gdp_col <- paste0("GDP_", tp$cov_year)
   pop_col <- paste0("Pop_", tp$cov_year)
 
-  x_1km_yr <- prior_1km[, .(LAMASUS_1km_bufferID, Slope_rad, Elevation, Aspect_cos_mean, Aspect_sin_mean, allPA_share, RAI, CISI,
-    Pop = get(pop_col), GDP = get(gdp_col), GHM_HI = get(ghm_hi_col)
+  x_1km_yr <- prior_1km[, .(LAMASUS_1km_bufferID, Slope_rad, Elevation, Aspect_cos_mean, Aspect_sin_mean, allPA_share, CISI,
+    Pop = get(pop_col), GDP = get(gdp_col)
   )]
+  # year-varying GHM threat groups (GHM_HI always, GHM_TI once the gridwork pull lands)
+  for (.g in GHM_VARS) x_1km_yr[[.g]] <- prior_1km[[paste0(.g, "_", tp$cov_year)]]
   # Append the pixel model's STATIC climate (CHELSA) + yield covariates, if present. Intensive ->
   # weighted mean below. spei48 is skipped: only spei48_2000/2018 exist (not the 2000/2010/2020 panel).
   static_extra <- intersect(climate_yield_cols, names(prior_1km))
@@ -631,14 +698,14 @@ dat_admin <- rbindlist(dat_admin_list, fill = TRUE)
 # =========================================================================
 # 5. FILTERING AND MATRIX PREPARATION
 # =========================================================================
-skewed_vars <- c("GDP", "Pop", "RAI", "allPA_area")   # right-skewed -> log1p (allPA_area = summed protected area)
+skewed_vars <- c("GDP", "Pop", "allPA_area")   # right-skewed -> log1p (allPA_area = summed protected area; RAI removed 2026-08-04)
 # climate/yield columns actually present after the admin aggregation (defensive intersect)
 climate_yield_present <- intersect(climate_yield_cols, colnames(dat_admin))
 # heterogeneity (SD) drivers actually built (present in dat_admin); empty if INCLUDE_SD_DRIVERS=FALSE
 sd_cols <- if (INCLUDE_SD_DRIVERS) intersect(paste0(SD_VARS, "_sd"), colnames(dat_admin)) else character(0)
 # derived terrain share features (flat/steep/lowland/upland)
 terrain_cols <- if (INCLUDE_TERRAIN_FEATURES) intersect(c("flat_share", "steep_share", "lowland_share", "upland_share"), colnames(dat_admin)) else character(0)
-spatial_cont_cols <- c("Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "GHM_HI", "CISI", skewed_vars, climate_yield_present, sd_cols, terrain_cols)
+spatial_cont_cols <- c("Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", GHM_VARS, "CISI", skewed_vars, climate_yield_present, sd_cols, terrain_cols)
 soil_dev_cols <- character(0) # soil dummies removed from the covariate set per request (the _dev cols stay in dat_admin but are not modelled)
 # absolute LU areas per class (pixel-aligned). Drop no_choice: it's the catch-all for the
 # NO_CHOICE_LU classes (water/wetland/natural_other) + unmapped/NODATA land -- not a livestock
@@ -717,25 +784,46 @@ saveRDS(dat_admin, dat_admin_file)
 cat(sprintf("\n>>> Saved FULL dat_admin to %s\n", dat_admin_file))
 
 # Transform skewed and calculate offset
-dat_admin[, log_area_offset := log(pmax(total_area_km2, 1e-4))]
+# Calculate the Pasture-specific offset
+pasture_cols <- grep("^lu_area_Pasture", lu_area_cols, value = TRUE)
+non_pasture_cols <- setdiff(lu_area_cols, pasture_cols)
+
+dat_admin[, total_pasture_area := rowSums(.SD, na.rm = TRUE), .SDcols = pasture_cols]
+dat_admin[, log_area_offset := log(pmax(total_pasture_area, 1e-4))]
 
 for (.v in skewed_vars) {
   dat_admin[[.v]] <- log1p(dat_admin[[.v]])
   setnames(dat_admin, .v, paste0("log1p_", .v))
 }
 
-# log1p the absolute LU areas too (right-skewed, span orders of magnitude) -- same treatment as GDP/Pop/RAI.
-for (.v in lu_area_cols) {
+# Proportion method for Pasture
+prop_pasture_cols <- character(0)
+for (.v in pasture_cols) {
+  prop_name <- sub("lu_area_", "prop_", .v)
+  dat_admin[[prop_name]] <- dat_admin[[.v]] / pmax(dat_admin$total_pasture_area, 1e-6)
+  prop_pasture_cols <- c(prop_pasture_cols, prop_name)
+}
+
+# Drop the reference category (Pasture_HI)
+ref_cat <- "prop_Pasture_HI"
+if (ref_cat %in% prop_pasture_cols) {
+  prop_pasture_cols <- setdiff(prop_pasture_cols, ref_cat)
+  cat(sprintf("\n>>> Proportion Method: Dropped %s to serve as the reference baseline.\n", ref_cat))
+}
+
+# log1p the absolute LU areas for non-pasture (Cropland, Forest, Urban, etc.)
+for (.v in non_pasture_cols) {
   dat_admin[[.v]] <- log1p(dat_admin[[.v]])
   setnames(dat_admin, .v, paste0("log1p_", .v))
 }
-# NB: paste0("log1p_", character(0)) returns "log1p_" (length 1!), not character(0) -- a
-# silent R gotcha that injects a bogus bare-prefix column name when a year has no LU data
-# (e.g. 2020: CLC panel only runs to 2018). Guard with length() so the X_mat select is clean.
-lu_area_cols <- if (length(lu_area_cols)) paste0("log1p_", lu_area_cols) else character(0)
+
+non_pasture_cols <- if (length(non_pasture_cols)) paste0("log1p_", non_pasture_cols) else character(0)
+
+# Recombine for the final predictor matrix
+lu_area_cols <- c(prop_pasture_cols, non_pasture_cols)
 
 spatial_cont_cols_trans <- c(
-  "Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "GHM_HI", "CISI",
+  "Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", GHM_VARS, "CISI",
   paste0("log1p_", skewed_vars),   # incl. log1p_allPA_area (summed protected area)
   climate_yield_present, # static CHELSA climate + yields, untransformed (matches the pixel model)
   sd_cols, # within-unit heterogeneity (weighted SD), untransformed -> standardized in the sampler
@@ -764,11 +852,24 @@ if (length(MODEL_YEARS) > 1L) {
   ))
 }
 
+# NO continuous `time` column (removed 2026-08-06). It used to sit here alongside the year dummies,
+# which made the design EXACTLY RANK-DEFICIENT: with 3 years the intercept + 2 dummies already
+# saturate the time dimension, so time = 2000 + 10*year_2010 + 20*year_2020 EXACTLY (max|diff| = 0;
+# X_mat rank 37 of 38, condition number 2e15, VIF = Inf for time/year_2010/year_2020). Worse, `time`
+# was in re_idx, so that singularity was replicated across all 34 country RE blocks -- a perfectly
+# flat likelihood direction. It is why the covariate effects never converged (theta_w median ESS 23
+# at 12000x4, unchanged by more iterations, by re_slab_c2, or by re_center) while the PREDICTIONS
+# were fine (predictions are invariant along a flat direction). The sampler's rank guard never fired.
+# The year dummies retain FREE year effects (no functional form imposed). If a linear, extrapolable
+# trend is wanted instead, drop the dummies and restore `time` -- but never both.
 X_mat <- cbind(
   intercept = 1,
-  time = dat_admin$out_year,
   as.matrix(dat_admin[, c(spatial_cont_cols_trans, soil_dev_cols, lu_area_cols, year_dummy_cols), with = FALSE])
 )
+# Guard: never ship a rank-deficient design again (the old failure was silent).
+.rk <- qr(X_mat)$rank
+if (.rk < ncol(X_mat)) warning(sprintf(
+  "X_mat is RANK DEFICIENT: rank %d of %d columns -- flat likelihood direction(s), effects will not converge.", .rk, ncol(X_mat)))
 X_mat[!is.finite(X_mat)] <- 0
 rownames(X_mat) <- dat_admin$RESOLUTION
 
@@ -779,8 +880,13 @@ rownames(X_mat) <- dat_admin$RESOLUTION
 .always_keep <- c("intercept", year_dummy_cols)
 .cov_wl <- trimws(strsplit(Sys.getenv("DRIVER_COVARIATES", ""), ",")[[1]])
 .cov_wl <- .cov_wl[nzchar(.cov_wl)]
+# 2026-08-04 spec change: RAI dropped from the data entirely; GHM_HI (+ GHM_TI once available) are
+# now WANTED as drivers, so they leave this exclusion list. The rest of the earlier
+# "accessibility/human-footprint + raw terrain mean" exclusion (CISI, Slope/Elevation/Aspect means,
+# and the _sd heterogeneity twins) is UNCHANGED -- terrain still enters via the flat/steep/lowland/
+# upland shares. Set DRIVER_EXCLUDE_COVARIATES explicitly to override.
 .cov_ex <- trimws(strsplit(Sys.getenv("DRIVER_EXCLUDE_COVARIATES",
-  "log1p_RAI,GHM_HI,CISI,GHM_HI_sd,CISI_sd,Slope_rad,Elevation,Aspect_cos_mean,Aspect_sin_mean"), ",")[[1]])
+  "CISI,GHM_HI_sd,GHM_TI_sd,CISI_sd,Slope_rad,Elevation,Aspect_cos_mean,Aspect_sin_mean"), ",")[[1]])
 .cov_ex <- .cov_ex[nzchar(.cov_ex)]
 if (length(.cov_wl)) {
   .unknown <- setdiff(.cov_wl, colnames(X_mat))
@@ -795,7 +901,24 @@ if (length(.cov_wl)) {
 
 # Column index bookkeeping for the year FE: keep them LINEAR but out of the horseshoe and the REs.
 year_idx <- which(colnames(X_mat) %in% year_dummy_cols) # integer(0) for a single timestep
-re_col_idx <- setdiff(seq_len(ncol(X_mat)), year_idx) # country REs on every cov EXCEPT year FE
+# --- RE STRUCTURE ---------------------------------------------------------------
+# Subset of random slopes based on country-level heterogeneity (e.g. GDP, Population).
+# DRIVER_RE_VARS overrides; "all" restores full slopes across all covariates.
+.re_spec_count <- Sys.getenv("DRIVER_RE_VARS",
+  "log1p_GDP,log1p_Pop,GHM_HI,GHM_TI,log1p_allPA_area,flat_share,Slope_rad_sd,Growing_Degree_Days_gdd5,log1p_lu_area_Pasture_HI")
+if (identical(tolower(trimws(.re_spec_count)), "all")) {
+  re_col_idx <- setdiff(seq_len(ncol(X_mat)), year_idx)      # legacy: every cov except year FE
+} else {
+  .re_want <- trimws(strsplit(.re_spec_count, ",")[[1]]); .re_want <- .re_want[nzchar(.re_want)]
+  .re_miss <- setdiff(.re_want, colnames(X_mat))
+  if (length(.re_miss)) cat(sprintf(">>> DRIVER_RE_VARS: %d name(s) not in X_mat (ignored): %s\n",
+                                    length(.re_miss), paste(.re_miss, collapse = ", ")))
+  re_col_idx <- sort(setdiff(intersect(c(which(colnames(X_mat) == "intercept"),
+                                         which(colnames(X_mat) %in% .re_want)),
+                                       seq_len(ncol(X_mat))), year_idx))
+}
+cat(sprintf(">>> RE covariates: %d of %d (%s)\n", length(re_col_idx), ncol(X_mat),
+            paste(colnames(X_mat)[re_col_idx], collapse = ", ")))
 hs_col_idx <- setdiff(2:ncol(X_mat), year_idx) # horseshoe on continuous cov (not intercept, not year FE)
 
 # --- BART covariate partition (only used when use_bart) ---------------------------------------
@@ -924,6 +1047,36 @@ for (tgt in target_livestock) {
     }
   }
   checkpoint_path <- file.path(model_disk_path, "fit.rds")
+
+  # ---------------------------------------------------------------------------------------------
+  # CHECKPOINT FINGERPRINT (2026-08-21). The path is keyed only on MODEL_LABEL / target / RE flag /
+  # RE_GROUP_COL, so a production re-run with DIFFERENT SAMPLER SETTINGS used to reload the old fit
+  # unconditionally and report it as the new one -- the note below ("assumes the checkpoint was
+  # produced with the current N_CHAINS / niter / nburn") documented the hazard without guarding it.
+  # Same failure class as the nested_cut store hash, which silently returned a symmetric fit for a
+  # diagonal arm. Anything that changes what the sampler DOES belongs in this fingerprint.
+  .cfg_path <- file.path(model_disk_path, "fit_config.rds")
+  .cfg_now  <- list(niter = niter, nburn = nburn, thin_keep = thin_keep, n_chains = N_CHAINS,
+                    use_re = use_re, re_group = RE_GROUP_COL, use_bart = use_bart,
+                    re_prec_pooled = COUNT_RE_PREC_POOLED,
+                    re_slab_c2 = 16,
+                    use_country_shrinkage = COUNT_USE_COUNTRY_SHRINKAGE,
+                    slab_c2_country = COUNT_SLAB_C2_COUNTRY,
+                    n = nrow(X_mat), p = ncol(X_mat), cols = colnames(X_mat))
+  if (file.exists(checkpoint_path) && file.exists(.cfg_path)) {
+    .cfg_old <- tryCatch(readRDS(.cfg_path), error = function(e) NULL)
+    if (!identical(.cfg_old, .cfg_now)) {
+      cat(">>> Checkpoint config MISMATCH -- settings changed since it was written. Discarding it\n")
+      cat("    and re-fitting (delete-and-refit, not resume). Changed: ",
+          paste(names(which(vapply(names(.cfg_now), function(z)
+            !identical(.cfg_old[[z]], .cfg_now[[z]]), logical(1)))), collapse = ", "), "\n", sep = "")
+      unlink(checkpoint_path); unlink(.cfg_path)
+    }
+  } else if (file.exists(checkpoint_path) && !file.exists(.cfg_path)) {
+    cat(">>> Checkpoint has NO config fingerprint (written before 2026-08-21) -- cannot verify it\n")
+    cat("    matches the current settings. Discarding and re-fitting.\n")
+    unlink(checkpoint_path)
+  }
 
   if (file.exists(checkpoint_path)) {
     cat(sprintf("\n>>> Checkpoint found for %s: %s. Loading existing estimation...\n", tgt, checkpoint_path))
@@ -1081,8 +1234,12 @@ for (tgt in target_livestock) {
           r_warmup = if (use_bart) 1e9 else NULL,
           # --- ported from the MNL work (audit-driven), all validated on simulated NB panels ---
           r_method = "crt", # exact CRT-Gibbs dispersion (replaces the slow/fragile log-RW Metropolis)
+          re_prec_pooled = COUNT_RE_PREC_POOLED,   # one RE scale per predictor across outcome columns
+          use_country_shrinkage = COUNT_USE_COUNTRY_SHRINKAGE, # Country-gatekeeper hierarchical shrinkage tau_m
+          tau0_country = 1.0,
+          slab_c2_country = COUNT_SLAB_C2_COUNTRY, # regularized Finnish slab cap on country gatekeeper: tau_m <= sqrt(4.0)=2.0
           re_regularize = TRUE, # regularised-horseshoe RE variance (slice): tames the heavy half-Cauchy tail
-          re_slab_c2 = 100, #   effective SD bounded by sqrt(100)=10 (only bites on runaway/info-sparse cells)
+          re_slab_c2 = 16,  # effective SD bounded by sqrt(16)=4.0 (harmonized with composition model)
           support_prior_strength = 1, # participation-ratio RE shrinkage (gentler than 2: at strength 2 the sparsest of ~34 groups got ~70x shrinkage)
           init_jitter = 0.1, # per-chain overdispersed init -> honest Rhat across the chains
           niter = niter,
@@ -1094,6 +1251,7 @@ for (tgt in target_livestock) {
           use_horseshoe = TRUE,
           horseshoe_idx = hs_col_idx, # continuous covariates only (excludes intercept + year FE)
           equation_specific_hs = TRUE,
+          estimate_c2 = TRUE, slab_df = 4, slab_s2 = 15,
           tau0_mu = 0.5,
           tau0_dev = 0.2,
           chain_id = i,
@@ -1105,6 +1263,7 @@ for (tgt in target_livestock) {
     cat("\n>>> Saving Checkpoint...\n")
     res_full <- combine_chains(res_list, keep_chains = TRUE)
     saveRDS(res_full, checkpoint_path)
+    saveRDS(.cfg_now, .cfg_path)      # fingerprint alongside, so a settings change invalidates it
     Sys.sleep(5) # Let the filesystem flush before writing convergence diagnostics
   }
 
@@ -1200,6 +1359,18 @@ for (tgt in target_livestock) {
     }
   }
 
+  rhat_val <- rep(NA_real_, nrow(draws_beta))
+  ess_val  <- rep(NA_real_, nrow(draws_beta))
+  if (requireNamespace("posterior", quietly = TRUE) && length(dim(raw_pooled)) == 4) {
+    for (i in seq_len(nrow(draws_beta))) {
+      arr <- raw_pooled[i, 1, , , drop=TRUE] # [iterations, chains]
+      if (is.matrix(arr)) {
+        rhat_val[i] <- posterior::rhat(arr)
+        ess_val[i]  <- posterior::ess_bulk(arr)
+      }
+    }
+  }
+
   # 3. Create Summary Table
   sum_tab <- data.table(
     Covariate = rownames(draws_beta) %||% colnames(X_mat) %||% paste0("V", 1:nrow(draws_beta)),
@@ -1207,7 +1378,9 @@ for (tgt in target_livestock) {
     Post_SD = post_sd,
     CI_2.5 = ci_lower,
     CI_97.5 = ci_upper,
-    HS_Shrinkage = hs_shrink
+    HS_Shrinkage = hs_shrink,
+    Rhat = rhat_val,
+    ESS = ess_val
   )
 
   # Format numeric outputs for display
@@ -1273,8 +1446,20 @@ for (tgt in target_livestock) {
 
   if (length(dim(res_full$postb_total)) == 4) {
     # RE model: postb_total is [covariates, target, groups, draws*chains]
+    # GROUP LABELLING (fixed 2026-08-05). postb_total[, , k] is the k-th group in APPEARANCE order
+    # -- the sampler builds its per-group arrays from `groups <- unique(group_idx)` (count_rcpp.R),
+    # NOT from the sorted factor levels. group_idx_vec = as.integer(factor) is in SORTED-level ids,
+    # so slice k belongs to re_group_names[unique(group_idx_vec)[k]], not re_group_names[k].
+    # Using the sorted levels directly misattributed 28 of 34 countries (e.g. the slice labelled
+    # "Belgium" was BosniaHerzg, "Croatia" was Switzerland) in the exported per-country betas and
+    # the per-group convergence table. predict_count was never affected (it is passed
+    # group_levels = unique(group_idx) explicitly; see recipe$group_levels_appear).
     group_names_vec <- if (exists("re_group_names") && !is.null(re_group_names)) {
-      re_group_names
+      .appear <- if (exists("group_idx_vec") && !is.null(group_idx_vec)) unique(group_idx_vec) else seq_along(re_group_names)
+      if (length(.appear) != length(re_group_names))
+        stop(sprintf("group labelling: %d appearance-order groups vs %d level names -- cannot key postb_total safely.",
+                     length(.appear), length(re_group_names)))
+      re_group_names[.appear]
     } else if (!is.null(res_full$nuts0_names)) {
       res_full$nuts0_names
     } else {
@@ -1363,8 +1548,8 @@ for (tgt in target_livestock) {
 
   # Save per-target convergence + median table
   conv_file <- paste0(
-    "output/mncount_convergence_check_", MODEL_LABEL, "_", tgt, "_", timestamp_str, ".rds"
-  )
+    "output/", SAMPLER, "_admin_convergence_check_", MODEL_LABEL, "_", tgt, "_", timestamp_str, ".rds"
+  )  # mirrors pixel's <sampler>_pixel_convergence_check_<label>_<ts>.rds
   saveRDS(as.data.frame(check_point_rhat_df_tgt), conv_file)
   cat(sprintf("  >>> Saved convergence check to %s\n", conv_file))
 
@@ -1402,7 +1587,7 @@ beta_means_df <- beta_means_df[, col_order]
 
 timestamp_str <- Sys.Date() # consistent with the first definition + the pixel driver (was format(Sys.time(),...))
 out_file <- paste0(
-  "output/mncount_admin_beta_median_",
+  "output/", SAMPLER, "_admin_beta_median_",   # mirrors pixel's <sampler>_pixel_beta_median_<label>_<ts>.csv
   MODEL_LABEL,
   if (use_re) paste0("_RE_", RE_GROUP_COL) else "_pooled",
   "_", timestamp_str, ".csv"
@@ -1418,17 +1603,18 @@ cat(sprintf(">>> Saved unified posterior beta medians to %s\n", out_file))
 # =========================================================================
 if (FIT_COMPOSITION) {
   cat("\n=========================================================================\n")
-  cat(">>> Section 9: subtype composition (delta) for BOV/SGT x D/O/F ...\n")
+  cat(">>> Section 9: subtype composition (delta) for BOV/SGT x D/O/F x {conv,organic} ...\n")
   .rs <- file.path(R.home("bin"), "Rscript")
   .logf <- "output/composition_run.log"
   if (file.exists(.logf)) unlink(.logf)
   .steps <- list(
-    c(s = "prepare_composition_training.R", e = ""),
-    c(s = "fit_composition.R", e = "D_SPECIES=bov"),
-    c(s = "fit_composition.R", e = "D_SPECIES=sgt"),
-    c(s = "consolidate_composition.R", e = ""),
-    c(s = "build_subclass_parameters.R", e = "")
-  ) # merge totals-beta + composition-delta -> gamma per country/subclass/driver
+    c(s = "prep/prepare_composition_training.R", e = ""),               # D/O/F (NUTS2) + organic (NUTS3) training tables
+    c(s = "composition/fit_composition.R", e = "D_SPECIES=bov"),
+    c(s = "composition/fit_composition.R", e = "D_SPECIES=sgt"),
+    c(s = "composition/fit_organic.R", e = ""),                                # organic-vs-conventional spatial pattern (NUTS3, off the Livestock_organic map)
+    c(s = "composition/consolidate_composition.R", e = ""),
+    c(s = "composition/build_subclass_parameters.R", e = "")
+  ) # merge totals-beta + D/O/F delta + organic delta (Eurostat-anchored) -> gamma per country/subclass/system/driver
   .ok <- TRUE
   for (.st in .steps) {
     if (!file.exists(.st["s"])) {
@@ -1467,3 +1653,12 @@ if (FIT_COMPOSITION) {
 if (RUN_MODE == "test" && PROMOTE_TO_PRODUCTION) promote_test_to_production()
 
 cat("\nEstimation and Assessment Complete.\n")
+
+if (FIT_COMPOSITION) {
+  cat("\nRunning Composition Sub-Models...\n")
+  source("composition/fit_composition.R")
+}
+
+cat("\nBuilding Diagnostic HTML Report...\n")
+source("postprocess/build_count_html.R")
+

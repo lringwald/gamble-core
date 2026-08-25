@@ -50,6 +50,68 @@ aux_path <- "codes/mnl_aux_func.R"
 if (!file.exists(aux_path)) aux_path <- "mnl_aux_func.R"
 source(aux_path)
 
+# ---------------------------------------------------------------------------
+# POOLED RE PRECISION (one scale per PREDICTOR, shared across the p outcome columns).
+#
+# Mirrors update_re_precision_hc but pools the sufficient statistic over outcome columns, which is
+# the count analogue of the MNL's symmetric (category-pooled) RE variance. Makalic-Schmidt
+# half-Cauchy auxiliaries, with the same optional regularised (Finnish) cap via a 1-D slice on
+# log(tau_raw) so that tau_eff = tau_raw + 1/c2 -- identical parameterisation to the C++ path, so
+# re_regularize / re_slab_c2 mean the same thing in both.
+#
+# ss IS UNCENTRED BY CONSTRUCTION. See the re_prec_pooled note in the signature: the count outcome
+# columns are independent rates with no baseline and no zero-sum constraint, so the category-centring
+# that broke the MNL's RE variance has no meaning here and is not offered as an option.
+# ---------------------------------------------------------------------------
+.count_re_precision_pooled <- function(beta_c, mu_pooled, re_idx, n_groups, re_mask, y_mask,
+                                       is_intercept, prec_prev, re_scale_A, re_regularize,
+                                       slab_c2, re_support, p) {
+  prec_out <- prec_prev
+  a_out    <- matrix(re_scale_A^2 / 2, nrow(prec_prev), ncol(prec_prev))
+  inv_A2   <- 1 / (re_scale_A^2)
+  inv_c2   <- if (isTRUE(re_regularize) && slab_c2 > 0 && is.finite(slab_c2)) 1 / slab_c2 else 0
+
+  for (v in re_idx) {
+    ss <- 0; n_active <- 0
+    for (m in seq_len(n_groups)) {
+      for (ip in seq_len(p)) {
+        if (re_mask[v, ip, m] > 0.5 && (is_intercept[v] == 1L || y_mask[ip, m] > 0.5)) {
+          d <- beta_c[v, ip, m] - mu_pooled[v, ip]              # UNCENTRED: the draw's own coords
+          w <- if (!is.null(re_support)) { rs <- re_support[v, m]; if (rs > 1e-12) 1 / (rs * rs) else 1 } else 1
+          ss <- ss + d * d * w
+          n_active <- n_active + 1
+        }
+      }
+    }
+    if (n_active < 1) next
+
+    tau_prev <- max(mean(prec_prev[v, ]), 1e-8)
+    a_new    <- max(1 / rgamma(1, shape = 1, rate = max(tau_prev - inv_c2, 1e-8) + inv_A2), 1e-12)
+
+    if (inv_c2 <= 0) {
+      rate <- a_new + 0.5 * ss
+      if (!is.finite(rate) || rate <= 0) rate <- inv_A2
+      pr <- rgamma(1, shape = 0.5 + 0.5 * n_active, rate = rate)
+    } else {
+      lp <- function(lt) { tr <- exp(lt); te <- tr + inv_c2
+        0.5 * n_active * log(te) - 0.5 * te * ss - 0.5 * lt - a_new * tr + lt }
+      lt <- log(max(tau_prev - inv_c2, 1e-8)); y0 <- lp(lt) - rexp(1)
+      Lb <- lt - runif(1); Rb <- Lb + 1
+      gi <- 0L; while (lp(Lb) > y0 && gi < 80L) { Lb <- Lb - 1; gi <- gi + 1L }
+      gi <- 0L; while (lp(Rb) > y0 && gi < 80L) { Rb <- Rb + 1; gi <- gi + 1L }
+      ln <- lt
+      for (.s in 1:100) { q <- Lb + runif(1) * (Rb - Lb)
+        if (lp(q) > y0) { ln <- q; break }
+        if (q < lt) Lb <- q else Rb <- q }
+      pr <- exp(ln) + inv_c2
+    }
+    prec_out[v, ] <- min(max(pr, 1e-4), 1e6)                    # one scale, shared across columns
+    a_out[v, ]    <- a_new
+  }
+  list(prec = prec_out, sigma = 1 / sqrt(prec_out + 1e-12), a_aux = a_out)
+}
+
+
 # --- Compile core C++ (shared with MNL sampler + count-specific extensions) ---
 .needs_cpp_compile <- TRUE
 if (exists("compute_utilities_count_cpp", mode = "function")) {
@@ -147,6 +209,23 @@ mncount_rcpp <- function(
     bart_absorb_mean = FALSE,# absorb the BART f-mean into the intercept each iter (identification only). Default OFF: the QR cdir move is not POINTWISE mean-preserving under the exp-link -> it LEAKS level into mu (~9x over-pred). Leaving f un-centered is exact for prediction (only U+f matters); the split is a benign label issue.
     mean_param     = TRUE,   # MEAN parameterization: model log(mu)=X.beta+f+offset (r-FREE) by folding -log(r) into the offset that forms eta_nat everywhere. Removes the intercept<->log(r) ridge at its ROOT (vs r_asis's discrete post-hoc shift, which fights BART). When TRUE, r_asis is auto-disabled (subsumed). This is what makes count-BART stable. Off = legacy natural param (mu=r*e^eta).
     r_asis         = TRUE,   # mean-preserving dispersion interweave: after each r draw, shift the intercept by log(r_old/r_new) so mu=r*e^U is held fixed -> r identified by DISPERSION alone (breaks the r<->intercept ridge that made r drift to 0.2/8 instead of the MLE ~2). Off = legacy behaviour. SUPERSEDED by mean_param (kept for the legacy natural-param path).
+    re_center      = FALSE,  # IDENTIFY mu AS THE MEAN COUNTRY EFFECT. The likelihood only sees
+                             # beta_g = mu + b_g, so the split between mu and the MEAN of the b_g is
+                             # unidentified -- only the sum is. The priors break that tie, and they are
+                             # asymmetric: mu carries the HORSESHOE (sparsity, pulls to 0) while the
+                             # b_g carry only a variance prior (nothing pulls their mean to 0). In the
+                             # NCP-ASIS conditional below the precision is (G*prec_re + hs_prec), so
+                             # whenever hs_prec dominates 34 countries' evidence the common effect
+                             # MIGRATES OUT OF mu INTO THE RE MEAN. Measured on the BOV livestock fit:
+                             # GHM_HI mu = 0.05 while mean_g(beta_g) = 4.85 -- 99% of the average effect
+                             # sat in the RE mean; median 79% across the 36 RE covariates. The intercept
+                             # was the sole exception, and it is the one column excluded from the
+                             # horseshoe -- the mechanism's own control.
+                             # TRUE = do not sparsity-shrink mu AGAINST the RE mean (drop hs_prec on the
+                             # re_idx rows of the mu conditional), so mu is identified by the group means
+                             # and equals the average country effect. Sparsity is then judged on the
+                             # TOTAL effect, not on an aliased component. Non-RE covariates keep the
+                             # horseshoe untouched. Off = legacy behaviour.
     level_asis     = TRUE,   # location ASIS: CP redraw of the RE means (mu_pooled) given the group totals (curr_beta_c FIXED -> mu_g unchanged). Interweaves with the NCP RE draw -> decouples the pooled LEVEL from the RE deviations (breaks the intercept<->RE-mean ridge that leaves the intercept unconverged / the mean 7x too high). Off = legacy.
     r_fixed        = 1e5,    # used when family="poisson"
     # --- Offset (log scale) ---
@@ -156,6 +235,20 @@ mncount_rcpp <- function(
     re_idx         = NULL,   # defaults to 1:ncol(X)
     prior_a_re     = 0.01,   prior_b_re  = 0.01,
     use_half_cauchy_re = TRUE, re_scale_A = 1.0,
+    # POOLED RE VARIANCE ACROSS OUTCOME COLUMNS (ported from the MNL's symmetric RE block,
+    # 2026-08-21). FALSE (default) = historical: update_re_precision_hc draws ONE precision per
+    # (predictor, outcome column). TRUE = one precision per PREDICTOR, shared across all p outcome
+    # columns, so a covariate's group-level spread is estimated from p times as much information.
+    #
+    # DELIBERATELY UNCENTRED, and that is the whole point of the port. The MNL's
+    # update_re_precision_hc_sym built its sum of squares from CATEGORY-CENTRED deviations while the
+    # RE draw stayed uncentred; for an RE that is largely a common shift that zeroes the random
+    # effects outright (measured: RE sd 0.0000, -51.6 nats). In a COUNT model there is no baseline
+    # category and no zero-sum constraint at all -- the p columns are independent rates, not a
+    # composition -- so centring here would be not merely mis-scaled but meaningless. Only the
+    # uncentred statistic is defined, and it is the one used below.
+    re_prec_pooled = FALSE,
+    use_country_shrinkage = FALSE, tau0_country = 1.0, slab_c2_country = 4.0, # Country-Gatekeeper shrinkage tau_m ~ Regularized-Half-Cauchy(0, tau0, slab_c2)
     re_regularize = FALSE, re_slab_c2 = 100,   # regularised-horseshoe RE variance (slice): tau_eff=tau_raw+1/c2, SD<=sqrt(c2). Tames the heavy half-Cauchy tail (ported from the MNL). Off by default.
     support_prior_strength = 0,                # support-aware RE prior: per-(cov,group) participation-ratio SD shrinkage for info-sparse groups (ported from the MNL). 0 = off.
     init_jitter = 0,                           # per-chain overdispersed init: uniform +/- init_jitter on mu_pooled -> honest Rhat. 0 = off.
@@ -367,6 +460,11 @@ mncount_rcpp <- function(
     groups    <- unique(group_idx)
     n_groups  <- length(groups)
     idx_list  <- lapply(groups, function(m) as.integer(which(group_idx == m)))
+    # POSITION of each observation's group in `groups` (APPEARANCE order). curr_beta_c /
+    # postb_total slice m belongs to groups[m], NOT to raw group id m -- these differ whenever the
+    # rows are not ordered by group (28 of 34 ids on the NUTS3 livestock panel). Anything that
+    # indexes the per-group array by observation MUST use gpos, never group_idx.
+    gpos      <- match(group_idx, groups)
     Xm_list   <- lapply(idx_list, function(idx) as.matrix(unname(X[idx, , drop = FALSE])))
     Xmt_list  <- lapply(Xm_list, t)
     group_sizes <- sapply(idx_list, length)
@@ -534,6 +632,9 @@ mncount_rcpp <- function(
       a_re <- NULL
     }
 
+    curr_tau_country <- rep(1.0, n_groups)
+    curr_nu_country  <- rep(1.0, n_groups)
+
     weights <- group_sizes / sum(group_sizes)
   }
 
@@ -606,6 +707,7 @@ mncount_rcpp <- function(
   postb_pooled <- array(0, c(k, p, nretain))
   post_r       <- if (sample_r) matrix(0, p, nretain) else NULL
   post_sigma_re <- if (use_re) matrix(0, k * p, nretain) else NULL
+  post_tau_country <- if (use_re && isTRUE(use_country_shrinkage)) matrix(0, n_groups, nretain) else NULL
   post_log_lik <- numeric(nretain)
   post_ll_pw   <- if (calc_loo) matrix(0, nretain, n) else NULL
   post_kappa_mean <- if (use_horseshoe) matrix(0, k * p, nretain) else NULL
@@ -799,6 +901,13 @@ mncount_rcpp <- function(
 
     } else if (use_re && !has_constraints) {
       sigma_mat <- matrix(1 / sqrt(pmax(prec_beta_pooled, 1e-8)), k, p)
+      re_supp_eff <- re_support_mat
+      if (isTRUE(use_country_shrinkage)) {
+        re_slopes_mask <- which(!is_global_intercept & (seq_len(k) %in% re_idx))
+        if (length(re_slopes_mask) > 0) {
+          re_supp_eff[re_slopes_mask, ] <- sweep(re_support_mat[re_slopes_mask, , drop = FALSE], 2, curr_tau_country, "*")
+        }
+      }
       if (use_ncp) {
         re_res <- gibbs_step_re_ncp(
           X, Xt, kappa_mat, omega, c_j_zero,
@@ -812,7 +921,7 @@ mncount_rcpp <- function(
           re_mask, y_mask, as.integer(is_global_intercept),
           # Shared base core's RE-scale-ASIS args: support prior (participation-ratio SD scaling),
           # the half-Cauchy aux, asis=FALSE (ASIS off in the count model).
-          re_support_mat,
+          re_supp_eff,
           if (use_half_cauchy_re) a_re else matrix(1.0, k, p),
           FALSE)
         curr_beta_c <- re_res$beta_c
@@ -1064,7 +1173,13 @@ mncount_rcpp <- function(
         prec_re  <- pmax(prec_beta_pooled[, ip], 1e-12)
         P_cp     <- prior_P
         diag(P_cp)[re_idx] <- diag(P_cp)[re_idx] + n_groups * prec_re[re_idx]
-        if (use_horseshoe) diag(P_cp) <- diag(P_cp) + hs_prec_mat[, ip]
+        if (use_horseshoe) {
+          hsv <- hs_prec_mat[, ip]
+          # re_center: mu of an RE covariate is the MEAN COUNTRY EFFECT, not a sparsity target --
+          # shrinking it here just pushes the common effect into the (unpenalised) RE mean.
+          if (isTRUE(re_center)) hsv[re_idx] <- 0
+          diag(P_cp) <- diag(P_cp) + hsv
+        }
         Pb_cp       <- prior_Pb[, ip]
         Pb_cp[re_idx] <- Pb_cp[re_idx] + prec_re[re_idx] * beta_sum[re_idx]
         if (length(re_complement) > 0) {
@@ -1106,7 +1221,16 @@ mncount_rcpp <- function(
     if (use_re) {
       target_for_prec <- curr_beta_c
 
-      if (use_half_cauchy_re) {
+      if (use_half_cauchy_re && isTRUE(re_prec_pooled)) {
+        re_prec <- .count_re_precision_pooled(
+          beta_c = target_for_prec, mu_pooled = mu_pooled, re_idx = re_idx,
+          n_groups = n_groups, re_mask = re_mask_cube, y_mask = y_mask,
+          is_intercept = is_global_intercept, prec_prev = prec_beta_pooled,
+          re_scale_A = re_scale_A, re_regularize = isTRUE(re_regularize),
+          slab_c2 = re_slab_c2, re_support = re_support_mat, p = p
+        )
+        a_re <- re_prec$a_aux
+      } else if (use_half_cauchy_re) {
         re_prec <- update_re_precision_hc(
           beta_c       = target_for_prec,
           mu_pooled    = mu_pooled,
@@ -1138,6 +1262,27 @@ mncount_rcpp <- function(
       }
       prec_beta_pooled <- re_prec$prec
       sigma_beta_pooled <- re_prec$sigma
+
+      # Country-Gatekeeper hierarchical shrinkage update
+      if (isTRUE(use_country_shrinkage)) {
+        c_shrink <- update_country_shrinkage_hc_cpp(
+          beta_c = target_for_prec,
+          mu_pooled = mu_pooled,
+          sigma_mat = sigma_beta_pooled,
+          re_idx = as.integer(re_idx - 1L),
+          re_mask = re_mask_cube,
+          y_mask = y_mask,
+          is_intercept = as.integer(is_global_intercept),
+          tau_prev = curr_tau_country,
+          nu_prev = curr_nu_country,
+          tau0_country = tau0_country,
+          slab_c2_country = slab_c2_country,
+          re_support_opt = re_support_mat,
+          include_intercept = FALSE
+        )
+        curr_tau_country <- c_shrink$tau_country
+        curr_nu_country  <- c_shrink$nu_country
+      }
     }
 
     # ================================================================
@@ -1200,7 +1345,7 @@ mncount_rcpp <- function(
     if (use_bart) {
       for (ip in seq_len(p)) {
         lp <- if (use_re)
-          rowSums(X * t(curr_beta_c[, ip, group_idx]))
+          rowSums(X * t(curr_beta_c[, ip, gpos]))   # gpos, NOT group_idx (appearance-order slices)
         else
           X %*% curr_beta[, ip]
 
@@ -1246,6 +1391,9 @@ mncount_rcpp <- function(
         postb_total[, , , s] <- curr_beta_c
         postb_pooled[, , s]  <- mu_pooled
         post_sigma_re[, s]   <- as.vector(sigma_beta_pooled)
+        if (isTRUE(use_country_shrinkage)) {
+          post_tau_country[, s] <- curr_tau_country
+        }
       } else {
         postb_total[, , s]  <- curr_beta
         postb_pooled[, , s] <- curr_beta
@@ -1373,6 +1521,9 @@ mncount_rcpp <- function(
   if (use_re) {
     dimnames(postb_total)  <- list(cov_names, out_names, as.character(seq_len(n_groups)), NULL)
     dimnames(postb_pooled) <- list(cov_names, out_names, NULL)
+    if (!is.null(post_tau_country) && exists("group_names") && !is.null(group_names)) {
+      rownames(post_tau_country) <- as.character(group_names)
+    }
   } else {
     dimnames(postb_total)  <- list(cov_names, out_names, NULL)
     dimnames(postb_pooled) <- list(cov_names, out_names, NULL)
@@ -1395,6 +1546,7 @@ mncount_rcpp <- function(
     postb_pooled   = postb_pooled,
     post_sigma_re  = post_sigma_re,
     sigma_beta_pooled = sigma_beta_pooled,
+    post_tau_country = post_tau_country,
     post_r         = post_r,           # <── new: posterior draws of dispersion
     r_disp_final   = r_disp,           # <── last MCMC value (useful for warmstarting)
     mean_param     = mean_param,       # <── TRUE => beta models log(mu) (r-free): predict mu=exp(X.beta+f+offset), NO r factor

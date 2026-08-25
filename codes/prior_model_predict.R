@@ -96,7 +96,7 @@ predict_shares <- function(fit, X, bart_cols, linear_cols, group_idx = NULL, gro
 suppressMessages(library(data.table))
 
 # focal_<class> columns from the LU state (areas -> per-row shares -> coord queen-8 focal -> broadcast).
-.add_focal <- function(raw, lu_classes, coord, slice, res, complete_only = TRUE) {
+.add_focal <- function(raw, lu_classes, coord, slice, res, complete_only = TRUE, add_nodata = FALSE) {
   d <- as.data.table(copy(raw))
   pre <- grep("^focal_", names(d), value = TRUE); if (length(pre)) d[, (pre) := NULL]   # drop any stored focal_ before recompute
   sh <- d[, ..lu_classes]; rs <- rowSums(sh, na.rm = TRUE)
@@ -105,6 +105,14 @@ suppressMessages(library(data.table))
   fc <- compute_focal_coord(dn, classes = lu_classes, coord = coord, slice = slice, res = res, complete_only = complete_only)
   d2 <- merge(d, fc, by = c(coord, slice), all.x = TRUE, sort = FALSE)
   for (j in grep("^focal_", names(d2), value = TRUE)) set(d2, which(is.na(d2[[j]])), j, 0)
+  # DERIVED column, not an LU class: the uncovered share of the neighbourhood. Kept OUT of
+  # `lu_classes` so compute_focal_coord never looks for a "NODATA" layer, but it is what makes the
+  # focal block sum to exactly 1 -- the precondition for the zero-sum const-sum reconstruction.
+  # Mirrors the fit-time definition in run_prior_module_pixel_level_model.R.
+  if (isTRUE(add_nodata)) {
+    fc_cls <- paste0("focal_", lu_classes)
+    set(d2, j = "focal_NODATA", value = pmax(0, 1 - rowSums(d2[, ..fc_cls])))
+  }
   d2[]
 }
 
@@ -116,11 +124,12 @@ suppressMessages(library(data.table))
 }
 
 build_recipe <- function(raw, feature_cols, lu_classes, outcome_classes, coord = c("X","Y"),
-                         slice = "out_year", group_col = "Grouping_Key", transforms = list(), res = NULL) {
+                         slice = "out_year", group_col = "Grouping_Key", transforms = list(), res = NULL,
+                         add_nodata = FALSE) {
   d <- as.data.table(copy(raw))
   if (is.null(res)) res <- min(diff(sort(unique(d[[coord[1]]]))))
-  d <- .add_focal(d, lu_classes, coord, slice, res)
-  focal_cols <- paste0("focal_", lu_classes)
+  d <- .add_focal(d, lu_classes, coord, slice, res, add_nodata = add_nodata)
+  focal_cols <- c(paste0("focal_", lu_classes), if (isTRUE(add_nodata)) "focal_NODATA")
   d <- .apply_transforms(d, transforms)
   col_order <- c("intercept", feature_cols, focal_cols)
   X <- cbind(intercept = 1, as.matrix(d[, c(feature_cols, focal_cols), with = FALSE])); X[!is.finite(X)] <- 0; X[,1] <- 1
@@ -128,7 +137,7 @@ build_recipe <- function(raw, feature_cols, lu_classes, outcome_classes, coord =
   g <- as.integer(factor(d[[group_col]]))
   recipe <- list(feature_cols = feature_cols, lu_classes = lu_classes, outcome_classes = outcome_classes,
                  coord = coord, slice = slice, group_col = group_col, transforms = transforms, res = res,
-                 col_order = col_order, focal_cols = focal_cols,
+                 col_order = col_order, focal_cols = focal_cols, add_nodata = isTRUE(add_nodata),
                  group_levels_factor = levels(factor(d[[group_col]])),   # for as.integer(factor) reproduction
                  group_levels_appear = unique(g))                        # sampler keying (appearance order)
   list(X = X, Y = Y, group_idx = g, recipe = recipe)
@@ -136,7 +145,8 @@ build_recipe <- function(raw, feature_cols, lu_classes, outcome_classes, coord =
 
 apply_recipe <- function(recipe, raw) {
   d <- as.data.table(copy(raw))
-  d <- .add_focal(d, recipe$lu_classes, recipe$coord, recipe$slice, recipe$res)
+  d <- .add_focal(d, recipe$lu_classes, recipe$coord, recipe$slice, recipe$res,
+                  add_nodata = isTRUE(recipe$add_nodata))
   d <- .apply_transforms(d, recipe$transforms)
   X <- cbind(intercept = 1, as.matrix(d[, c(recipe$feature_cols, recipe$focal_cols), with = FALSE])); X[!is.finite(X)] <- 0; X[,1] <- 1
   X <- X[, recipe$col_order, drop = FALSE]                              # exact training order
@@ -368,4 +378,50 @@ predict_count_prior <- function(model, raw, type = c("mean","predictive"), densi
                      bart_cols = if (length(bc)) bc else NULL, linear_cols = lc,
                      type = match.arg(type), density_cap = density_cap, cap_quantile = cap_quantile,
                      return = match.arg(return), thin = thin)
+}
+
+# =============================================================================
+# population_averaged_effect(fit, group_idx, weights) — the SIZE-WEIGHTED estimand
+# =============================================================================
+# In a hierarchical model `mu` is the mean of the COUNTRY effect distribution: every country is one
+# exchangeable draw, so Malta counts as much as Germany. For an EU-wide statement ("what does GHM_HI
+# do to livestock density in Europe?") the decision-relevant quantity is the SIZE-WEIGHTED average
+# marginal effect
+#       theta_w = sum_g w_g * beta_g ,     w_g = herd share / area share / observation share
+# which is a plain posterior functional -- computed per draw, so it carries honest uncertainty and
+# needs NO refit. It differs from `mu` exactly when the effect is heterogeneous and correlated with
+# size: on the BOV livestock fit GHM_HI had mu = 0.05 but a herd-weighted effect of +12.2, with 85%
+# of countries positive (see also the `re_center` note in count_rcpp.R -- the two are complementary:
+# re_center fixes WHICH parameter carries the average, this reports the average you actually want).
+#
+#   fit        : an mncount_rcpp / mnlogit_rcpp_sym fit with postb_total (RE)
+#   group_idx  : the group vector the model was FIT with (raw ids)
+#   weights    : per-observation weights (e.g. herd counts). NULL -> observation counts.
+#   Returns a data.frame: covariate, mu (pooled), theta_w (weighted), sd, q025, q975, frac_pos.
+population_averaged_effect <- function(fit, group_idx, weights = NULL, cov_names = NULL,
+                                       target = 1L, probs = c(0.025, 0.975)) {
+  stopifnot(!is.null(fit$postb_total))
+  Bt <- fit$postb_total; Bp <- fit$postb_pooled
+  if (length(dim(Bt)) == 5L) { d <- dim(Bt); dim(Bt) <- c(d[1], d[2], d[3], d[4] * d[5])   # drop chain dim
+                               dp <- dim(Bp); dim(Bp) <- c(dp[1], dp[2], dp[3] * dp[4]) }
+  # CRITICAL: postb_total[, , k] is the k-th group in APPEARANCE order (`unique(group_idx)`),
+  # NOT group id k. Getting this wrong silently assigns each group another group's coefficients.
+  lev <- unique(group_idx)
+  G <- dim(Bt)[3]
+  if (G != length(lev)) stop(sprintf("group mismatch: postb_total has %d slices, group_idx has %d distinct ids", G, length(lev)))
+  w_g <- if (is.null(weights)) vapply(lev, function(g) sum(group_idx == g), 0) else
+                               vapply(lev, function(g) sum(weights[group_idx == g], na.rm = TRUE), 0)
+  w_g <- w_g / sum(w_g)
+  nd <- dim(Bt)[4]; k <- dim(Bt)[1]
+  th <- matrix(NA_real_, k, nd)                       # weighted effect per draw
+  for (s in seq_len(nd)) th[, s] <- Bt[, target, , s] %*% w_g
+  qs <- t(apply(th, 1, quantile, probs = probs, na.rm = TRUE))
+  data.frame(
+    covariate = cov_names %||% dimnames(Bt)[[1]] %||% paste0("V", seq_len(k)),
+    mu        = rowMeans(Bp[, target, , drop = FALSE]),
+    theta_w   = rowMeans(th),
+    sd        = apply(th, 1, sd),
+    q_lo      = qs[, 1], q_hi = qs[, 2],
+    frac_pos  = rowMeans(apply(Bt[, target, , , drop = FALSE], c(1, 3), mean) > 0),
+    stringsAsFactors = FALSE)
 }

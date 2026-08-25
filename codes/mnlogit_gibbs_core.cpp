@@ -910,4 +910,89 @@ List update_re_precision_hc(const arma::cube   &beta_c,
                       Named("a_aux") = a_aux_out);
 }
 
+// ==========================================================================
+// Country-Gatekeeper Shrinkage: Half-Cauchy Gibbs update for tau_country
+// ==========================================================================
+// [[Rcpp::export]]
+List update_country_shrinkage_hc_cpp(
+    const arma::cube &beta_c,
+    const arma::mat  &mu_pooled,
+    const arma::mat  &sigma_mat,
+    const arma::uvec &re_idx,
+    const arma::cube &re_mask,
+    const arma::mat  &y_mask,
+    const arma::uvec &is_intercept,
+    const arma::vec  &tau_prev,
+    const arma::vec  &nu_prev,
+    double            tau0_country = 1.0,
+    double            slab_c2_country = 4.0,
+    Rcpp::Nullable<Rcpp::NumericMatrix> re_support_opt = R_NilValue,
+    bool              include_intercept = false)
+{
+  int p = beta_c.n_cols;
+  int n_groups = beta_c.n_slices;
+
+  bool have_support = re_support_opt.isNotNull();
+  arma::mat re_support;
+  if (have_support) re_support = Rcpp::as<arma::mat>(re_support_opt);
+
+  arma::vec tau_out(n_groups, arma::fill::ones);
+  arma::vec nu_out(n_groups, arma::fill::ones);
+  const double inv_tau0_sq = 1.0 / (tau0_country * tau0_country);
+
+  for (int m = 0; m < n_groups; m++) {
+    double ss_m = 0.0;
+    double n_active = 0.0;
+
+    for (int ip = 0; ip < p; ip++) {
+      for (arma::uword ri = 0; ri < re_idx.n_elem; ri++) {
+        int v = static_cast<int>(re_idx(ri));
+        if (!include_intercept && is_intercept(v) == 1) continue;
+
+        if (re_mask(v, ip, m) > 0.5 && (is_intercept(v) == 1 || y_mask(ip, m) > 0.5)) {
+          double rs = 1.0;
+          if (have_support) {
+            double rsv = re_support(v, m);
+            if (rsv > 1e-12) rs = rsv;
+          }
+          double base_sd = std::max(sigma_mat(v, ip) * rs, 1e-8);
+          double diff = (beta_c(v, ip, m) - mu_pooled(v, ip)) / base_sd;
+          ss_m += diff * diff;
+          n_active += 1.0;
+        }
+      }
+    }
+
+    if (n_active < 1.0) {
+      tau_out(m) = 0.0;
+      nu_out(m)  = 1.0;
+      continue;
+    }
+
+    // Step 1: Draw nu_m | tau_m^2
+    double tau_sq_prev = std::max(tau_prev(m) * tau_prev(m), 1e-8);
+    double rate_nu = inv_tau0_sq + 1.0 / tau_sq_prev;
+    double nu_new = 1.0 / std::max(R::rgamma(1.0, 1.0 / rate_nu), 1e-12);
+    nu_out(m) = nu_new;
+
+    // Step 2: Draw tau_m^2 | SS_m, nu_m
+    double shape_tau = 0.5 * (n_active + 1.0);
+    double rate_tau  = 1.0 / std::max(nu_new, 1e-12) + 0.5 * ss_m;
+    if (!std::isfinite(rate_tau) || rate_tau <= 0.0) rate_tau = inv_tau0_sq;
+    double tau_sq_new = 1.0 / std::max(R::rgamma(shape_tau, 1.0 / rate_tau), 1e-12);
+
+    // Regularized Finnish slab cap on country shrinkage: tau_eff = sqrt( c2 * tau^2 / (c2 + tau^2) )
+    double tau_val = std::sqrt(std::max(tau_sq_new, 1e-8));
+    if (slab_c2_country > 0.0) {
+      tau_val = std::sqrt((slab_c2_country * tau_sq_new) / (slab_c2_country + tau_sq_new));
+    }
+    double max_cap = (slab_c2_country > 0.0) ? std::sqrt(slab_c2_country) : 50.0;
+    tau_out(m) = std::min(std::max(tau_val, 1e-4), max_cap);
+  }
+
+  return List::create(Named("tau_country") = tau_out,
+                      Named("nu_country")  = nu_out);
+}
+
+
 
