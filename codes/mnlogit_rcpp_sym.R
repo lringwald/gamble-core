@@ -191,7 +191,23 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
                                   alt_spec_Z = NULL, alt_spec_prior_sd = 10, alt_spec_allow_unvalidated = FALSE,
                                   positive_constraints = NULL, negative_constraints = NULL,
                                   use_ncp = TRUE, calc_loo = FALSE,
-                                  support_prior_strength = 0, re_asis = FALSE, init_jitter = 0,
+                                  # ONE KNOB, TWO UNRELATED MECHANISMS -- split 2026-08-26.
+                                  # support_prior_strength historically drove BOTH:
+                                  #   RE side: per-(covariate, group) participation-ratio shrinkage of
+                                  #     the RE prior SD. Data-driven, deterministic (hence identified,
+                                  #     unlike a sampled per-group tau), and consistent -- the C++ draw
+                                  #     and the variance update use the SAME factor. This is the useful
+                                  #     one: it gates cells where a group carries no slope information.
+                                  #   FE side: multiplies the HORSESHOE precision by (n/PR)^strength.
+                                  #     On the real design that is a median 106x / max 2.8e5x inflation
+                                  #     and it annihilates every driver (-125 nats held-out).
+                                  # Entangling them meant you could not have the first without the
+                                  # second. re_support_strength / fe_support_strength override
+                                  # independently; NULL = fall back to support_prior_strength, so
+                                  # existing callers are unchanged.
+                                  support_prior_strength = 0,
+                                  re_support_strength = NULL, fe_support_strength = NULL,
+                                  re_asis = FALSE, init_jitter = 0,
                                   collapse_re_var = FALSE, collapse_re_var_validated = FALSE,
                                   re_regularize = FALSE,   # apply the Finnish-HS variance cap to the STANDARD half-Cauchy RE prior too (update_re_precision_hc_sym), so the standard and collapsed paths target the SAME regularised-horseshoe posterior. The principled cure for the heavy-tailed per-(cov,cat) RE scales running off. Off by default (production-neutral); turn on together with collapse for a fair gate.
                                   collapse_slab_c2 = 100,  # shared regularised (Finnish-HS) cap scale for BOTH the collapsed and (when re_regularize=TRUE) the standard RE variance: effective var = c2*s2/(c2+s2) -> sigma <= sqrt(c2) (=10). Stops the unregularised half-Cauchy heavy tail running off (sigma=138). Tune via the gate.
@@ -366,6 +382,8 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
     warning("For massive N with BART, consider nburn > 5000.")
   }
   if (any(!is.finite(Y))) stop("Y contains NA/Inf.")
+  if (is.null(re_support_strength)) re_support_strength <- support_prior_strength
+  if (is.null(fe_support_strength)) fe_support_strength <- support_prior_strength
   if (any(!is.finite(X))) stop("X contains NA/Inf.")
   if (any(rowSums(Y) <= 0)) stop("Zero/negative row sums in Y.")
 
@@ -414,32 +432,108 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
   use_alt_spec <- !is.null(alt_spec_Z)
   Zt <- NULL
   if (use_alt_spec && !isTRUE(alt_spec_allow_unvalidated)) stop(
-    "alt_spec_Z is IMPLEMENTED BUT NOT CORRECT -- delta is not recovered. Do not use for results.\n",
-    "  Attempt 1 (conjugate PG draw treating c_j as fixed): delta biased by a clean factor ~2\n",
-    "     true 1/2/3 -> 0.489/0.999/1.462 (ratios 2.046/2.002/2.053). Cause: this sampler carries a\n",
-    "     ONE-VS-REST decomposition, predictor (psi_j - c_j) with c_j = log sum_{k!=j} exp(psi_k);\n",
-    "     delta enters psi_k for EVERY alternative so c_j depends on delta, and the correct effective\n",
-    "     regressor is Zt_j - d c_j/d delta, not Zt_j.\n",
-    "  Attempt 2 (random-walk Metropolis on the exact likelihood): WORSE -- true 1/2/3 -> -1.301/\n",
-    "     -1.109/0.623, no consistent relation, i.e. the utility reconstruction inside the MH step\n",
-    "     does not match what the sweep actually uses.\n",
-    "  A correct implementation needs the conditional derived properly against the c_j decomposition\n",
-    "  (or an MH step that reuses the sweep's own utility path rather than rebuilding it).\n",
-    "  The STATISTICAL case for the term is sound and independently validated by maximum likelihood in\n",
+    "alt_spec_Z: RESOLVED 2026-08-26, but keep this flag until it has run on YOUR design.\n",
+    "  ROOT CAUSE of every earlier failure was ONE bug, not the statistics: the additive utility\n",
+    "  channel f_bart is gated on `use_bart` at EVERY consumer, so with BART off delta*Zt never\n",
+    "  reached the utilities, c_j, or the beta draw.\n",
+    "  - Attempt 1 (conjugate PG draw) read delta ~2x low (true 1/2/3 -> 0.489/0.999/1.462) and was\n",
+    "    blamed on c_j depending on delta. It does -- but the bias arose because c_j was computed\n",
+    "    WITHOUT delta at all, so the working response carried a c_j inconsistent with the delta\n",
+    "    being estimated. With the channel live, c_j is rebuilt at the current delta each sweep.\n",
+    "  - Attempt 2 (random-walk MH) failed for the same reason: it rebuilt utilities through the same\n",
+    "    gated path, so its target did not depend on delta and every proposal accepted.\n",
+    "  NOW: channel gated on CONTENT (use_offset); delta drawn from its exact conjugate Gaussian.\n",
+    "  Recovery over true delta 1 / 1.5 / 2 / 3 -> 1.006 / 1.525 / 2.021 / 2.976\n",
+    "  (tests/test_altspec_recovery.R, which also asserts sd(delta) << prior sd -- a DISCONNECTED\n",
+    "  delta still COVERS truth because its posterior IS the wide prior).\n",
+    "  Statistical case independently validated by maximum likelihood in\n",
     "  experiments/nested/altspec_identification_proof.R (SE(lambda) 1.4x-5.5x tighter).\n",
     "  Pass alt_spec_allow_unvalidated=TRUE only to work ON this feature.")
+  # MULTI-BLOCK ALTERNATIVE-SPECIFIC DESIGN (2026-08-26).
+  # alt_spec_Z accepts, in increasing generality:
+  #   (a) an n x p_all MATRIX                      -> one block, one shared delta (legacy form)
+  #   (b) a NAMED LIST of n x p_all matrices        -> one shared delta EACH
+  #   (c) a NAMED LIST of list(Z=, coef=)           -> coef "shared" (1 delta) or "per_class" (p deltas)
+  # Separate blocks exist because the spatial Y lag and the temporal (t-1) LU state are DIFFERENT
+  # effects that happen to share the same algebraic shape -- both are attributes OF alternative j, so
+  # both belong here rather than as k case-specific columns, but each needs its own coefficient.
+  # "per_class" is what gives the transition term its degrees: one delta = scalar inertia, p deltas =
+  # per-class inertia (see the transition ladder).
+  alt_blocks <- list()
   if (use_alt_spec) {
-    alt_spec_Z <- as.matrix(alt_spec_Z)
-    if (nrow(alt_spec_Z) != nrow(Y) || ncol(alt_spec_Z) != p_all)
-      stop(sprintf("alt_spec_Z must be %d x %d (n x p_all); got %d x %d",
-                   nrow(Y), p_all, nrow(alt_spec_Z), ncol(alt_spec_Z)))
-    Zt <- alt_spec_Z[, pp, drop = FALSE] - alt_spec_Z[, baseline]
-    Zt[!is.finite(Zt)] <- 0
-    cat(sprintf("Alternative-specific term ON: 1 shared delta over %d alternatives (sd(Zt)=%.4f)\n",
-                p_all, stats::sd(Zt)))
-  }
-  curr_delta <- 0
-  delta_mh_sd <- 0.5; delta_acc_n <- 0L; delta_acc_k <- 0L   # adaptive RW-Metropolis state for delta
+    # THE BASELINE SUBTRACTION DEPENDS ON THE COEFFICIENT TYPE -- getting this wrong silently
+    # attenuates per-class effects (measured: true +1.50/-1.00/+0.50 read +0.78/-0.31/+0.35).
+    #   shared    delta(Z_ij) - delta(Z_ib) = delta * (Z_ij - Z_ib)  -> SUBTRACT the baseline column.
+    #   per_class delta_j Z_ij - delta_b Z_ib is NOT delta_j (Z_ij - Z_ib). delta_b is not separately
+    #             identified, so it is pinned at 0 and the regressor is the RAW column Z_ij.
+    #   shared    delta(Z_ij) - delta(Z_ib) = delta * (Z_ij - Z_ib)  -> SUBTRACT the baseline column.
+    #   per_class delta_j Z_ij - delta_b Z_ib is NOT delta_j (Z_ij - Z_ib). delta_b is pinned at 0
+    #             (identification) and the regressor is the RAW column Z_ij.
+    #   symmetric same as per_class but the constraint is sum_j delta_j = 0 instead of delta_b = 0,
+    #             so the coefficients are BASELINE-INVARIANT -- each delta_j is that class's
+    #             persistence relative to the AVERAGE, not relative to an arbitrary reference class
+    #             (`baseline` here is which.max(colSums(Y)), i.e. data-dependent and different per
+    #             node). Needs the raw columns AND the baseline column, because
+    #             eta_ij - eta_ib = sum_k delta_k [1{k=j} Z_ij + Z_ib].
+    .norm1 <- function(Zin, nm, cf) {
+      Zm <- as.matrix(Zin)
+      if (nrow(Zm) != nrow(Y) || ncol(Zm) != p_all)
+        stop(sprintf("alt_spec block '%s' must be %d x %d (n x p_all); got %d x %d",
+                     nm, nrow(Y), p_all, nrow(Zm), ncol(Zm)))
+      Zc <- if (identical(cf, "shared")) Zm[, pp, drop = FALSE] - Zm[, baseline]
+            else                          Zm[, pp, drop = FALSE]
+      Zc[!is.finite(Zc)] <- 0
+      Zb <- if (identical(cf, "symmetric")) { v <- Zm[, baseline]; v[!is.finite(v)] <- 0; v } else NULL
+      list(Zt = Zc, Zb = Zb)
+    }
+    raw <- if (is.list(alt_spec_Z)) alt_spec_Z else list(z = alt_spec_Z)
+    if (is.null(names(raw)) || any(!nzchar(names(raw)))) names(raw) <- paste0("z", seq_along(raw))
+    off <- 0L
+    for (nm in names(raw)) {
+      el <- raw[[nm]]
+      Zin <- if (is.list(el)) el$Z else el
+      cf  <- if (is.list(el) && !is.null(el$coef)) match.arg(el$coef, c("shared", "per_class", "symmetric")) else "shared"
+      sc  <- if (is.list(el) && !is.null(el$scale)) match.arg(el$scale, c("sd", "none")) else "sd"
+      Zc  <- .norm1(Zin, nm, cf)
+      # SCALE THE REGRESSOR SO delta IS PER-SD. delta multiplies a SHARE, and share spreads differ
+      # 10-30x across classes (a class at 0.1% of area has sd(z) ~ 0.007 vs ~0.24 for one at 15%),
+      # so RAW deltas are not comparable across classes -- a rare class needs a huge delta to move
+      # utility at all. Demonstrated: four classes simulated with IDENTICAL standardised effect 0.800
+      # returned raw deltas of 6.8/6.7/31.7/31.0, reproducing the observed GLOBIOM ~5-vs-~30 pattern
+      # purely from scale. delta * sd recovers 0.78-0.81 in every case.
+      #   shared    -> ONE scalar (the block's overall sd): delta keeps a single meaning across alts.
+      #   per_class -> per-column sd: delta_j is the log-odds move per sd of THAT class's share.
+      #   symmetric -> per-column sd, which is also what makes sum_j delta_j = 0 meaningful; summing
+      #                coefficients that live on different scales is not a sensible constraint.
+      z_scale <- if (identical(sc, "none")) NULL else if (cf == "shared") {
+        v <- stats::sd(Zc$Zt); if (!is.finite(v) || v <= 0) 1 else v
+      } else {
+        v <- apply(Zc$Zt, 2, stats::sd); v[!is.finite(v) | v <= 0] <- 1; v
+      }
+      if (!is.null(z_scale)) {
+        Zc$Zt <- if (length(z_scale) == 1L) Zc$Zt / z_scale else sweep(Zc$Zt, 2, z_scale, "/")
+        if (!is.null(Zc$Zb)) {
+          # symmetric only. Scaling column j by s_j reparameterises delta_j -> delta_j * s_j, so the
+          # BASELINE column must be divided by the BASELINE's own sd (not a summary of the others) or
+          # delta_b is on a different scale from the rest and the zero-sum constraint mixes units.
+          sb <- stats::sd(Zc$Zb); if (!is.finite(sb) || sb <= 0) sb <- 1
+          Zc$Zb <- Zc$Zb / sb
+          attr(z_scale, "baseline_sd") <- sb
+        }
+      }
+      m   <- if (cf == "shared") 1L else p
+      alt_blocks[[nm]] <- list(name = nm, Zt = Zc$Zt, Zb = Zc$Zb, coef = cf, idx = off + seq_len(m),
+                               scale = sc, z_scale = z_scale)
+      off <- off + m
+    }
+    n_delta <- off
+    cat(sprintf("Alternative-specific block(s) ON: %s  -> %d delta parameter(s)\n",
+                paste(vapply(alt_blocks, function(b)
+                  sprintf("%s[%s, sd=%.3f]", b$name, b$coef, stats::sd(b$Zt)), ""), collapse = ", "),
+                n_delta))
+  } else n_delta <- 0L
+  curr_delta <- if (n_delta > 0) numeric(n_delta) else 0
+  # (the former adaptive RW-Metropolis state for delta is gone -- the draw is conjugate, see D3)
 
   # --- 2. PREPROCESSING ---
   if (missing(method)) {
@@ -810,17 +904,17 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
     # aligns with Xm_list[[m]] / re_mask column m. All-ones when off. Globally-constant cols (random
     # intercept) exempted. Applied as the SD scaler in the C++ NCP core.
     re_support_mat <- matrix(1.0, nrow = k, ncol = n_groups)
-    if (support_prior_strength > 0 && length(re_idx) >= 1) {
+    if (re_support_strength > 0 && length(re_idx) >= 1) {
       re_glob_const <- apply(X[, re_idx, drop = FALSE], 2, function(cc) { s <- sd(cc); !is.finite(s) || s < 1e-8 })
       for (m in seq_len(n_groups)) {
         Xg <- Xm_list[[m]][, re_idx, drop = FALSE]; ng <- nrow(Xg)
         Xc <- sweep(Xg, 2, colMeans(Xg), "-")             # within-group centering -> slope information (PR is not location-invariant)
         s2 <- colSums(Xc^2); s4 <- colSums(Xc^4); pr <- s2^2 / pmax(s4, 1e-12)
-        sd_fac <- 1 / sqrt(pmax((ng / pmax(pr, 1))^support_prior_strength, 1e-12))
+        sd_fac <- 1 / sqrt(pmax((ng / pmax(pr, 1))^re_support_strength, 1e-12))
         sd_fac[re_glob_const] <- 1.0
         re_support_mat[re_idx, m] <- sd_fac
       }
-      message(sprintf("RE support prior (participation ratio, strength %.2f): min SD factor %.3f.", support_prior_strength, min(re_support_mat[re_idx, ])))
+      message(sprintf("RE support prior (participation ratio, strength %.2f): min SD factor %.3f.", re_support_strength, min(re_support_mat[re_idx, ])))
     }
 
     # Sketch A: per-cell separation prior offset (<=0), added to the spike-slab
@@ -1805,7 +1899,9 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
   # global horseshoe scale trace (nretain is only defined here, not at the state init above)
   post_re_tau <- if (isTRUE(use_re) && isTRUE(re_hs_global) && !save_posterior_to_disk) numeric(nretain) else NULL
   post_slab_c2 <- if (isTRUE(use_re) && isTRUE(estimate_slab_c2) && !save_posterior_to_disk) numeric(nretain) else NULL
-  post_delta <- if (use_alt_spec) numeric(nretain) else NULL   # alternative-specific coefficient draws
+  post_delta <- if (use_alt_spec) matrix(0, n_delta, nretain) else NULL   # [n_delta x draws]
+  if (use_alt_spec) rownames(post_delta) <- unlist(lapply(alt_blocks, function(b)
+    if (b$coef == "shared") b$name else paste0(b$name, "_", seq_len(p))))
   tree_store <- if ((store_bart_trees || save_bart_to_disk) && use_bart && !save_posterior_to_disk) vector("list", nretain) else NULL
 
   # --- Batched Disk Buffers ---
@@ -1988,7 +2084,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
   hs_prec_kernel <- if (use_horseshoe && symmetric_hs) matrix(0, k, p) else hs_prec_mat
   # Support-aware FIXED-effect prior: global participation-ratio shrinkage of sparse covariates'
   # fixed effects (mirrors CLR); scales the per-predictor precision c_v / hs_prec rows in-loop.
-  fe_support <- fe_support_factor(X, support_prior_strength)
+  fe_support <- fe_support_factor(X, fe_support_strength)
 
   # =====================================================================
   # GIBBS LOOP
@@ -2055,12 +2151,29 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
     # =================================================================
     # The additive n x p utility channel carries BART and/or the alternative-specific term.
     f_bart_mat <- if (use_bart) bart_alpha * curr_f else matrix(0, n, p)
-    if (use_alt_spec) f_bart_mat <- f_bart_mat + curr_delta * Zt
+    if (use_alt_spec) for (.b in alt_blocks) {
+      f_bart_mat <- f_bart_mat +
+        if (.b$coef == "shared") curr_delta[.b$idx] * .b$Zt
+        else if (.b$coef == "per_class") sweep(.b$Zt, 2, curr_delta[.b$idx], "*")
+        else {  # symmetric: delta_b = -sum(free), contribution = delta_j Z_ij - delta_b Z_ib
+          .df <- curr_delta[.b$idx]
+          sweep(.b$Zt, 2, .df, "*") + outer(.b$Zb, rep(sum(.df), p))
+        }
+    }
+    # THE ADDITIVE CHANNEL IS GATED ON CONTENT, NOT ON BART (fixed 2026-08-26).
+    # Every consumer of f_bart -- utilities (:79, :115), the pooled draw (:159), the RE draws
+    # (:212, :682, :722) and the symmetric draw -- guards on `use_bart`. So with alt_spec_Z set and
+    # BART off (the normal configuration) delta*Zt was loaded here and then DISCARDED by all of them:
+    # beta was drawn as if delta = 0, and .lp_all() passed the same flag so the MH target did not
+    # depend on delta either -- every proposal accepted and delta random-walked from its prior.
+    # That is the documented "delta is not recovered". Same shape as the frozen hs_prec_kernel:
+    # a populated channel switched off before it reaches the draw.
+    use_offset <- isTRUE(use_bart) || isTRUE(use_alt_spec)
 
     if (use_re) {
       uc <- update_utilities_and_cj_re(
         Xm_list, idx_list, n, curr_beta_c, f_bart_mat, pp_int,
-        baseline, p_all, use_bart
+        baseline, p_all, use_offset
       )
       U <- uc$U
       c_j_mat <- uc$c_j_mat
@@ -2068,7 +2181,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
       # POOLED: full C++ path
       uc <- update_utilities_and_cj(
         X, curr_beta, f_bart_mat, pp_int,
-        baseline, p_all, use_bart
+        baseline, p_all, use_offset
       )
       U <- uc$U
       c_j_mat <- uc$c_j_mat
@@ -2088,7 +2201,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
       if (use_horseshoe && symmetric_hs) {
         curr_beta <- draw_beta_symhs_pooled(
           X, Xt, kappa_weighted_iter, omega, c_j_mat,
-          prior_P, prior_Pb, pp_int, f_bart_mat, use_bart,
+          prior_P, prior_Pb, pp_int, f_bart_mat, use_offset,
           c_v, Msym, block_sym, c_block
         )
       } else {
@@ -2096,7 +2209,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
         curr_beta <- gibbs_step_pooled(
           X, Xt, kappa_weighted_iter, omega, c_j_mat,
           prior_P, hs_prec_kernel, prior_Pb, pp_int,
-          f_bart_mat, use_bart
+          f_bart_mat, use_offset
         )
       }
     } else if (use_re && !has_constraints) {
@@ -2119,7 +2232,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
           mu_pooled, sigma_mat,
           z_c, pp_int, idx_list,
           Xm_list, Xmt_list, n_groups, f_bart_mat,
-          use_bart, as.integer(re_idx - 1L),
+          use_offset, as.integer(re_idx - 1L),
           re_mask, y_mask, as.integer(is_global_intercept),
           re_support_mat,
           if (use_half_cauchy_re && !is.null(a_re)) a_re else matrix(1, k, p),   # half-Cauchy aux for RE-scale ASIS
@@ -2138,7 +2251,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
           X, Xt, kappa_weighted_iter, omega, c_j_mat,
           prior_P, hs_prec_kernel, prior_Pb, mu_pooled, prec_beta_pooled,
           pp_int, idx_list, Xm_list, Xmt_list,
-          n_groups, f_bart_mat, use_bart,
+          n_groups, f_bart_mat, use_offset,
           as.integer(re_idx - 1L), # 0-based for C++
           re_mask, y_mask, as.integer(is_global_intercept)
         )
@@ -2835,25 +2948,58 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
     # the whole issue: delta is one scalar, so two likelihood evaluations per sweep is cheap and
     # correct by construction. Step size adapts during burn-in toward a ~0.30 acceptance rate.
     if (use_alt_spec) {
-      .lp_all <- function(dl) {                       # utilities (n x p) at a candidate delta
-        f_add <- (if (use_bart) bart_alpha * curr_f else matrix(0, n, p)) + dl * Zt
-        uu <- if (use_re) update_utilities_and_cj_re(Xm_list, idx_list, n, curr_beta_c, f_add,
-                                                     pp_int, baseline, p_all, use_bart)
-              else        update_utilities_and_cj(X, curr_beta, f_add, pp_int, baseline, p_all, use_bart)
-        compute_loglik(uu$U, Y, as.numeric(y_weight))$total
+      # EXACT CONJUGATE DRAW (2026-08-26), replacing an adaptive random-walk MH.
+      # Under PG augmentation each equation ip is a Gaussian working regression
+      #     y~[,ip] = kappa[,j]/omega[,ip] + c_j[,ip]      with precision omega[,ip]
+      #     E y~     = X beta[,ip] (+ BART) + delta * Zt[,ip]
+      # so delta is an ordinary regression coefficient on Zt with known weights: its full conditional
+      # is a 1-D Gaussian pooled over equations. No proposal, no tuning, no acceptance rate -- which
+      # is what the design comment on alt_spec_Z said in the first place.
+      # It also fixes a second defect in the MH: that step scored candidates on the UNTEMPERED
+      # multinomial likelihood while beta was being drawn against the TEMPERED one, so during burn-in
+      # the two blocks targeted different distributions. Using kappa_weighted_iter/omega here keeps
+      # delta on exactly the same tempered target as beta.
+      # JOINT conjugate draw over ALL blocks. Each equation ip is a Gaussian working regression
+      #   y~[,ip] = kappa[,j]/omega[,ip] + c_j[,ip],  precision omega[,ip]
+      #   E y~     = X beta[,ip] (+BART) + sum_b delta_b * Zt_b[,ip]
+      # so the delta vector is an ordinary weighted multiple regression: precision = Lambda0 + sum_ip
+      # D_ip' W_ip D_ip and linear term sum_ip D_ip' W_ip r_ip. Blocks are drawn TOGETHER because a
+      # spatial and a temporal lag are correlated -- drawing them one at a time would be a Gibbs
+      # scan with the usual slow mixing along that ridge.
+      P_d <- diag(1 / (alt_spec_prior_sd^2), n_delta)
+      b_d <- numeric(n_delta)
+      for (ip in seq_len(p)) {
+        j <- pp[ip]
+        om_p <- omega[, ip]
+        lp_b <- if (use_re) rowSums(X * t(curr_beta_c[, ip, group_idx_0 + 1L]))
+                else        as.vector(X %*% curr_beta[, ip])
+        fb <- if (use_bart) bart_alpha * curr_f[, ip] else 0
+        r  <- (kappa_weighted_iter[, j] / om_p) + c_j_mat[, ip] - lp_b - fb
+        # columns of the delta-design that are ACTIVE for this equation
+        act <- integer(0); cols <- list()
+        for (.b in alt_blocks) {
+          if (.b$coef == "shared") {
+            act <- c(act, .b$idx);      cols[[length(cols) + 1L]] <- .b$Zt[, ip]
+          } else if (.b$coef == "per_class") {
+            act <- c(act, .b$idx[ip]);  cols[[length(cols) + 1L]] <- .b$Zt[, ip]
+          } else {
+            # symmetric: EVERY free delta enters this equation.
+            #   eta_ij - eta_ib = sum_k delta_k [ 1{k=j} Z_ij + Z_ib ]
+            # so column k is Z_ib, plus Z_ij on the diagonal k == ip.
+            Dm <- matrix(.b$Zb, nrow(.b$Zt), p)
+            Dm[, ip] <- Dm[, ip] + .b$Zt[, ip]
+            act <- c(act, .b$idx);      cols[[length(cols) + 1L]] <- Dm
+          }
+        }
+        D <- do.call(cbind, cols)
+        WD <- D * om_p
+        P_d[act, act] <- P_d[act, act] + crossprod(D, WD)
+        b_d[act]      <- b_d[act]      + as.vector(crossprod(WD, r))
       }
-      d_prop <- curr_delta + rnorm(1, 0, delta_mh_sd)
-      lp_cur <- .lp_all(curr_delta) + dnorm(curr_delta, 0, alt_spec_prior_sd, log = TRUE)
-      lp_new <- .lp_all(d_prop)     + dnorm(d_prop,     0, alt_spec_prior_sd, log = TRUE)
-      acc <- is.finite(lp_new) && (log(runif(1)) < (lp_new - lp_cur))
-      if (acc) curr_delta <- d_prop
-      delta_acc_n <- delta_acc_n + 1L; delta_acc_k <- delta_acc_k + as.integer(acc)
-      if (iter <= nburn && delta_acc_n >= 50L) {      # adapt only during burn-in
-        rate <- delta_acc_k / delta_acc_n
-        delta_mh_sd <- delta_mh_sd * exp((rate - 0.30) * 1.5)
-        delta_mh_sd <- min(max(delta_mh_sd, 1e-4), 10)
-        delta_acc_n <- 0L; delta_acc_k <- 0L
-      }
+      P_d <- 0.5 * (P_d + t(P_d)) + diag(1e-10, n_delta)
+      Lc <- chol(P_d)
+      mu_d <- backsolve(Lc, forwardsolve(t(Lc), b_d))
+      curr_delta <- as.vector(mu_d + backsolve(Lc, rnorm(n_delta)))
     }
 
     if (use_bart && iter > bart_warmup && !bart_symmetric) {
@@ -2861,7 +3007,10 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
         j <- pp[ip]
         lp <- if (use_re) rowSums(X * t(curr_beta_c[, ip, group_idx_0 + 1L])) else X %*% curr_beta[, ip]
         # net out the alternative-specific term so BART does not re-absorb it
-        if (use_alt_spec) lp <- lp + curr_delta * Zt[, ip]
+        if (use_alt_spec) for (.b in alt_blocks)
+          lp <- lp + if (.b$coef == "shared") curr_delta[.b$idx] * .b$Zt[, ip]
+                     else if (.b$coef == "per_class") curr_delta[.b$idx][ip] * .b$Zt[, ip]
+                     else curr_delta[.b$idx][ip] * .b$Zt[, ip] + sum(curr_delta[.b$idx]) * .b$Zb
 
         y_star <- (kappa_weighted_iter[, j] / omega[, ip]) + c_j_mat[, ip] - lp
         # Robustness: Cap y_star to prevent exploding intercepts during burn-in
@@ -3264,11 +3413,11 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
         
       c_v <- numeric(k)
       c_v[hs_pool] <- if (is.matrix(var_eff)) 1 / pmax(var_eff[, 1], 1e-12) else 1 / pmax(var_eff, 1e-12)   # per-predictor precision
-      if (support_prior_strength > 0) c_v[hs_pool] <- c_v[hs_pool] * fe_support[hs_pool]   # FE support-aware shrinkage (feeds the symmetric kernel)
+      if (fe_support_strength > 0) c_v[hs_pool] <- c_v[hs_pool] * fe_support[hs_pool]   # FE support-aware shrinkage (feeds the symmetric kernel)
 
       # Under symmetric_hs we use c_v + Msym below; the diagonal hs_prec_mat is unused.
       hs_prec_mat[hs_pool, ] <- 1 / pmax(var_eff, 1e-12)            # kept only for !symmetric_hs paths
-      if (support_prior_strength > 0) hs_prec_mat[hs_pool, ] <- hs_prec_mat[hs_pool, ] * fe_support[hs_pool]
+      if (fe_support_strength > 0) hs_prec_mat[hs_pool, ] <- hs_prec_mat[hs_pool, ] * fe_support[hs_pool]
       
       if (!is.null(block_sym)) {
         # COMPOSITIONAL CHANNEL. Pass 1 draws the per-block local scales from the CURRENT
@@ -3474,6 +3623,11 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
          sigma_zs <- apply(beta_c_zs, c(1, 2), sd)
       }
 
+      # alt-spec deltas are stored UNCONDITIONALLY: they are n_delta x nretain (a handful of numbers),
+      # and keeping this inside the !save_posterior_to_disk branch meant every STREAMED run returned
+      # the zero matrix post_delta was initialised with -- delta was drawn correctly every sweep and
+      # then silently not recorded. STREAM=TRUE is the production default, so this hit real runs.
+      if (use_alt_spec) post_delta[, s] <- curr_delta
       if (!save_posterior_to_disk) {
         if (use_re) {
           postb_total[, , , s] <- beta_c_zs
@@ -3520,7 +3674,6 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
           post_c2[s] <- hs_c2
         }
         post_log_lik[s] <- ll$total
-        if (use_alt_spec) post_delta[s] <- curr_delta
         if (calc_loo) post_ll_pw[s, ] <- ll$pointwise
 
         # Adaptive Phase Storage
@@ -3946,6 +4099,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
       post_kappa_pooled = post_kappa_pooled,
       post_c2 = post_c2,
       nu = hs_nu, xi = hs_xi, zeta = hs_zeta,
+      alt_scale = if (use_alt_spec) lapply(alt_blocks, function(b) b$z_scale) else NULL,
       hs_pool = hs_pool, channel_split = hs_split_on,
       blk_tau2 = blk_tau2, block_lambda2 = block_lambda2,
       grouped = hs_grouped, tau2_by_family = if (hs_grouped) setNames(hs_tau2_g, hs_grp_names) else NULL,

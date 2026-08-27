@@ -51,6 +51,30 @@ if (!file.exists(aux_path)) aux_path <- "mnl_aux_func.R"
 source(aux_path)
 
 # ---------------------------------------------------------------------------
+# INERT ARGUMENTS (audited 2026-08-26). Accepted by the signature but reaching NOTHING in the body.
+# Kept rather than removed so existing callers do not break, but setting them now WARNS: a knob that
+# is documented, passed in production and silently ignored is exactly how the tau0 calibration went
+# unnoticed for weeks.
+#   tau0_dev        - RE-side horseshoe scale. Never wired. Currently PASSED by run_ls_count_model.R
+#                     and postprocess/build_count_html.R, with no effect.
+#   p0_re           - RE-side guess at the number of non-null effects. Never wired.
+#   bart_batch_size - vestigial from the MNL BART block.
+#   symmetric       - zero-sum output coding; the count outcome is not compositional so it has no
+#                     meaning here. (The MNL's own `symmetric` IS real -- do not confuse the two.)
+# ---------------------------------------------------------------------------
+.count_inert_args <- function(called) {
+  defaults <- list(tau0_dev = NULL, p0_re = 2, bart_batch_size = 50, symmetric = FALSE)
+  set <- names(defaults)[vapply(names(defaults), function(a)
+    a %in% names(called) && !identical(called[[a]], defaults[[a]]), logical(1))]
+  if (length(set))
+    warning("mncount_rcpp: argument(s) ", paste(set, collapse = ", "),
+            " are INERT (signature-only; they reach nothing in the sampler), so setting them has ",
+            "no effect. See the inert-argument note in codes/count_rcpp.R.", call. = FALSE)
+  invisible(set)
+}
+
+
+# ---------------------------------------------------------------------------
 # POOLED RE PRECISION (one scale per PREDICTOR, shared across the p outcome columns).
 #
 # Mirrors update_re_precision_hc but pools the sufficient statistic over outcome columns, which is
@@ -249,6 +273,28 @@ mncount_rcpp <- function(
     # uncentred statistic is defined, and it is the one used below.
     re_prec_pooled = FALSE,
     use_country_shrinkage = FALSE, tau0_country = 1.0, slab_c2_country = 4.0, # Country-Gatekeeper shrinkage tau_m ~ Regularized-Half-Cauchy(0, tau0, slab_c2)
+    # Does the per-group factor cover the INTERCEPT RE too, or only the slopes?
+    # FALSE (default) = slopes only. The country intercept carries most of the model's skill (~45 nats
+    # on the pixel model, essentially all of it the intercept), so shrinking it per-country trades away
+    # the part that works. TRUE gives the literal "one factor across ALL RE covariates for each group".
+    country_shrink_intercept = FALSE,
+    # IDENTIFICATION. sigma_v (per-covariate RE scale) and tau_m (per-group factor) enter the RE
+    # prior ONLY as the product sigma_v * tau_m, so the pair is not identified: tau_m can shrink and
+    # sigma_v inflate to compensate, which enlarges the RE space until it absorbs the fixed effects
+    # (measured on a synthetic panel: b[x1] 0.731 -> 0.256 against truth 0.700, mean RE sd 0.46 ->
+    # 3.21). TRUE pins geometric-mean(tau_m) = 1 after each draw and moves that overall scale into
+    # sigma_v, which leaves every product sigma_v * tau_m EXACTLY unchanged while fixing the ridge.
+    # The RELATIVE gating between groups -- the entire point of the feature -- is preserved.
+    #
+    # DEFAULT FALSE: PARTIALLY WORKING, DO NOT USE WITHOUT READING THIS. Anchoring does fix the FE
+    # absorption (b[x1] 0.256 -> 0.823 against truth 0.700; mean RE sd 3.21 -> 0.19), but the rescale
+    # happens OUTSIDE the C++ draw, which applies a REGULARIZED half-Cauchy with slab_c2_country --
+    # so the anchored tau_m lands outside the cap the prior enforces (observed arithmetic means of
+    # 6.0e3 at geometric mean 1, i.e. tau wandering orders of magnitude) and the next sweep's slice
+    # starts from an out-of-range value. The identification has to be imposed INSIDE
+    # update_country_shrinkage_hc_cpp (draw tau on the anchored scale), not patched afterwards.
+    # Until then: leave FALSE and treat use_country_shrinkage itself as experimental.
+    country_shrink_anchor = FALSE,
     re_regularize = FALSE, re_slab_c2 = 100,   # regularised-horseshoe RE variance (slice): tau_eff=tau_raw+1/c2, SD<=sqrt(c2). Tames the heavy half-Cauchy tail (ported from the MNL). Off by default.
     support_prior_strength = 0,                # support-aware RE prior: per-(cov,group) participation-ratio SD shrinkage for info-sparse groups (ported from the MNL). 0 = off.
     init_jitter = 0,                           # per-chain overdispersed init: uniform +/- init_jitter on mu_pooled -> honest Rhat. 0 = off.
@@ -290,6 +336,7 @@ mncount_rcpp <- function(
   # ── 1. VALIDATION ────────────────────────────────────────────────────────
   if (niter <= nburn) stop("niter must be > nburn.")
   if (any(!is.finite(Y))) stop("Y contains NA/Inf.")
+  .count_inert_args(as.list(match.call())[-1])
   if (any(!is.finite(X))) stop("X contains NA/Inf.")
   if (any(Y < 0))         stop("Y contains negative values.")
 
@@ -892,6 +939,26 @@ mncount_rcpp <- function(
     # ================================================================
     c_j_zero <- matrix(0, n, p)    # substitutes for c_j_mat
 
+    # EFFECTIVE PER-(cov, group) RE SD MULTIPLIER for THIS sweep. Hoisted out of the RE branch
+    # (2026-08-26) so that the COEFFICIENT DRAW and the VARIANCE UPDATE below both see the SAME
+    # coordinates. Previously the draw used base x tau_country while update_re_precision_hc was
+    # handed the BASE only, so sigma_v was re-inferred from deviations it did not know had been
+    # scaled -- sigma_v silently absorbed 1/tau_country and the country shrinkage was counted twice.
+    # Same failure class as the centred-ss RE collapse: a variance estimated in different coordinates
+    # from the draw it governs.
+    re_supp_eff <- re_support_mat
+    if (use_re && isTRUE(use_country_shrinkage)) {
+      .slopes <- which(!is_global_intercept & (seq_len(k) %in% re_idx))
+      if (!isTRUE(country_shrink_intercept)) {
+        if (length(.slopes)) re_supp_eff[.slopes, ] <-
+          sweep(re_support_mat[.slopes, , drop = FALSE], 2, curr_tau_country, "*")
+      } else {
+        .all_re <- intersect(seq_len(k), re_idx)
+        if (length(.all_re)) re_supp_eff[.all_re, ] <-
+          sweep(re_support_mat[.all_re, , drop = FALSE], 2, curr_tau_country, "*")
+      }
+    }
+
     if (!use_re && !has_constraints) {
       curr_beta <- gibbs_step_count_cpp(
         X, Xt, kappa_mat, omega,
@@ -901,13 +968,6 @@ mncount_rcpp <- function(
 
     } else if (use_re && !has_constraints) {
       sigma_mat <- matrix(1 / sqrt(pmax(prec_beta_pooled, 1e-8)), k, p)
-      re_supp_eff <- re_support_mat
-      if (isTRUE(use_country_shrinkage)) {
-        re_slopes_mask <- which(!is_global_intercept & (seq_len(k) %in% re_idx))
-        if (length(re_slopes_mask) > 0) {
-          re_supp_eff[re_slopes_mask, ] <- sweep(re_support_mat[re_slopes_mask, , drop = FALSE], 2, curr_tau_country, "*")
-        }
-      }
       if (use_ncp) {
         re_res <- gibbs_step_re_ncp(
           X, Xt, kappa_mat, omega, c_j_zero,
@@ -1227,7 +1287,7 @@ mncount_rcpp <- function(
           n_groups = n_groups, re_mask = re_mask_cube, y_mask = y_mask,
           is_intercept = is_global_intercept, prec_prev = prec_beta_pooled,
           re_scale_A = re_scale_A, re_regularize = isTRUE(re_regularize),
-          slab_c2 = re_slab_c2, re_support = re_support_mat, p = p
+          slab_c2 = re_slab_c2, re_support = re_supp_eff, p = p   # SAME coords as the draw
         )
         a_re <- re_prec$a_aux
       } else if (use_half_cauchy_re) {
@@ -1244,7 +1304,7 @@ mncount_rcpp <- function(
           re_scale_A   = re_scale_A,
           re_regularize = isTRUE(re_regularize),
           slab_c2      = re_slab_c2,
-          re_support_opt = re_support_mat
+          re_support_opt = re_supp_eff        # SAME coords as the draw (incl. tau_country)
         )
         a_re <- re_prec$a_aux
       } else {
@@ -1277,11 +1337,28 @@ mncount_rcpp <- function(
           nu_prev = curr_nu_country,
           tau0_country = tau0_country,
           slab_c2_country = slab_c2_country,
-          re_support_opt = re_support_mat,
-          include_intercept = FALSE
+          re_support_opt = re_support_mat,   # BASE on purpose: this kernel divides out sigma*rs to
+                                             # ISOLATE tau_m; passing the tau-scaled matrix would
+                                             # divide tau out twice and pin tau_m at 1.
+          include_intercept = isTRUE(country_shrink_intercept)
         )
         curr_tau_country <- c_shrink$tau_country
         curr_nu_country  <- c_shrink$nu_country
+        if (isTRUE(country_shrink_anchor)) {
+          # geometric mean to 1; compensate sigma on exactly the rows tau multiplies, so the
+          # implied prior SD (sigma_v * tau_m) is invariant to machine precision.
+          .lt <- log(pmax(curr_tau_country, 1e-12))
+          .gm <- exp(mean(.lt[is.finite(.lt)]))
+          if (is.finite(.gm) && .gm > 0) {
+            curr_tau_country <- curr_tau_country / .gm
+            .rows <- if (isTRUE(country_shrink_intercept)) intersect(seq_len(k), re_idx)
+                     else which(!is_global_intercept & (seq_len(k) %in% re_idx))
+            if (length(.rows)) {
+              prec_beta_pooled[.rows, ] <- prec_beta_pooled[.rows, , drop = FALSE] / (.gm^2)
+              sigma_beta_pooled[.rows, ] <- sigma_beta_pooled[.rows, , drop = FALSE] * .gm
+            }
+          }
+        }
       }
     }
 

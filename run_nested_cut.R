@@ -27,9 +27,6 @@ BR   <- toupper(args[1] %||% "AGMIP")
 # fits straight off X_mat/Y_pixel/group_idx, no dat_pixel_FULL / model_metadata.qs needed.
 A2   <- args[2] %||% "0"
 FROM_INPUTS <- if (nzchar(A2) && grepl("\\.rds$", A2) && file.exists(A2)) A2 else NULL
-# FROM_INPUTS consumes arg2, so the subsample size has nowhere to go -> NCUT_SUB. Without it there is
-# no cheap way to smoke-test a design dump (a full-n 200-iter pass is ~2.5 h), which is how design bugs
-# end up being discovered hours into a production fit.
 SUB  <- if (is.null(FROM_INPUTS)) as.integer(A2) else as.integer(Sys.getenv("NCUT_SUB", "0"))
 M    <- as.integer(args[3] %||% "25")
 NIT  <- as.integer(args[4] %||% "1000")

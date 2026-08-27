@@ -48,6 +48,81 @@
 #   "flat"                  : legacy no-op (lambda unidentified -- comparison/diagnostics).
 # Focal columns of singleton/degenerate children and of CONTEXT classes that head no nest
 # (water, wetlands, ...) always pass through unchanged: they have no IV to collide with.
+# --- NATIVE ALTERNATIVE-SPECIFIC BLOCKS (2026-08-26) ---------------------------------------------
+# A spatial Y-lag (`focal_*`) and a temporal t-1 LU state (`prev_*`) are attributes OF alternative j,
+# not of the pixel. Carried as k case-specific columns they get one coefficient per class and cannot
+# express "the share belonging to THIS alternative"; carried here they get a conditional-logit
+# coefficient and, at a nest node, aggregate to that node's children exactly as Ynode does.
+#
+# NCUT_ALT_BLOCKS = "name:prefix[:coef],..."   e.g. "spatial:focal_:shared,temporal:prev_:per_class"
+#   coef "shared"    -> ONE delta for the block (scalar inertia / one spatial-lag strength)
+#   coef "per_class" -> p deltas (per-class inertia)
+# Source columns are REMOVED from the case-specific design, so nothing is double-counted. A focal_
+# block therefore SUPERSEDES focal_rule: with the focal shares in an alt-spec block there are no
+# fine focal columns left for .ncut_focal_xmap to route.
+.ncut_alt_specs <- function() {
+  s <- Sys.getenv("NCUT_ALT_BLOCKS", "")
+  if (!nzchar(s)) return(NULL)
+  out <- lapply(strsplit(trimws(strsplit(s, ",", fixed = TRUE)[[1]]), ":", fixed = TRUE), function(z) {
+    if (length(z) < 2L || !nzchar(z[1]) || !nzchar(z[2]))
+      stop("NCUT_ALT_BLOCKS entries must be name:prefix[:coef]; got '", paste(z, collapse = ":"), "'")
+    list(name = z[1], prefix = z[2],
+         coef  = if (length(z) >= 3L && nzchar(z[3])) z[3] else "shared",
+         scale = if (length(z) >= 4L && nzchar(z[4])) z[4] else "sd",
+         # 5th field = INTERACTION covariate (a design column name). The block becomes w_m * z_ij,
+         # i.e. delta_i = delta_0 + sum_m gamma_m w_im: the static covariate MODULATES inertia.
+         #   gamma_m < 0 -> w_m reduces persistence -> makes a transition MORE likely
+         #   gamma_m > 0 -> w_m locks the pixel in
+         # This is how static variables inform the EVOLUTION equation, not just the initial state:
+         # a main effect says which class a pixel moves TO, the interaction says how willing it is to
+         # move at all. Different directions in the design, so they do not compete for the same
+         # variance the way a static main effect competes with the bare lag.
+         x     = if (length(z) >= 5L && nzchar(z[5])) z[5] else NULL)
+  })
+  out
+}
+# Build one n x K matrix per spec, columns aligned to `alt_names`, by summing the prefixed columns of
+# the fine classes under each alternative. Returns the blocks plus the design columns they consumed.
+# `node` is EITHER a character vector of fine classes (leaf) OR a named list of children (nest).
+# .ncut_fine() already returns a character scalar unchanged, so it resolves BOTH: at a leaf an
+# alternative is one fine class, at a nest it is the set of fine classes under that child. Same
+# aggregation the outcome uses (Ynode), so the block stays commensurate with the alternatives.
+.ncut_alt_fine_of <- function(node) function(a) if (is.list(node)) .ncut_fine(node[[a]]) else a
+.ncut_alt_blocks <- function(X, alt_names, fine_of, specs) {
+  if (is.null(specs) || !length(specs)) return(list(blocks = NULL, drop = integer(0)))
+  xc <- colnames(X); blocks <- list(); drop <- integer(0)
+  for (sp in specs) {
+    cols <- lapply(alt_names, function(a) which(xc %in% paste0(sp$prefix, fine_of(a))))
+    if (!any(lengths(cols) > 0L)) next
+    Z <- vapply(cols, function(ix)
+      if (length(ix)) rowSums(X[, ix, drop = FALSE]) else rep(0, nrow(X)), numeric(nrow(X)))
+    if (is.null(dim(Z))) Z <- matrix(Z, nrow(X))
+    colnames(Z) <- alt_names
+    # Renormalise ACROSS THIS NODE'S ALTERNATIVES: aggregating to a node's children can drop fine
+    # classes that sit under no child (e.g. focal_NODATA), so the row need not already sum to 1.
+    # A conditional-logit share attribute should be a composition over the alternatives on offer.
+    # NB ifelse() returns the shape of its CONDITION -- it silently collapses an n x K matrix to
+    # length n. Use matrix arithmetic.
+    rs <- rowSums(Z)
+    Z <- Z / pmax(rs, 1e-12)
+    if (any(rs <= 0)) Z[rs <= 0, ] <- 0
+    colnames(Z) <- alt_names
+    # INTERACTION GOES AFTER RENORMALISATION. Applied before it, the renormalisation divides by
+    # rowSums(w * Z) = w * rowSums(Z), which cancels w exactly -- the block silently collapses back to
+    # the plain lag, and flips sign wherever w < 0. Caught by the recovery test: true (1.20, -0.90)
+    # read as (1.91, -1.38) with neither interval covering.
+    if (!is.null(sp$x)) {
+      if (!sp$x %in% colnames(X))
+        stop(sprintf("NCUT_ALT_BLOCKS block '%s': interaction column '%s' not in the design", sp$name, sp$x))
+      Z <- Z * X[, sp$x]                        # w_m * z_ij: still n x K, still alternative-specific
+      colnames(Z) <- alt_names
+    }
+    blocks[[sp$name]] <- list(Z = Z, coef = sp$coef, scale = sp$scale)
+    drop <- c(drop, unlist(cols))
+  }
+  list(blocks = if (length(blocks)) blocks else NULL, drop = sort(unique(drop)))
+}
+
 .ncut_focal_xmap <- function(x_cols, node, iv_children, prefix = "focal_", rule = "macro_totals") {
   if (rule == "flat" || !length(iv_children) || is.character(node)) return(NULL)
   agg <- list(); drop <- integer(0)
@@ -120,7 +195,7 @@
 }
 
 .ncut_fit_block <- function(X, Y, group_idx, use_re, re_idx, niter, nburn, thin, init_state = NULL,
-                            disk_path = NULL, chain_id = NULL, prog_label = NULL) {
+                            disk_path = NULL, chain_id = NULL, prog_label = NULL, alt_spec = NULL) {
   mnlogit_rcpp_sym(
     X = X, Y = Y, intercept = FALSE, symmetric = TRUE, baseline = which.max(colSums(Y)),
     niter = niter, nburn = nburn, thin = thin,
@@ -133,7 +208,16 @@
     # and on the real root design it inflates c_v by a median 106x / max 2.8e5x: measured -125 nats
     # held-out with every driver crushed to 0.0000. So it MUST be 0 whenever the symmetric kernel is
     # on. See memory: fe-horseshoe-never-reaches-draw / symmetric-hs-gate (2026-08-21).
-    support_prior_strength = if (isTRUE(as.logical(Sys.getenv("NCUT_SYM_HS", "FALSE")))) 0 else 2,
+    # SPLIT 2026-08-26. These were one knob, and zeroing it under symmetric (to kill the FE landmine)
+    # ALSO switched off the RE-side sparse-group shrinkage, which is the part that is wanted and is
+    # well-conditioned. Now set independently:
+    #   fe: 0 under symmetric -- (n/PR)^2 on the horseshoe precision is a median 106x / max 2.8e5x
+    #       inflation there and costs -125 nats. Inert on the diagonal path (frozen kernel), left at 2.
+    #   re: 1 always -- per-(covariate, group) participation-ratio shrinkage of the RE prior SD, so a
+    #       country with no within-country variation in a covariate stops contributing a free RE for
+    #       it. Deterministic, so identified; the draw and the variance update use the same factor.
+    fe_support_strength = if (isTRUE(as.logical(Sys.getenv("NCUT_SYM_HS", "FALSE")))) 0 else 2,
+    re_support_strength = as.numeric(Sys.getenv("NCUT_RE_SUPPORT", "1")),
     # RE VARIANCE: update_re_precision_hc_sym builds its sum of squares from CATEGORY-CENTRED
     # deviations while gibbs_step_re_ncp draws the REs UNCENTRED. Under symmetric_hs that zeroes the
     # random effects outright (RE sd 0.0000, -51.6 nats). center_ss=FALSE estimates the variance in
@@ -217,6 +301,9 @@
     # one node. The old 129/133-nat 'symmetric loses' gate is VOID -- those arms had REs, so they
     # measured the bug. A proper held-out comparison has not been run.
     symmetric_hs = isTRUE(as.logical(Sys.getenv("NCUT_SYM_HS", "FALSE"))),
+    # NATIVE ALTERNATIVE-SPECIFIC BLOCKS (spatial Y-lag / temporal t-1 state). NULL unless
+    # NCUT_ALT_BLOCKS is set; the source columns are already removed from X by the caller.
+    alt_spec_Z = alt_spec, alt_spec_allow_unvalidated = !is.null(alt_spec),
     init_state = init_state,                              # HOT-START across imputations (see below)
     chain_id = chain_id,                                 # non-NULL -> no stray txtProgressBar; labels output
     progress_cb = .ncut_fit_cb(prog_label)               # throttled per-fit heartbeat (or silent)
@@ -271,7 +358,7 @@
 # stream_disk=TRUE keeps the sampler's big per-group array off RAM (safer at scale / high niter).
 .ncut_fit_draws <- function(X, Y, group_idx, use_re, re_idx, niter, nburn, thin, ndraws,
                             init_state = NULL, stream_disk = FALSE, chain_id = NULL, prog_label = NULL,
-                            persist_dir = NULL) {
+                            persist_dir = NULL, alt_spec = NULL) {
   if (isTRUE(stream_disk)) {
     # persist_dir keeps the sampler's FULL streamed posterior (every retained draw of beta/mu/sigma_re/
     # horseshoe/log_lik) instead of deleting it. Default stays a tempdir because the batches are large,
@@ -283,15 +370,19 @@
     dir.create(td, recursive = TRUE, showWarnings = FALSE)
     if (is.null(persist_dir)) on.exit(unlink(td, recursive = TRUE), add = TRUE)  # clean even on crash/interrupt
     fit <- .ncut_fit_block(X, Y, group_idx, use_re, re_idx, niter, nburn, thin, init_state,
-                           disk_path = td, chain_id = chain_id, prog_label = prog_label)
+                           disk_path = td, chain_id = chain_id, prog_label = prog_label, alt_spec = alt_spec)
     d <- .ncut_draws_from_disk(td, ndraws)
-    list(draws = d$pooled, re_draws = d$re, group_levels = d$group_levels, final_state = fit$final_state)
+    list(draws = d$pooled, re_draws = d$re, group_levels = d$group_levels,
+         delta_draws = fit$post_delta, final_state = fit$final_state)
   } else {
     fit <- .ncut_fit_block(X, Y, group_idx, use_re, re_idx, niter, nburn, thin, init_state,
-                           chain_id = chain_id, prog_label = prog_label)
+                           chain_id = chain_id, prog_label = prog_label, alt_spec = alt_spec)
     list(draws = .ncut_beta_draws(fit, ndraws),
          re_draws = if (isTRUE(use_re)) .ncut_re_draws(fit, ndraws) else NULL,
          group_levels = if (isTRUE(use_re)) .ncut_re_levels(fit) else NULL,
+         # alternative-specific coefficients: the whole point of an alt-spec block, so keep them.
+         # [n_delta x draws] with rownames naming the block (and class, for per_class).
+         delta_draws = fit$post_delta,
          final_state = fit$final_state)
   }
 }
@@ -339,9 +430,9 @@
 # and compute Rhat/ESS across chains. Used on leaves and on each nest evaluated at the MEAN inclusive value.
 .ncut_fit_chains <- function(X, Y, group_idx, use_re, re_idx, niter, nburn, thin, ndraws, n_chains,
                              stream_disk = FALSE, conv_draws = 150L, n_cores = 1L, prog_label = NULL,
-                             persist_dir = NULL) {
+                             persist_dir = NULL, alt_spec = NULL) {
   one <- function(c) .ncut_fit_draws(X, Y, group_idx, use_re, re_idx, niter, nburn, thin, conv_draws,
-                                     stream_disk = stream_disk, chain_id = c,   # cold, independent chain
+                                     stream_disk = stream_disk, chain_id = c, alt_spec = alt_spec,   # cold, independent chain
                                      prog_label = sprintf("%s ch%d/%d", prog_label %||% "leaf", c, n_chains),
                                      persist_dir = if (is.null(persist_dir)) NULL else file.path(persist_dir, sprintf("chain%d", c)))
   nco <- max(1L, min(as.integer(n_cores), n_chains))
@@ -543,14 +634,25 @@ nested_cut_store_status <- function(store_dir) {
     if (sum(keep) < min_pixels)                                  # too sparse -> degrade to even split
       return(list(type = "even", fine = fine))
     Ysub <- Y[keep, fine, drop = FALSE]; Ysub <- Ysub / rowSums(Ysub)
+    # native alternative-specific blocks: at a leaf the alternatives ARE the fine classes
+    .ab <- .ncut_alt_blocks(X, fine, .ncut_alt_fine_of(fine), .ncut_alt_specs())
+    Xlf <- if (length(.ab$drop)) X[, -.ab$drop, drop = FALSE] else X
+    .as_leaf <- if (is.null(.ab$blocks)) NULL else
+      lapply(.ab$blocks, function(b) list(Z = b$Z[keep, , drop = FALSE], coef = b$coef, scale = b$scale))
+    re_lf <- if (length(.ab$drop) && !is.null(re_idx))
+      { .ix <- match(intersect(colnames(X)[re_idx], colnames(Xlf)), colnames(Xlf)); if (!length(.ix)) NULL else sort(.ix) } else re_idx
+    if (!is.null(.as_leaf))
+      message(sprintf("[nested_cut] leaf {%s}: alt-spec block(s) %s -> %d design col(s) moved out",
+        paste(fine, collapse = ","), paste(names(.as_leaf), collapse = ", "), length(.ab$drop)))
     pdir <- .ncut_persist_dir(store, path)
     res <- if (n_chains > 1L)
-      .ncut_fit_chains(X[keep, , drop = FALSE], Ysub, group_idx[keep], use_re, re_idx, niter, nburn, thin, M, n_chains, stream_disk, n_cores = n_cores, prog_label = path, persist_dir = pdir)
-    else .ncut_fit_draws(X[keep, , drop = FALSE], Ysub, group_idx[keep], use_re, re_idx, niter, nburn, thin, M, stream_disk = stream_disk, chain_id = 1L, prog_label = path,
+      .ncut_fit_chains(Xlf[keep, , drop = FALSE], Ysub, group_idx[keep], use_re, re_lf, niter, nburn, thin, M, n_chains, stream_disk, n_cores = n_cores, prog_label = path, persist_dir = pdir, alt_spec = .as_leaf)
+    else .ncut_fit_draws(Xlf[keep, , drop = FALSE], Ysub, group_idx[keep], use_re, re_lf, niter, nburn, thin, M, stream_disk = stream_disk, chain_id = 1L, prog_label = path, alt_spec = .as_leaf,
                          persist_dir = if (is.null(pdir)) NULL else file.path(pdir, "chain1"))
     .ncut_prog_tick(sprintf("leaf {%s}%s", paste(fine, collapse = ","), if (n_chains > 1L) sprintf(" x%d", n_chains) else ""))
     res_leaf <- list(type = "leaf", fine = fine, classes = fine, beta_draws = res$draws,
-                     beta_re_draws = res$re_draws, group_levels = res$group_levels, conv = res$conv)
+                     beta_re_draws = res$re_draws, group_levels = res$group_levels, conv = res$conv,
+                     delta_draws = res$delta_draws, alt_blocks = names(.as_leaf))
     if (!is.null(cache_file)) saveRDS(res_leaf, cache_file)                  # persist -> resumable
     return(res_leaf)
   }
@@ -576,9 +678,20 @@ nested_cut_store_status <- function(store_dir) {
 
   # ---- this node's design: route focal away from its own IV columns (see .ncut_focal_xmap).
   # Only when IVs are actually used -- with use_iv=FALSE (factorized) there is nothing to collide with.
-  xmap  <- if (use_iv) .ncut_focal_xmap(colnames(X), node, iv_children, focal_prefix, focal_rule) else NULL
-  Xnd   <- .ncut_apply_xmap(xmap, X)
-  re_nd <- .ncut_remap_re(re_idx, xmap, colnames(X))
+  # Native alt-spec blocks FIRST: at a nest node an alternative is a CHILD, so the block aggregates
+  # the prefixed columns of that child's fine classes -- exactly the aggregation Ynode uses. Their
+  # source columns leave the design, so a focal_ block supersedes focal_rule (nothing left to route).
+  .abn <- .ncut_alt_blocks(X, child_names, .ncut_alt_fine_of(node), .ncut_alt_specs())
+  Xab  <- if (length(.abn$drop)) X[, -.abn$drop, drop = FALSE] else X
+  re_ab <- if (length(.abn$drop) && !is.null(re_idx))
+    { .ix <- match(intersect(colnames(X)[re_idx], colnames(Xab)), colnames(Xab)); if (!length(.ix)) NULL else sort(.ix) } else re_idx
+  if (!is.null(.abn$blocks))
+    message(sprintf("[nested_cut] node {%s}: alt-spec block(s) %s -> %d design col(s) moved out (design %d -> %d)",
+      paste(child_names, collapse = ","), paste(names(.abn$blocks), collapse = ", "),
+      length(.abn$drop), ncol(X), ncol(Xab)))
+  xmap  <- if (use_iv) .ncut_focal_xmap(colnames(Xab), node, iv_children, focal_prefix, focal_rule) else NULL
+  Xnd   <- .ncut_apply_xmap(xmap, Xab)
+  re_nd <- .ncut_remap_re(re_ab, xmap, colnames(Xab))
   if (!is.null(xmap))
     message(sprintf("[nested_cut] node {%s}: focal rule '%s' -> %d fine focal col(s) %s (design %d -> %d cols)",
       paste(child_names, collapse = ","), focal_rule, xmap$n_dropped,
@@ -636,9 +749,15 @@ nested_cut_store_status <- function(store_dir) {
     Xnode <- if (is.null(fit_fields[[j]])) Xnd else cbind(Xnd, fit_fields[[j]])
     Yk <- Ynode[keep, , drop = FALSE]; Yk <- Yk / rowSums(Yk)
     nb_j <- if (j == 1L || is.null(warm)) nburn else nburn_warm
+    # alt-spec blocks for THIS node, row-subset to the same `keep` rows as the design. Without this
+    # the block columns are removed from Xnode and nothing replaces them -- the node would be fitted
+    # with the focal/prev information silently DELETED rather than re-homed.
+    .as_nest <- if (is.null(.abn$blocks)) NULL else
+      lapply(.abn$blocks, function(b) list(Z = b$Z[keep, , drop = FALSE], coef = b$coef, scale = b$scale))
     res_j <- .ncut_fit_draws(Xnode[keep, , drop = FALSE], Yk, group_idx[keep], use_re, re_nd,
                              nb_j + (niter - nburn), nb_j, thin, draws_per_impute, init_state = warm, stream_disk = stream_disk,
                              chain_id = j, prog_label = sprintf("%s imp%d/%d", path, j, length(fit_fields)),
+                             alt_spec = .as_nest,
                              persist_dir = { pd <- .ncut_persist_dir(store, path)
                                              if (is.null(pd)) NULL else file.path(pd, sprintf("imp%d", j)) })
     warm <- res_j$final_state
@@ -652,6 +771,8 @@ nested_cut_store_status <- function(store_dir) {
       fit_re[[j]] <- array(unlist(Rd), c(kk, Kfit, G, length(Rd)))
       node_levels <- res_j$group_levels
     }
+    if (!exists("fit_delta")) fit_delta <- vector("list", length(fit_fields))
+    fit_delta[[j]] <- res_j$delta_draws
     .ncut_prog_tick(sprintf("nest {%s} %d/%d", paste(child_names, collapse = ","), j, length(fit_fields)))
   }
 
@@ -662,6 +783,7 @@ nested_cut_store_status <- function(store_dir) {
     else sample(seq_along(fit_draws), M, replace = TRUE, prob = fit_w)
   parent_draws <- fit_draws[sel_m]
   parent_re_draws <- if (any(!vapply(fit_re, is.null, TRUE))) fit_re[sel_m] else NULL
+  parent_delta <- if (exists("fit_delta") && any(!vapply(fit_delta, is.null, TRUE))) fit_delta[sel_m] else NULL
 
   # ---- lambda per iv-child (IV rows follow the X columns, in iv_children order) ----
   # A FACTORIZED node has no lambda at all, so leave the list EMPTY rather than filling it with NULL
@@ -692,6 +814,7 @@ nested_cut_store_status <- function(store_dir) {
        iv_children = iv_children, use_iv = use_iv, K = K, iv_mode_used = node_mode, conv = node_conv,
        parent_draws = parent_draws, parent_re_draws = parent_re_draws, group_levels = node_levels,
        x_cols = colnames(Xnd), lambda_draws = lambda_draws,
+       delta_draws = parent_delta, alt_blocks = names(.abn$blocks),   # alt-spec block coefficients
        xmap = xmap, focal_rule = focal_rule,   # xmap replays the design at predict/AME time
        iv_r2 = iv_r2)
   if (!is.null(cache_file)) { to_cache <- res_nest; to_cache$children <- NULL; saveRDS(to_cache, cache_file) }

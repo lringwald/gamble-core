@@ -155,6 +155,18 @@ COV_YEARS   <- .years_env("DRIVER_COV_YEARS",   c(2020))  # spei48_2018 is renam
 # NOTE: the AGMIP scheme overrides this default to CONTEMPORANEOUS (focal_year = out_year) below,
 # unless DRIVER_FOCAL_YEARS was set explicitly — HRL crop types exist only for 2018, so a lag focal
 # would carry no crop-type classes (it would fall back to generic Cropland_*_other).
+# --- OWN t-1 STATE (`prev_*`) ------------------------------------------------
+# DRIVER_PREV_STATE=TRUE additionally emits the pixel's OWN composition at focal_year as `prev_<class>`
+# share columns. The focal is a NEIGHBOURHOOD statistic (compute_focal_coord excludes the centre), so
+# the pixel's own predecessor state is NOT otherwise in the design. It is the transition-agnostic
+# ("net") half of the transition ladder: with a shared coefficient it is scalar inertia, per-class it
+# is per-class inertia. Route it into a conditional-logit block via
+# NCUT_ALT_BLOCKS="temporal:prev_:shared" -- the share of class j at t-1 is an attribute OF
+# alternative j, not of the pixel.
+# HARD ERROR if the focal year equals the outcome year: `prev_*` would then BE the outcome and the fit
+# is circular. Not a warning, because AGMIP deliberately defaults to a contemporaneous focal (HRL crop
+# types exist only for 2018), so the unsafe case is the DEFAULT on that branch.
+PREV_STATE <- isTRUE(as.logical(Sys.getenv("DRIVER_PREV_STATE", "FALSE")))
 .focal_years_explicit <- nzchar(Sys.getenv("DRIVER_FOCAL_YEARS", ""))
 FOCAL_YEARS <- .years_env("DRIVER_FOCAL_YEARS", c(2010))
 if (length(FOCAL_YEARS) != length(MODEL_YEARS) || length(COV_YEARS) != length(MODEL_YEARS)) {
@@ -1100,6 +1112,22 @@ dat_pixel_list <- lapply(T_PAIRS, function(tp) {
     lapply(.SD, function(x) ifelse(rs > 0, x / rs, 0))
   }, .SDcols = fcl_classes]
 
+  # OWN t-1 STATE: temp_fcl_input_granular currently holds the PIXEL'S OWN shares at focal_year --
+  # the last point before compute_focal_coord spreads them over the neighbourhood. Snapshot, do not
+  # recompute.
+  prev_state_tier <- NULL
+  if (PREV_STATE) {
+    if (is.na(tp$focal_year) || is.na(tp$out_year) || tp$focal_year == tp$out_year)
+      stop(sprintf(paste0("DRIVER_PREV_STATE=TRUE requires a LAGGED focal (focal_year < out_year); ",
+                          "got focal_year=%s, out_year=%s. With a contemporaneous focal the `prev_*` ",
+                          "columns ARE the outcome and the model is circular. Set DRIVER_FOCAL_YEARS ",
+                          "earlier than DRIVER_MODEL_YEARS."), tp$focal_year, tp$out_year))
+    prev_state_tier <- copy(temp_fcl_input_granular[, c("ID", "Grouping_Key", fcl_classes), with = FALSE])
+    setnames(prev_state_tier, fcl_classes, paste0("prev_", fcl_classes))
+    cat(sprintf("  OWN t-1 STATE: %d prev_* share column(s) from %s composition (outcome %s)\n",
+                length(fcl_classes), focal_year, tp$out_year))
+  }
+
   # Diagnostic: Check for NA coordinates (common cause of row loss in focal_df)
   na_coords <- sum(is.na(temp_fcl_input_granular$X) | is.na(temp_fcl_input_granular$Y))
   if (na_coords > 0) {
@@ -1126,6 +1154,7 @@ dat_pixel_list <- lapply(T_PAIRS, function(tp) {
   # lists) and Y (final_cats_pixel); the recipe's .add_focal reads them alongside the model-class Y areas.
   .extra_fcl <- setdiff(fcl_classes, setdiff(names(temp_y_pixel_yr_wide), c("ID", "Grouping_Key")))
   if (length(.extra_fcl)) tier_dat <- merge(tier_dat, .focal_src_all[, c("ID", "Grouping_Key", .extra_fcl), with = FALSE], by = c("ID", "Grouping_Key"), all.x = TRUE)
+  if (!is.null(prev_state_tier)) tier_dat <- merge(tier_dat, prev_state_tier, by = c("ID", "Grouping_Key"), all.x = TRUE)
   tier_dat[, X_merge := round(X, 0)]
   tier_dat[, Y_merge := round(Y, 0)]
 
@@ -1392,6 +1421,7 @@ spatial_cont_cols_trans <- c(
   paste0("log1p_", skewed_vars), static_chelsa_cols, climate_cols, yield_cols
 )
 focal_cov_cols <- grep("^focal_", colnames(dat_pixel), value = TRUE)
+prev_cov_cols  <- grep("^prev_",  colnames(dat_pixel), value = TRUE)   # own t-1 state (DRIVER_PREV_STATE)
 
 # # Filter out dummy years for estimation: Keep only rows where at least one outcome category > 0
 X_mat_full <- cbind(
@@ -1434,7 +1464,7 @@ for (v in c("OC_TOP", "ROO", "AWC_TOP", "VS")) {
 
 X_mat <- cbind(
   intercept = 1,
-  as.matrix(dat_pixel_transformed[, intersect(names(dat_pixel_transformed), c(spatial_cont_cols_trans, focal_cov_cols, all_soil_cols)), with = FALSE])
+  as.matrix(dat_pixel_transformed[, intersect(names(dat_pixel_transformed), c(spatial_cont_cols_trans, focal_cov_cols, prev_cov_cols, all_soil_cols)), with = FALSE])
 )
 X_mat[!is.finite(X_mat)] <- 0
 
