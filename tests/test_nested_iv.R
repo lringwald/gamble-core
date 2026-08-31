@@ -54,8 +54,11 @@ fit_no <- nested_iv_fit(X[tr,], Y[tr,], nest_structure, use_iv = FALSE, niter = 
 P_iv <- predict_nested_iv(fit_iv, X[te,])
 P_no <- predict_nested_iv(fit_no, X[te,])
 
+lam_B <- fit_iv$root$lambda[["B"]]   # lambda is on the ROOT NODE; fit_iv$lambda is NULL and
+                                     # silently degrades sprintf() to character(0) (prints nothing)
+stopifnot(is.numeric(lam_B), length(lam_B) == 1L, is.finite(lam_B))
 cat("\n================= RESULTS =================\n")
-cat(sprintf("TRUE lambda_B = %.2f  |  ESTIMATED lambda_B = %.3f\n", LAMBDA_TRUE, fit_iv$lambda[["B"]]))
+cat(sprintf("TRUE lambda_B = %.2f  |  ESTIMATED lambda_B = %.3f\n", LAMBDA_TRUE, lam_B))
 cat(sprintf("held-out joint log-lik:  IV = %.1f   no-IV = %.1f   (IV better by %.1f)\n",
     jll(P_iv, Y[te,]), jll(P_no, Y[te,]), jll(P_iv, Y[te,]) - jll(P_no, Y[te,])))
 # null (global shares) held-out ll for scale
@@ -63,7 +66,13 @@ pbar <- colMeans(Y[tr,]); LLn <- sum(sweep(Y[te,], 2, log(pbar), `*`))
 cat(sprintf("null (global-share) held-out log-lik = %.1f\n", LLn))
 cat(sprintf("held-out per-pixel calibration (obs vs pred fine shares):\n"))
 print(round(rbind(obs = colMeans(Y[te,]), pred_IV = colMeans(P_iv), pred_noIV = colMeans(P_no)), 3))
-ok_lambda <- abs(fit_iv$lambda[["B"]] - LAMBDA_TRUE) < 0.2
+ok_lambda <- abs(lam_B - LAMBDA_TRUE) < 0.2
 ok_better <- jll(P_iv, Y[te,]) > jll(P_no, Y[te,])
+stopifnot(length(ok_lambda) == 1L, length(ok_better) == 1L)   # guard against vacuous assertions
 cat(sprintf("\nPASS lambda-recovery: %s | PASS IV-beats-noIV: %s\n", ok_lambda, ok_better))
+# use_iv=FALSE must PREDICT (it appended IV columns the fit never saw before the iv_children fix)
+ok_nofit <- length(fit_no$root$iv_children) == 0L && all(is.finite(P_no)) &&
+            max(abs(rowSums(P_no) - 1)) < 1e-8
+cat(sprintf("PASS no-IV predicts (iv_children empty, rows sum to 1): %s\n", ok_nofit))
+if (!all(ok_lambda, ok_better, ok_nofit)) { cat("TEST DONE\n"); quit(status = 1) }
 cat("TEST DONE\n")

@@ -80,8 +80,14 @@
   Ynode <- vapply(child_names, function(cn) rowSums(Y[, .fine_of(node[[cn]]), drop = FALSE]), numeric(nrow(Y)))
   colnames(Ynode) <- child_names
   iv_children <- child_names[vapply(children, function(c) !is.null(c$iv), logical(1))]
+  # Gate on use_iv HERE, not only at the cbind below. The node STORES iv_children, and both
+  # .node_iv() and .predict_node() rebuild the node design from it gating on length() alone.
+  # Gating just the fit-time cbind left use_iv=FALSE fits carrying a non-empty iv_children, so
+  # predict appended IV columns the fit never saw -> ".fit_utilities: X 5 cols vs beta 4 rows".
+  # One source of truth: if no IV column entered the fit, the node must not claim IV children.
+  if (!isTRUE(use_iv)) iv_children <- character(0)
   Xnode <- X
-  if (use_iv && length(iv_children)) {
+  if (length(iv_children)) {
     ivm <- vapply(iv_children, function(cn) children[[cn]]$iv, numeric(nrow(X)))
     colnames(ivm) <- paste0("IV_", iv_children); Xnode <- cbind(X, ivm)
   }
@@ -90,7 +96,7 @@
   fit <- .fit_block(Xnode[keep, , drop = FALSE], Yk, group_idx = group_idx[keep], use_re = use_re, re_idx = re_idx, niter = niter, nburn = nburn)
   # lambda_c for each deep child = zero-sum coef on IV_c for child c, rescaled K/(K-1)
   lambda <- setNames(rep(NA_real_, length(iv_children)), iv_children)
-  if (use_iv && length(iv_children)) {
+  if (length(iv_children)) {
     bm <- apply(fit$postb_pooled, c(1, 2), mean); K <- length(child_names)
     for (cn in iv_children) lambda[cn] <- bm[paste0("IV_", cn) == colnames(Xnode), which(child_names == cn)] * K / (K - 1)
   }
