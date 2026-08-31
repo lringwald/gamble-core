@@ -117,10 +117,120 @@
       Z <- Z * X[, sp$x]                        # w_m * z_ij: still n x K, still alternative-specific
       colnames(Z) <- alt_names
     }
-    blocks[[sp$name]] <- list(Z = Z, coef = sp$coef, scale = sp$scale)
+    # SCALE HERE, NOT IN THE SAMPLER. delta multiplies a share whose spread varies 10-30x across
+    # classes, so the columns must be standardised -- but the scale used at FIT time has to be reused
+    # verbatim when the block is rebuilt on new X (inclusive values, prediction). Recomputing it from
+    # a different sample would silently change what delta means. nested_cut therefore does the scaling
+    # and stores the factor; the sampler is told scale="none".
+    zs <- NULL
+    if (!identical(sp$scale, "none")) {
+      zs <- if (identical(sp$coef, "shared")) { v <- stats::sd(Z); if (!is.finite(v) || v <= 0) 1 else v }
+            else { v <- apply(Z, 2, stats::sd); v[!is.finite(v) | v <= 0] <- 1; v }
+      Z <- if (length(zs) == 1L) Z / zs else sweep(Z, 2, zs, "/")
+      colnames(Z) <- alt_names
+    }
+    blocks[[sp$name]] <- list(Z = Z, coef = sp$coef, scale = "none",   # already applied here
+                              def = list(name = sp$name, prefix = sp$prefix, coef = sp$coef,
+                                         x = sp$x, z_scale = zs, alt_names = alt_names))
     drop <- c(drop, unlist(cols))
   }
   list(blocks = if (length(blocks)) blocks else NULL, drop = sort(unique(drop)))
+}
+
+# Rebuild a block's Z on NEW X from its stored definition, reusing the FIT-time scale factor.
+# Used by the inclusive-value path and by prediction: a node's utility contains sum_b delta_b * Z_b,
+# so anything that reconstructs its utilities from X must rebuild the blocks too.
+.ncut_alt_rebuild <- function(def, X_new, fine_of) {
+  xc <- colnames(X_new)
+  cols <- lapply(def$alt_names, function(a) which(xc %in% paste0(def$prefix, fine_of(a))))
+  Z <- vapply(cols, function(ix)
+    if (length(ix)) rowSums(X_new[, ix, drop = FALSE]) else rep(0, nrow(X_new)), numeric(nrow(X_new)))
+  if (is.null(dim(Z))) Z <- matrix(Z, nrow(X_new))
+  colnames(Z) <- def$alt_names
+  rs <- rowSums(Z); Z <- Z / pmax(rs, 1e-12); if (any(rs <= 0)) Z[rs <= 0, ] <- 0
+  colnames(Z) <- def$alt_names
+  if (!is.null(def$x)) {
+    if (!def$x %in% xc) stop(sprintf("alt block '%s': interaction column '%s' missing from X", def$name, def$x))
+    Z <- Z * X_new[, def$x]; colnames(Z) <- def$alt_names
+  }
+  if (!is.null(def$z_scale))
+    Z <- if (length(def$z_scale) == 1L) Z / def$z_scale else sweep(Z, 2, def$z_scale, "/")
+  colnames(Z) <- def$alt_names
+  Z
+}
+# sum_b delta_b o Z_b(X_new) for draw m -- the alt-spec contribution to a node's utilities.
+.ncut_alt_eta <- function(nd, X_new, m) {
+  if (is.null(nd$alt_def) || !length(nd$alt_def) || is.null(nd$delta_draws)) return(NULL)
+  dd <- nd$delta_draws; d <- if (is.list(dd)) dd[[min(m, length(dd))]] else dd
+  if (is.null(d) || !length(d)) return(NULL)
+  if (is.null(dim(d))) d <- matrix(d, nrow = length(d))   # tolerate a vector of draws
+  dv <- rowMeans(d)                       # posterior mean of delta; draws are not indexed by m here
+  fine_of <- .ncut_alt_fine_of(if (!is.null(nd$node)) nd$node else nd$fine)
+  E <- NULL; off <- 0L
+  for (df in nd$alt_def) {
+    Z <- .ncut_alt_rebuild(df, X_new, fine_of)
+    mlen <- if (identical(df$coef, "shared")) 1L else ncol(Z) - 1L
+    idx <- off + seq_len(mlen); off <- off + mlen
+    if (max(idx) > length(dv)) next
+    contrib <- if (identical(df$coef, "shared")) dv[idx] * Z
+               else { Zc <- Z[, seq_len(mlen), drop = FALSE]; sweep(Zc, 2, dv[idx], "*") }
+    if (identical(df$coef, "shared")) {
+      E <- if (is.null(E)) contrib else E + contrib
+    } else {
+      full <- cbind(contrib, 0)           # pinned/implied baseline column
+      E <- if (is.null(E)) full else E + full
+    }
+  }
+  E
+}
+
+# ---------------------------------------------------------------------------------------------
+# ONE BUILDER FOR A NODE'S FIT INPUTS -- used by BOTH leaf and nest.
+#
+# Why this exists: every wiring bug in this file came from the two node types computing their inputs
+# in separate places and then diverging. The nest path once dropped a block's source columns from the
+# design and then failed to pass the block to the sampler, so the node was fitted with that
+# information DELETED rather than re-homed -- and the run completed, looking entirely plausible.
+# Building design + RE remap + blocks in ONE function means a new input cannot be wired into one
+# node type and forgotten in the other.
+#
+# Returns everything a fit needs, plus the definitions required to REBUILD the blocks later
+# (inclusive values, prediction), which is the other half of the same problem.
+.ncut_node_inputs <- function(X, node_or_fine, alt_names, re_idx) {
+  ab <- .ncut_alt_blocks(X, alt_names, .ncut_alt_fine_of(node_or_fine), .ncut_alt_specs())
+  Xn <- if (length(ab$drop)) X[, -ab$drop, drop = FALSE] else X
+  re <- if (length(ab$drop) && !is.null(re_idx)) {
+    ix <- match(intersect(colnames(X)[re_idx], colnames(Xn)), colnames(Xn))
+    if (!length(ix)) NULL else sort(ix)
+  } else re_idx
+  list(X = Xn, re_idx = re, fine_of = .ncut_alt_fine_of(node_or_fine),
+       alt_spec = if (is.null(ab$blocks)) NULL else
+         lapply(ab$blocks, function(b) list(Z = b$Z, coef = b$coef, scale = b$scale)),
+       alt_def  = if (is.null(ab$blocks)) NULL else lapply(ab$blocks, `[[`, "def"),
+       n_dropped = length(ab$drop))
+}
+# Boundary check: the two halves of "columns out, block in" must agree. Catches the exact failure
+# above -- design columns removed with nothing replacing them, or a block passed while its source
+# columns are still in the design (double counting).
+# fine classes behind one alternative of a block, for the consumed-column check
+.ncut_fine_of_name <- function(inp, df, a) if (is.null(inp$fine_of)) a else inp$fine_of(a)
+.ncut_check_inputs <- function(inp, X_orig, label) {
+  if (inp$n_dropped > 0L && is.null(inp$alt_spec))
+    stop(sprintf("[nested_cut] %s: %d design column(s) were removed but NO alt-spec block is being passed -- that information would be silently DELETED, not re-homed.", label, inp$n_dropped))
+  if (!is.null(inp$alt_spec)) {
+    # Only the columns the block ACTUALLY CONSUMED may not remain. Other same-prefix columns are
+    # legitimate case-specific covariates: at leaf {W,M} the block takes prev_W/prev_M, but prev_F1
+    # etc. are classes NOT on offer here, and what the pixel used to be elsewhere still predicts
+    # W vs M. An earlier version of this check rejected those and blocked every nested fit.
+    consumed <- unlist(lapply(inp$alt_def, function(df)
+      unlist(lapply(df$alt_names, function(a) paste0(df$prefix, .ncut_fine_of_name(inp, df, a))))))
+    still <- intersect(consumed, colnames(inp$X))
+    if (length(still))
+      stop(sprintf("[nested_cut] %s: alt-spec block(s) active but their OWN source column(s) still in the design (%s) -- double counting.", label, paste(head(still, 4), collapse = ", ")))
+    if (nrow(inp$alt_spec[[1]]$Z) != nrow(X_orig))
+      stop(sprintf("[nested_cut] %s: block has %d rows, design has %d.", label, nrow(inp$alt_spec[[1]]$Z), nrow(X_orig)))
+  }
+  invisible(TRUE)
 }
 
 .ncut_focal_xmap <- function(x_cols, node, iv_children, prefix = "focal_", rule = "macro_totals") {
@@ -216,7 +326,9 @@
     #   re: 1 always -- per-(covariate, group) participation-ratio shrinkage of the RE prior SD, so a
     #       country with no within-country variation in a covariate stops contributing a free RE for
     #       it. Deterministic, so identified; the draw and the variance update use the same factor.
-    fe_support_strength = if (isTRUE(as.logical(Sys.getenv("NCUT_SYM_HS", "FALSE")))) 0 else 2,
+    fe_support_strength = 0,   # (n/PR)^2 on a LIVE horseshoe precision costs -1274 nats; with the
+                               # kernel no longer frozen there is no configuration where this is safe
+    
     re_support_strength = as.numeric(Sys.getenv("NCUT_RE_SUPPORT", "1")),
     # RE VARIANCE: update_re_precision_hc_sym builds its sum of squares from CATEGORY-CENTRED
     # deviations while gibbs_step_re_ncp draws the REs UNCENTRED. Under symmetric_hs that zeroes the
@@ -258,7 +370,15 @@
     # centre. And the likelihood pulls c2 to 1.93, BELOW the prior mode 3.64, yet that scores worse
     # out-of-sample: the slab fitting in-sample structure that does not generalise. So this is a
     # principled-consistency choice (the slab is part of the estimation), not a fit improvement.
-    use_horseshoe = TRUE, estimate_c2 = TRUE, slab_df = 20, slab_s2 = 4,
+    # FE HORSESHOE OFF BY DEFAULT (2026-08-30). It was never actually applied here -- hs_prec_kernel
+    # was frozen at a zero matrix, so `use_horseshoe = TRUE` silently delivered a plain A0=2 ridge.
+    # That is now fixed in the sampler, which means leaving this TRUE would CHANGE every fit. Measured
+    # held-out on the real root design: ridge -2306.1 vs ridge+horseshoe -2369.3 (-63.2 nats) at
+    # fe_support_strength = 0, and -1273.9 at fe_support_strength = 2. So production keeps the ridge
+    # -- but now by CHOICE rather than by accident. NCUT_FE_HS=TRUE turns it on for measurement;
+    # fe_support_strength is forced to 0 there, since pairing it with a live kernel is catastrophic.
+    use_horseshoe = isTRUE(as.logical(Sys.getenv("NCUT_FE_HS", "FALSE"))),
+    estimate_c2 = TRUE, slab_df = 20, slab_s2 = 4,
     # LAMBDA MUST NOT BE SHRUNK (2026-08-14). `horseshoe_idx` defaults to NULL, and the sampler then
     # reads that as 1:k -- EVERY column, including the `IV_*` inclusive values carried at internal
     # nodes. But lambda is derived straight from that coefficient (lambda = zero-sum IV coef *
@@ -635,15 +755,14 @@ nested_cut_store_status <- function(store_dir) {
       return(list(type = "even", fine = fine))
     Ysub <- Y[keep, fine, drop = FALSE]; Ysub <- Ysub / rowSums(Ysub)
     # native alternative-specific blocks: at a leaf the alternatives ARE the fine classes
-    .ab <- .ncut_alt_blocks(X, fine, .ncut_alt_fine_of(fine), .ncut_alt_specs())
-    Xlf <- if (length(.ab$drop)) X[, -.ab$drop, drop = FALSE] else X
-    .as_leaf <- if (is.null(.ab$blocks)) NULL else
-      lapply(.ab$blocks, function(b) list(Z = b$Z[keep, , drop = FALSE], coef = b$coef, scale = b$scale))
-    re_lf <- if (length(.ab$drop) && !is.null(re_idx))
-      { .ix <- match(intersect(colnames(X)[re_idx], colnames(Xlf)), colnames(Xlf)); if (!length(.ix)) NULL else sort(.ix) } else re_idx
+    .inp <- .ncut_node_inputs(X, fine, fine, re_idx)
+    .ncut_check_inputs(.inp, X, sprintf("leaf {%s}", paste(fine, collapse = ",")))
+    Xlf <- .inp$X; re_lf <- .inp$re_idx
+    .as_leaf <- if (is.null(.inp$alt_spec)) NULL else
+      lapply(.inp$alt_spec, function(b) list(Z = b$Z[keep, , drop = FALSE], coef = b$coef, scale = b$scale))
     if (!is.null(.as_leaf))
       message(sprintf("[nested_cut] leaf {%s}: alt-spec block(s) %s -> %d design col(s) moved out",
-        paste(fine, collapse = ","), paste(names(.as_leaf), collapse = ", "), length(.ab$drop)))
+        paste(fine, collapse = ","), paste(names(.as_leaf), collapse = ", "), .inp$n_dropped))
     pdir <- .ncut_persist_dir(store, path)
     res <- if (n_chains > 1L)
       .ncut_fit_chains(Xlf[keep, , drop = FALSE], Ysub, group_idx[keep], use_re, re_lf, niter, nburn, thin, M, n_chains, stream_disk, n_cores = n_cores, prog_label = path, persist_dir = pdir, alt_spec = .as_leaf)
@@ -652,7 +771,11 @@ nested_cut_store_status <- function(store_dir) {
     .ncut_prog_tick(sprintf("leaf {%s}%s", paste(fine, collapse = ","), if (n_chains > 1L) sprintf(" x%d", n_chains) else ""))
     res_leaf <- list(type = "leaf", fine = fine, classes = fine, beta_draws = res$draws,
                      beta_re_draws = res$re_draws, group_levels = res$group_levels, conv = res$conv,
-                     delta_draws = res$delta_draws, alt_blocks = names(.as_leaf))
+                     delta_draws = res$delta_draws, alt_blocks = names(.as_leaf),
+                     # x_cols + alt_def let .ncut_node_iv / predict REBUILD this node's utilities on
+                     # new X. Without them the IV path used the FULL X against a design the node was
+                     # never fitted on (non-conformable) and omitted delta entirely.
+                     x_cols = colnames(Xlf), alt_def = .inp$alt_def)
     if (!is.null(cache_file)) saveRDS(res_leaf, cache_file)                  # persist -> resumable
     return(res_leaf)
   }
@@ -681,14 +804,13 @@ nested_cut_store_status <- function(store_dir) {
   # Native alt-spec blocks FIRST: at a nest node an alternative is a CHILD, so the block aggregates
   # the prefixed columns of that child's fine classes -- exactly the aggregation Ynode uses. Their
   # source columns leave the design, so a focal_ block supersedes focal_rule (nothing left to route).
-  .abn <- .ncut_alt_blocks(X, child_names, .ncut_alt_fine_of(node), .ncut_alt_specs())
-  Xab  <- if (length(.abn$drop)) X[, -.abn$drop, drop = FALSE] else X
-  re_ab <- if (length(.abn$drop) && !is.null(re_idx))
-    { .ix <- match(intersect(colnames(X)[re_idx], colnames(Xab)), colnames(Xab)); if (!length(.ix)) NULL else sort(.ix) } else re_idx
-  if (!is.null(.abn$blocks))
+  .inpn <- .ncut_node_inputs(X, node, child_names, re_idx)
+  .ncut_check_inputs(.inpn, X, sprintf("node {%s}", paste(child_names, collapse = ",")))
+  Xab <- .inpn$X; re_ab <- .inpn$re_idx
+  if (!is.null(.inpn$alt_spec))
     message(sprintf("[nested_cut] node {%s}: alt-spec block(s) %s -> %d design col(s) moved out (design %d -> %d)",
-      paste(child_names, collapse = ","), paste(names(.abn$blocks), collapse = ", "),
-      length(.abn$drop), ncol(X), ncol(Xab)))
+      paste(child_names, collapse = ","), paste(names(.inpn$alt_spec), collapse = ", "),
+      .inpn$n_dropped, ncol(X), ncol(Xab)))
   xmap  <- if (use_iv) .ncut_focal_xmap(colnames(Xab), node, iv_children, focal_prefix, focal_rule) else NULL
   Xnd   <- .ncut_apply_xmap(xmap, Xab)
   re_nd <- .ncut_remap_re(re_ab, xmap, colnames(Xab))
@@ -752,8 +874,8 @@ nested_cut_store_status <- function(store_dir) {
     # alt-spec blocks for THIS node, row-subset to the same `keep` rows as the design. Without this
     # the block columns are removed from Xnode and nothing replaces them -- the node would be fitted
     # with the focal/prev information silently DELETED rather than re-homed.
-    .as_nest <- if (is.null(.abn$blocks)) NULL else
-      lapply(.abn$blocks, function(b) list(Z = b$Z[keep, , drop = FALSE], coef = b$coef, scale = b$scale))
+    .as_nest <- if (is.null(.inpn$alt_spec)) NULL else
+      lapply(.inpn$alt_spec, function(b) list(Z = b$Z[keep, , drop = FALSE], coef = b$coef, scale = b$scale))
     res_j <- .ncut_fit_draws(Xnode[keep, , drop = FALSE], Yk, group_idx[keep], use_re, re_nd,
                              nb_j + (niter - nburn), nb_j, thin, draws_per_impute, init_state = warm, stream_disk = stream_disk,
                              chain_id = j, prog_label = sprintf("%s imp%d/%d", path, j, length(fit_fields)),
@@ -814,7 +936,12 @@ nested_cut_store_status <- function(store_dir) {
        iv_children = iv_children, use_iv = use_iv, K = K, iv_mode_used = node_mode, conv = node_conv,
        parent_draws = parent_draws, parent_re_draws = parent_re_draws, group_levels = node_levels,
        x_cols = colnames(Xnd), lambda_draws = lambda_draws,
-       delta_draws = parent_delta, alt_blocks = names(.abn$blocks),   # alt-spec block coefficients
+       delta_draws = parent_delta, alt_blocks = names(.inpn$alt_spec),
+       alt_def = .inpn$alt_def,          # rebuildable block definitions for the IV / predict path
+       # x_cols is the design AFTER the focal xmap (it can contain macro totals that do not exist in
+       # a raw X). alt_cols is the width BEFORE the xmap -- block columns removed, nothing aggregated
+       # -- which is what a rebuild on new X must subset to before replaying the xmap.
+       alt_cols = colnames(Xab),
        xmap = xmap, focal_rule = focal_rule,   # xmap replays the design at predict/AME time
        iv_r2 = iv_r2)
   if (!is.null(cache_file)) { to_cache <- res_nest; to_cache$children <- NULL; saveRDS(to_cache, cache_file) }
@@ -854,19 +981,38 @@ nested_cut_store_status <- function(store_dir) {
 }
 
 # inclusive value of a node evaluated on X_new for imputation m (recursive) --
+# Reconstruct a node's utilities on X_new EXACTLY as it was fitted:
+#   1. subset to the node's OWN design columns -- alt-spec blocks remove columns, so the full X is
+#      the wrong width (this was a hard "non-conformable arguments" crash at the root nest);
+#   2. add sum_b delta_b * Z_b(X_new) -- without it the inclusive value OMITS the very effect the
+#      block adds, which would be silently wrong rather than an error.
+.ncut_node_X <- function(nd, X_new) {
+  cols <- if (!is.null(nd$alt_cols)) nd$alt_cols else nd$x_cols   # nest: pre-xmap width; leaf: its design
+  if (is.null(cols)) return(X_new)                                # pre-2026-08-27 node, no block info
+  miss <- setdiff(cols, colnames(X_new))
+  if (length(miss))
+    stop(sprintf("[nested_cut] node design column(s) missing from X: %s", paste(head(miss, 4), collapse = ", ")))
+  X_new[, cols, drop = FALSE]
+}
 .ncut_node_iv <- function(nd, X_new, m, gpos = NULL) {
   if (nd$type %in% c("singleton", "even")) return(rep(0, nrow(X_new)))     # degenerate -> no IV signal
-  if (nd$type == "leaf")
-    return(.ncut_lse(.ncut_eta(X_new, nd$beta_draws[[m]], .ncut_at(nd$beta_re_draws, m), gpos)))
+  if (nd$type == "leaf") {
+    Xl <- .ncut_node_X(nd, X_new)
+    U  <- .ncut_eta(Xl, nd$beta_draws[[m]], .ncut_at(nd$beta_re_draws, m), gpos)
+    A  <- .ncut_alt_eta(nd, X_new, m); if (!is.null(A)) U <- U + A
+    return(.ncut_lse(U))
+  }
   # internal: rebuild its design (focal routing FIRST, then its children's IV for imputation
   # m -- exactly the column order it was fit with), pick a parent draw
-  Xn <- .ncut_apply_xmap(nd$xmap, X_new)
+  Xn <- .ncut_apply_xmap(nd$xmap, .ncut_node_X(nd, X_new))
   if (nd$use_iv && length(nd$iv_children)) {
     ivm <- vapply(nd$iv_children, function(cn) .ncut_node_iv(nd$children[[cn]], X_new, m, gpos), numeric(nrow(X_new)))
     colnames(ivm) <- paste0("IV_", nd$iv_children); Xn <- cbind(Xn, ivm)
   }
   d <- .ncut_nest_draw(nd, m)
-  .ncut_lse(.ncut_eta(Xn, d$b, d$bre, gpos))
+  U <- .ncut_eta(Xn, d$b, d$bre, gpos)
+  A <- .ncut_alt_eta(nd, X_new, m); if (!is.null(A)) U <- U + A
+  .ncut_lse(U)
 }
 
 # =============================================================================
