@@ -369,6 +369,12 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
                                   # CATEGORIES) -- they compose. Should also HELP mixing: the alias is
                                   # a posterior ridge, and ridges are what make the RE block crawl.
                                   re_mean_shift = FALSE,
+                                  # Charge G-1 free dims in the RE-variance draw once the deviations
+                                  # sum to zero. Defaults to re_mean_shift so behaviour is unchanged,
+                                  # but is separable: re_mean_shift degrades sigma_re mixing on the
+                                  # real design and this is the leading suspect, so it must be
+                                  # testable on its own.
+                                  re_mean_shift_dof = NULL,
                                   # RE-SIDE SYMMETRIC VARIANCE, separable from the FE side.
                                   # NULL = follow symmetric_hs (historical). update_re_precision_hc_sym
                                   # forms its sum of squares from CATEGORY-CENTRED deviations
@@ -2105,6 +2111,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
   # joint FE/RE gate: one kappa per covariate, 1 = no gating (so joint_fe_re_shrink = FALSE is exact)
   kappa_v  <- rep(1, k)
   kappa_nu <- rep(1, k)
+  .dof_pin <- if (is.null(re_mean_shift_dof)) isTRUE(re_mean_shift) else isTRUE(re_mean_shift_dof)
   joint_shrink_on <- isTRUE(joint_fe_re_shrink) && isTRUE(use_re) && isTRUE(use_horseshoe)
   post_kappa <- if (joint_shrink_on) matrix(NA_real_, k, nretain) else NULL
   if (joint_shrink_on)
@@ -3339,7 +3346,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
             re_support_opt = re_supp_kap,     # support-consistent variance: whiten ss by 1/rs^2 -- and
                                               # rs INCLUDES kappa, matching the scaled draw above
             center_ss = isTRUE(re_prec_center),
-            dof_mean_pinned = isTRUE(re_mean_shift)   # sum_g dev = 0 -> G-1 free dims, not G
+            dof_mean_pinned = .dof_pin                # sum_g dev = 0 -> G-1 free dims, not G
           )
         } else {
           re_prec <- update_re_precision_hc(

@@ -172,27 +172,35 @@ product is, so `tau` shrinks while `sigma` inflates until the RE space absorbs t
 (b[x1] 0.731 -> 0.256 against truth 0.700). Anchoring must be imposed INSIDE the draw; a post-hoc
 rescale breaks the prior's own cap. Default OFF.
 
-## 8a. `re_mean_shift` — sum-to-zero RE identification (default OFF, NOT recommended)
+## 8a. `re_mean_shift` — sum-to-zero RE identification (use WITH `symmetric_hs`)
 
-MH interweave that moves `mean_g(b_{v,j,g})` into `mu_{v,j}`. The likelihood is exactly
-invariant, so only the prior ratio gates the move; the RE-variance draw then charges `G-1` free
-dimensions (`dof_mean_pinned`). It makes `mu` the population-averaged effect by construction
-instead of by luck of the prior strength, and recovers the identity on synthetic data
-(leak 0.0108 -> 0.0001).
+MH interweave moving `mean_g(b_{v,j,g})` into `mu_{v,j}`. The likelihood is exactly invariant, so
+only the prior ratio gates the move; the RE-variance draw then charges `G-1` free dimensions
+(`dof_mean_pinned`). `mu` becomes the population-averaged effect by construction.
 
-**It degrades convergence on the real design and should stay OFF.** GLOBIOM pixel, 10k pixels,
-4 chains x 2500 iter:
+**It is a PACKAGE with the dof correction, and the dof correction exists ONLY in the `_sym`
+RE-variance updater** (`update_re_precision_hc_sym`, reached when `re_prec_sym` / `symmetric_hs`
+is TRUE). Run the shift on the diagonal path and the dof half is silently inert.
 
-| block | baseline | re_mean_shift |
-|---|---|---|
-| `sigma_re` ESS_bulk med | 160 | **25** |
-| `sigma_re` Rhat med / max | 1.020 / 1.146 | 1.122 / 1.402 |
-| `sigma_re` share > 1.05 | 20% | 68% |
-| `mu` Rhat max | 1.198 | 1.738 |
+Measured on the GLOBIOM pixel design (6k pixels, 4 chains x 1500 iter), ESS_bulk median:
 
-96% acceptance means the move is cheap under the prior, not that it helps the geometry. And the
-leak it was built to cure requires `fe_support_strength = 2` to appear at all — at 0 there is no
-leak. Same pattern as the collapse gate: validated on synthetic, does not transfer.
+| block | diagonal base | diagonal +shift | **sym base** | **sym +shift** |
+|---|---|---|---|---|
+| `log_lik` | 46 | 38 | 292 | **491** |
+| `sigma_re` | 142 | **14** | 85 | 92 |
+| `slab_c2` | 79 | **14** | 8 | **55** |
+| `lambda` | 34 | 46 | 43 | 55 |
+
+- WITHOUT the dof correction (diagonal): `sigma_re` -90%, `slab_c2` -82%. Harmful.
+- WITH it (symmetric): `log_lik` +68%, `slab_c2` +618% and Rhat 1.487 -> 1.042, `sigma_re` max
+  Rhat 2.082 -> 1.128. It CURES the slab_c2 pathology the symmetric path otherwise has.
+
+Costs: `lambda` max Rhat 1.360 -> 1.556 and `b_g` 1.236 -> 1.370. And `slab_c2` ESS 8 -> 55 is a
+large relative move on small absolute numbers.
+
+Note `symmetric_hs` is a SEPARATE argument from `symmetric`: the latter sets the zero-sum coding
+of the response, the former selects the symmetric shrinkage prior AND the `_sym` updater. Passing
+only `symmetric = TRUE` silently measures the diagonal horseshoe.
 
 ## 8b. `kappa_v` — joint FE/RE gate (MNL, EXPERIMENTAL, default OFF)
 
