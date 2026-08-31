@@ -339,7 +339,17 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
                                   # never became non-zero. TRUE refreshes the binding each sweep.
                                   # It changes every diagonal-horseshoe fit -- gate on held-out
                                   # log-likelihood before adopting.
-                                  hs_kernel_live = FALSE,
+                                  # TRUE/FALSE are now both "live" -- the FE horseshoe reaches the
+                                  # draw whenever use_horseshoe is on. Pass "frozen" ONLY to
+                                  # reproduce a fit made before 2026-08-30, when the binding was
+                                  # stuck at its pre-loop zero matrix.
+                                  hs_kernel_live = TRUE,
+                                  # SUM-TO-ZERO ON THE RE MEAN, as a mean-shift MH interweave (C.6).
+                                  # Fixes the mu <-> mean_g(b_g) alias so mu IS the population-averaged
+                                  # effect. Different axis from symmetric_hs (which is zero-sum across
+                                  # CATEGORIES) -- they compose. Should also HELP mixing: the alias is
+                                  # a posterior ridge, and ridges are what make the RE block crawl.
+                                  re_mean_shift = FALSE,
                                   # RE-SIDE SYMMETRIC VARIANCE, separable from the FE side.
                                   # NULL = follow symmetric_hs (historical). update_re_precision_hc_sym
                                   # forms its sum of squares from CATEGORY-CENTRED deviations
@@ -2098,7 +2108,15 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
   for (iter in 1:niter) {
     # Refresh the kernel's HS precision from the LIVE hs_prec_mat (updated at the end of the
     # previous sweep). Without this the binding above is frozen at its pre-loop value.
-    if (isTRUE(hs_kernel_live) && use_horseshoe && !symmetric_hs) hs_prec_kernel <- hs_prec_mat
+    # THE SWITCH NOW DOES WHAT IT SAYS (2026-08-30). hs_prec_kernel is bound before the loop to a
+    # still-zero hs_prec_mat and R copies on assignment, so without this refresh the FE horseshoe was
+    # sampled every sweep and then DISCARDED -- `use_horseshoe = TRUE` produced a plain A0 ridge.
+    # That silence was load-bearing (the ridge beats ridge+horseshoe here by ~63 nats), but a flag
+    # that lies is worse than a flag that underperforms: callers now get what they ask for, and the
+    # production caller opts OUT explicitly instead of relying on a bug. hs_kernel_live is retained
+    # only to reproduce a pre-fix fit.
+    if (use_horseshoe && !symmetric_hs && !identical(hs_kernel_live, "frozen"))
+      hs_prec_kernel <- hs_prec_mat
     if (use_tempering && iter <= nburn_half && nburn > 0) {
       temp_iter <- tempering_T0 + (1.0 - tempering_T0) * (iter / nburn_half)
     } else {
@@ -3106,6 +3124,54 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
     }
 
     # =================================================================
+    # C.6 MEAN-SHIFT INTERWEAVE  (sum-to-zero identification for the RE mean)
+    # =================================================================
+    # mu and the MEAN of the b_g are identified only through their sum, and the priors are
+    # asymmetric: the horseshoe pulls mu to 0 while nothing pulls mean_g(b_g) to 0. So shrinking mu
+    # does not remove a covariate, it RELOCATES it into G per-group parameters (measured here:
+    # Slope_rad mu = 1.2e-07 while mean_g(beta_g) = 1.64). That ridge is also why the RE block mixes
+    # slowly -- the chain has to diffuse along it.
+    #
+    # The move: m = mean_g(dev) ; mu <- mu + m ; dev <- dev - m.
+    #   * beta_g = mu + dev is EXACTLY invariant, so the LIKELIHOOD is untouched and no likelihood
+    #     evaluation is needed -- the acceptance ratio is the PRIOR ratio alone.
+    #   * it is a proper MH step, NOT post-hoc centring. Centring an unconstrained draw is not a valid
+    #     Gibbs step (wrong covariance) and is what blew up the CLR sampler when bre was edited after
+    #     the draw. Here the state either moves to the sum-to-zero point or stays put.
+    #   * on acceptance sum_g dev = 0 exactly, so mu IS mean_g(beta_g) and the horseshoe shrinks the
+    #     population-averaged effect rather than pushing it somewhere unpenalised.
+    # z_c must be rebuilt from the new deviations: the NCP state is dev = sigma * rs * z.
+    # kappa enters the RE block through the per-(cov, group) SD channel, and the SAME matrix is handed
+    # to the variance update below. Splitting them is how the count model's tau_g silently made
+    # sigma absorb 1/tau: the draw scaled by one thing, the variance was inferred whitened by another.
+    if (isTRUE(re_mean_shift) && use_re && length(re_idx) > 0) {
+      .acc <- 0L; .tot <- 0L
+      for (ip in seq_len(p)) {
+        sig_ip <- sigma_beta_pooled[, ip]
+        for (v in re_idx) {
+          dev <- curr_beta_c[v, ip, ] - mu_pooled[v, ip]
+          mshift <- mean(dev)
+          if (!is.finite(mshift) || abs(mshift) < 1e-12) next
+          sd_v <- pmax(sig_ip[v] * re_support_mat[v, ], 1e-12)
+          # prior log-density change: mu gains the shift (its own precision), dev loses it
+          pr_mu <- if (use_horseshoe) hs_prec_mat[v, ip] else 0
+          pr_mu <- pr_mu + prior_P[v, v]
+          d_mu  <- -0.5 * pr_mu * ((mu_pooled[v, ip] + mshift)^2 - mu_pooled[v, ip]^2)
+          d_dev <- -0.5 * sum(((dev - mshift)^2 - dev^2) / sd_v^2)
+          .tot <- .tot + 1L
+          if (log(runif(1)) < (d_mu + d_dev)) {
+            .acc <- .acc + 1L
+            mu_pooled[v, ip] <- mu_pooled[v, ip] + mshift
+            if (use_ncp) z_c[v, ip, ] <- (dev - mshift) / sd_v      # beta_c unchanged by construction
+          }
+        }
+      }
+      if (iter == nburn && .tot > 0L)
+        cat(sprintf("Mean-shift interweave: %.0f%% accepted at end of burn-in (%d proposals/sweep)\n",
+                    100 * .acc / .tot, .tot))
+    }
+
+    # =================================================================
     # D. SIGMA UPDATE  [modified for Phase 2]
     # NOTE: Placed AFTER Section E so that BART intercept absorption is
     #       reflected in curr_beta_c / mu_pooled before computing RE precision.
@@ -3240,7 +3306,8 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
             re_regularize = isTRUE(re_regularize),
             slab_c2 = collapse_slab_c2,
             re_support_opt = re_support_mat,  # support-consistent variance: whiten ss by 1/rs^2 (matches the support-scaled RE draw)
-            center_ss = isTRUE(re_prec_center)
+            center_ss = isTRUE(re_prec_center),
+            dof_mean_pinned = isTRUE(re_mean_shift)   # sum_g dev = 0 -> G-1 free dims, not G
           )
         } else {
           re_prec <- update_re_precision_hc(

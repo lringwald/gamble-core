@@ -967,7 +967,8 @@ List update_re_precision_hc_sym(const arma::cube   &beta_c,
                                 bool                re_regularize = false,
                                 double              slab_c2 = 100.0,
                                 Rcpp::Nullable<Rcpp::NumericMatrix> re_support_opt = R_NilValue,
-                                bool                center_ss = true) {
+                                bool                center_ss = true,
+                                bool                dof_mean_pinned = false) {
 
   int k = beta_c.n_rows;
   int p = beta_c.n_cols; // p = p_all - 1
@@ -1183,6 +1184,18 @@ List update_re_precision_hc_sym(const arma::cube   &beta_c,
 
           n_active += num_active_in_group;
         }
+      }
+      // SUM-TO-ZERO DOF CORRECTION. With the mean-shift interweave the deviations satisfy
+      // sum_g dev = 0, so they span G-1 dimensions per equation, not G. Counting G here would make
+      // the shape too large and bias sigma LOW -- the same class of error as building ss in centred
+      // coordinates while the draw is uncentred. One dof is removed per equation that contributed.
+      if (dof_mean_pinned) {
+        int n_eq = 0;
+        for (int ip = 0; ip < p; ip++) {
+          for (int m = 0; m < n_groups; m++)
+            if (re_mask(v, ip, m) > 0.5 && (is_intercept(v) == 1 || y_mask(ip, m) > 0.5)) { n_eq++; break; }
+        }
+        n_active = std::max(n_active - static_cast<double>(n_eq), 1.0);
       }
 
       if (n_active < 1.0) {
