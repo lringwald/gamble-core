@@ -344,6 +344,25 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
                                   # reproduce a fit made before 2026-08-30, when the binding was
                                   # stuck at its pre-loop zero matrix.
                                   hs_kernel_live = TRUE,
+                                  # JOINT FE/RE SHRINKAGE (2026-08-31). One scale kappa_v per
+                                  # covariate gating BOTH its pooled effect and its group deviations:
+                                  #     mu_v,j  ~ N(0, kappa_v^2 * tau^2 lambda_v^2 c^2/(...))
+                                  #     b_v,j,g ~ N(0, kappa_v^2 * sigma_v^2)
+                                  #     kappa_v ~ C+(0,1)
+                                  # WHY. mu and b_g are identified only through their SUM, and the
+                                  # priors are asymmetric: the horseshoe pulls mu to 0 while nothing
+                                  # pulls the RE MEAN to 0. So shrinking mu does not remove a
+                                  # covariate -- it RELOCATES it into G per-group parameters (measured
+                                  # here: Slope_rad mu = 1.2e-07 while mean_g(beta_g) = 1.64). That is
+                                  # anti-regularisation: one pooled parameter becomes 26 group ones.
+                                  # A shared gate has no unshrunk destination to leak into.
+                                  # It also keeps an UNSUPPORTED covariate IN the model, shrunk toward
+                                  # zero, instead of dropping it -- the design stays fixed and the
+                                  # geometry smooth, which is what the sampler needs.
+                                  # kappa_v is IDENTIFIED (unlike the per-group tau_g experiment):
+                                  # it is anchored by the FE block, so the RE block cannot run away
+                                  # with it. Conjugate via the same Makalic-Schmidt auxiliary.
+                                  joint_fe_re_shrink = FALSE,
                                   # SUM-TO-ZERO ON THE RE MEAN, as a mean-shift MH interweave (C.6).
                                   # Fixes the mu <-> mean_g(b_g) alias so mu IS the population-averaged
                                   # effect. Different axis from symmetric_hs (which is zero-sum across
@@ -2083,6 +2102,13 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
     }
   }
   
+  # joint FE/RE gate: one kappa per covariate, 1 = no gating (so joint_fe_re_shrink = FALSE is exact)
+  kappa_v  <- rep(1, k)
+  kappa_nu <- rep(1, k)
+  joint_shrink_on <- isTRUE(joint_fe_re_shrink) && isTRUE(use_re) && isTRUE(use_horseshoe)
+  post_kappa <- if (joint_shrink_on) matrix(NA_real_, k, nretain) else NULL
+  if (joint_shrink_on)
+    cat(sprintf("Joint FE/RE shrinkage ON: one kappa over %d covariate(s), gating mu AND b_g\n", k))
   re_prec_sym <- if (is.null(re_prec_sym)) isTRUE(symmetric_hs) else isTRUE(re_prec_sym)
   # Resolve the centring default AFTER re_prec_sym is known: the centred statistic is only ever used
   # by the symmetric updater, and it is wrong there, so switch it off exactly when that updater runs.
@@ -2236,6 +2262,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
         1 / sqrt(pmax(prec_beta_pooled, 1e-8)),
         nrow = k, ncol = p
       )
+      if (joint_shrink_on) sigma_mat <- sigma_mat * kappa_v     # kappa_v = 1 when off -> identity
 
       if (use_ncp) {
         # NOTE (Issue 6, Doc 10): gibbs_step_re_ncp uses re_mask/y_mask only.
@@ -3144,6 +3171,10 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
     # kappa enters the RE block through the per-(cov, group) SD channel, and the SAME matrix is handed
     # to the variance update below. Splitting them is how the count model's tau_g silently made
     # sigma absorb 1/tau: the draw scaled by one thing, the variance was inferred whitened by another.
+    # NB: guard on use_re -- the `else` branch still evaluates re_support_mat, which only
+    # exists on the use_re path (this is what broke the no-RE tests).
+    if (use_re) re_supp_kap <- if (joint_shrink_on) re_support_mat * kappa_v else re_support_mat
+
     if (isTRUE(re_mean_shift) && use_re && length(re_idx) > 0) {
       .acc <- 0L; .tot <- 0L
       for (ip in seq_len(p)) {
@@ -3305,7 +3336,8 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
             block_size_opt = block_size_vec,
             re_regularize = isTRUE(re_regularize),
             slab_c2 = collapse_slab_c2,
-            re_support_opt = re_support_mat,  # support-consistent variance: whiten ss by 1/rs^2 (matches the support-scaled RE draw)
+            re_support_opt = re_supp_kap,     # support-consistent variance: whiten ss by 1/rs^2 -- and
+                                              # rs INCLUDES kappa, matching the scaled draw above
             center_ss = isTRUE(re_prec_center),
             dof_mean_pinned = isTRUE(re_mean_shift)   # sum_g dev = 0 -> G-1 free dims, not G
           )
@@ -3383,6 +3415,50 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
       }
       prec_beta_pooled <- re_prec$prec
       sigma_beta_pooled <- re_prec$sigma
+    }
+
+    # =================================================================
+    # D.2b  JOINT FE/RE GATE (kappa_v)   [joint_fe_re_shrink]
+    #
+    # One scale per covariate governing BOTH channels, so a covariate cannot
+    # survive by hiding in the block the shrinkage does not see:
+    #
+    #     mu_{v,j}    ~ N(0, kappa_v^2 * sigma~_{v,j}^2)     (FE, horseshoe kernel)
+    #     b_{v,j,g}   ~ N(0, kappa_v^2 * sigma_{v,j}^2)      (RE, per-covariate SD)
+    #
+    # kappa_v^2 ~ half-Cauchy(0, 1), Makalic-Schmidt: kappa^2 | nu ~ IG(1/2, 1/nu + ss/2)
+    # so the conditional is conjugate given the pooled standardized SS from both blocks.
+    # =================================================================
+    if (joint_shrink_on) {
+      for (v in seq_len(k)) {
+        if (!(v %in% hs_pool)) next          # only covariates the horseshoe actually governs
+        ss <- 0; n_eff <- 0L
+
+        # -- FE contribution: mu_v whitened by its (ungated) horseshoe SD --
+        pf <- hs_prec_mat[v, ] * kappa_v[v]^2          # undo the gate -> base precision
+        ok <- is.finite(pf) & pf > 0
+        if (any(ok)) { ss <- ss + sum(mu_pooled[v, ok]^2 * pf[ok]); n_eff <- n_eff + sum(ok) }
+
+        # -- RE contribution: group deviations whitened by their (ungated) SD --
+        if (use_re && (v %in% re_idx)) {
+          for (ip in seq_len(p)) {
+            sd_b <- sigma_beta_pooled[v, ip] * re_support_mat[v, ]
+            act  <- if (length(y_mask)) y_mask[ip, ] > 0.5 else rep(TRUE, n_groups)
+            if (length(re_mask)) act <- act & (re_mask[v, ] > 0.5)   # re_mask is k x n_groups
+            act <- act & is.finite(sd_b) & sd_b > 0
+            if (!any(act)) next
+            dev <- curr_beta_c[v, ip, act] - mu_pooled[v, ip]
+            ss  <- ss + sum((dev / sd_b[act])^2); n_eff <- n_eff + sum(act)
+          }
+        }
+        if (n_eff == 0L) next
+        # kappa^2 | . ~ IG((n_eff + 1)/2, 1/nu + ss/2)   [Makalic-Schmidt]
+        rate  <- 1 / kappa_nu[v] + ss / 2
+        k2    <- 1 / rgamma(1, shape = (n_eff + 1) / 2, rate = max(rate, 1e-10))
+        kappa_v[v]  <- sqrt(min(max(k2, 1e-8), 1e8))
+        # nu | kappa^2 ~ IG(1, 1 + 1/kappa^2)
+        kappa_nu[v] <- 1 / rgamma(1, shape = 1, rate = 1 + 1 / max(k2, 1e-10))
+      }
     }
 
     # =================================================================
@@ -3484,6 +3560,13 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
 
       # Under symmetric_hs we use c_v + Msym below; the diagonal hs_prec_mat is unused.
       hs_prec_mat[hs_pool, ] <- 1 / pmax(var_eff, 1e-12)            # kept only for !symmetric_hs paths
+      # JOINT GATE on the FE block: prior variance is kappa_v^2 * var_eff, so precision scales by
+      # 1/kappa_v^2. kappa_v = 1 leaves this exactly unchanged.
+      if (joint_shrink_on) {
+        .kk <- pmax(kappa_v[hs_pool]^2, 1e-12)
+        hs_prec_mat[hs_pool, ] <- hs_prec_mat[hs_pool, ] / .kk
+        c_v[hs_pool] <- c_v[hs_pool] / .kk
+      }
       if (fe_support_strength > 0) hs_prec_mat[hs_pool, ] <- hs_prec_mat[hs_pool, ] * fe_support[hs_pool]
       
       if (!is.null(block_sym)) {
@@ -3695,6 +3778,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
       # the zero matrix post_delta was initialised with -- delta was drawn correctly every sweep and
       # then silently not recorded. STREAM=TRUE is the production default, so this hit real runs.
       if (use_alt_spec) post_delta[, s] <- curr_delta
+      if (!is.null(post_kappa)) post_kappa[, s] <- kappa_v   # outside the disk guard, cf. post_delta
       if (!save_posterior_to_disk) {
         if (use_re) {
           postb_total[, , , s] <- beta_c_zs
@@ -4133,6 +4217,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
     postb_total_std = postb_total_std,
     postb_pooled_std = postb_pooled_std,
     post_sigma_re = post_sigma_re,
+    post_kappa = post_kappa,          # NULL unless joint_fe_re_shrink
     post_re_tau = post_re_tau,
     post_slab_c2 = post_slab_c2,
     sigma_beta_pooled = sigma_beta_pooled,
