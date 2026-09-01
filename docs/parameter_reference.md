@@ -172,35 +172,37 @@ product is, so `tau` shrinks while `sigma` inflates until the RE space absorbs t
 (b[x1] 0.731 -> 0.256 against truth 0.700). Anchoring must be imposed INSIDE the draw; a post-hoc
 rescale breaks the prior's own cap. Default OFF.
 
-## 8a. `re_mean_shift` — sum-to-zero RE identification (use WITH `symmetric_hs`)
+## 8a. `re_mean_shift` — sum-to-zero RE identification (default OFF, costs sigma_re ESS)
 
 MH interweave moving `mean_g(b_{v,j,g})` into `mu_{v,j}`. The likelihood is exactly invariant, so
 only the prior ratio gates the move; the RE-variance draw then charges `G-1` free dimensions
-(`dof_mean_pinned`). `mu` becomes the population-averaged effect by construction.
+(`dof_mean_pinned`, which exists ONLY in the `_sym` updater — see the note below). `mu` becomes
+the population-averaged effect by construction, and it recovers that identity on synthetic data
+(leak 0.0108 -> 0.0001).
 
-**It is a PACKAGE with the dof correction, and the dof correction exists ONLY in the `_sym`
-RE-variance updater** (`update_re_precision_hc_sym`, reached when `re_prec_sym` / `symmetric_hs`
-is TRUE). Run the shift on the diagonal path and the dof half is silently inert.
+**It reliably costs `sigma_re` ESS on the real design, and buys nothing at scale.** ESS_bulk
+median, GLOBIOM pixel, baseline -> +shift:
 
-Measured on the GLOBIOM pixel design (6k pixels, 4 chains x 1500 iter), ESS_bulk median:
+| run | `log_lik` | `sigma_re` | `slab_c2` |
+|---|---|---|---|
+| 6k px, 4ch x 1500, diagonal | 46 -> 38 | 142 -> **14** | 79 -> **14** |
+| 6k px, 4ch x 1500, symmetric | 292 -> 491 | 85 -> 92 | 8 -> 55 |
+| **15k px, 5ch x 3000, symmetric** | 749 -> 659 | 275 -> **55** | 11 -> 16 |
 
-| block | diagonal base | diagonal +shift | **sym base** | **sym +shift** |
-|---|---|---|---|---|
-| `log_lik` | 46 | 38 | 292 | **491** |
-| `sigma_re` | 142 | **14** | 85 | 92 |
-| `slab_c2` | 79 | **14** | 8 | **55** |
-| `lambda` | 34 | 46 | 43 | 55 |
+The middle row once looked like an endorsement (`log_lik` +68%, `slab_c2` +618%). The larger run
+does not reproduce it: `sigma_re` drops 80% and `log_lik` is slightly worse. Those 6k numbers were
+small-sample noise in an under-converged regime — `slab_c2` ESS of 8 vs 55 is not a comparison.
+The signal that holds across ALL THREE runs is the `sigma_re` penalty. Keep it OFF.
 
-- WITHOUT the dof correction (diagonal): `sigma_re` -90%, `slab_c2` -82%. Harmful.
-- WITH it (symmetric): `log_lik` +68%, `slab_c2` +618% and Rhat 1.487 -> 1.042, `sigma_re` max
-  Rhat 2.082 -> 1.128. It CURES the slab_c2 pathology the symmetric path otherwise has.
-
-Costs: `lambda` max Rhat 1.360 -> 1.556 and `b_g` 1.236 -> 1.370. And `slab_c2` ESS 8 -> 55 is a
-large relative move on small absolute numbers.
+**`slab_c2` is a standing defect of the symmetric path, not something the shift causes or cures.**
+At 15k it is Rhat 1.395 / ESS 11 in the BASELINE arm. The full-Bayes slab barely moves between
+chains under the symmetric updater; that is an open problem.
 
 Note `symmetric_hs` is a SEPARATE argument from `symmetric`: the latter sets the zero-sum coding
-of the response, the former selects the symmetric shrinkage prior AND the `_sym` updater. Passing
-only `symmetric = TRUE` silently measures the diagonal horseshoe.
+of the response, the former selects the symmetric shrinkage prior AND the `_sym` RE-variance
+updater (the only one accepting `dof_mean_pinned`). Passing only `symmetric = TRUE` silently
+measures the diagonal horseshoe with the dof half inert. `re_mean_shift_dof` keeps the two
+separable so they can never again be confounded.
 
 ## 8b. `kappa_v` — joint FE/RE gate (MNL, EXPERIMENTAL, default OFF)
 
