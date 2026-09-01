@@ -172,6 +172,37 @@ product is, so `tau` shrinks while `sigma` inflates until the RE space absorbs t
 (b[x1] 0.731 -> 0.256 against truth 0.700). Anchoring must be imposed INSIDE the draw; a post-hoc
 rescale breaks the prior's own cap. Default OFF.
 
+## 7b. RE slab `c2` — weakly identified, but KEEP IT ON (measured)
+
+`re_regularize` caps the RE variance via `tau_eff = tau_raw + 1/c2`; `estimate_slab_c2` samples
+`c2` by a 1-D slice (InvGamma, `slab_df_re = 10`). Its diagnostics look pathological and the
+pathology is real, but removing it is WORSE.
+
+**c2 is weakly identified on the pixel design.** The slab only bites when RE variances press
+against the cap, and they do not: of 1560 RE cells only 130 are active (92% pinned/masked), and
+their SDs are tiny (median 0.038), so `tau_eff` is ~680 while `1/c2` is ~0.63 — the slab supplies
+**0.1% of the precision for the median active cell**, >10% for only 20% of them. So c2 is informed
+by a handful of cells and otherwise follows its prior: 4 chains land at 1.03 / 2.90 / 0.97 / 1.14,
+Rhat 1.34, ESS 10, between/within variance ratio **107** (stuck, not merely autocorrelated).
+
+**It is a ridge, not slow exploration.** `slab_c2_n_slice = 10` (ten extra slice sweeps per Gibbs
+iteration, same conditional) changes nothing: ESS 10 -> 9, Rhat 1.339 -> 1.427. Same aliasing
+family as `tau_g` and `kappa_v` — c2 enters ONLY through `tau_eff`.
+
+**But it earns its keep.** Held-out log-lik, chains pooled, 3 splits (8k px, 4 chains x 1200):
+
+| config | held-out LL | log_lik ESS |
+|---|---|---|
+| regularize + **estimate c2** | **best** (+7.3 nats vs no-slab, 3/3 splits) | 12 |
+| regularize + fixed c2 | worst | 20 |
+| no slab | middle | 35 |
+
+Removing the slab improves joint mixing 2.9x and costs ~7 nats (0.2%) consistently. A weakly
+identified c2 still averages over regularization strengths, which beats any single fixed value —
+it cannot be learned, but it is doing work. **Do not "fix" this by turning it off.** Treat c2's
+Rhat as a nuisance-hyperparameter diagnostic, not a convergence failure of the estimands, and buy
+back the mixing with iterations.
+
 ## 8a. `re_mean_shift` — sum-to-zero RE identification (default OFF, costs sigma_re ESS)
 
 MH interweave moving `mean_g(b_{v,j,g})` into `mu_{v,j}`. The likelihood is exactly invariant, so

@@ -276,6 +276,12 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
                                   # (re_hs_global: tau tracked the average sigma instead of shrinking
                                   # it). Trace `post_slab_c2` and check it settles rather than drifts.
                                   estimate_slab_c2 = FALSE,
+                                  # Extra slice sweeps for the RE slab per Gibbs iteration. c2 is a
+                                  # single scalar whose slice is ~free next to the main draw, so if it
+                                  # is merely autocorrelated this buys ESS for nothing. If instead the
+                                  # chains are stuck on the tau_raw + 1/c2 ridge, extra sweeps will NOT
+                                  # help -- that is the diagnostic. 1 = exact back-compat.
+                                  slab_c2_n_slice = 1L,
                                   # PARAMETER-COUNT-AWARE SLAB. collapse_slab_c2 = "auto" sets the cap
                                   # from the number of RE covariates: the country deviation in the
                                   # linear predictor is eta_g = sum_v x_v * b_{v,g}, so with K
@@ -3386,6 +3392,9 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
             .lp <- function(lc) { c2 <- exp(lc); ve <- 1 / (.tr + 1 / c2)
               -0.5 * sum(.nn * log(ve) + .ss / ve) -            # N(0, v~) over active cells
                 (.nu / 2 + 1) * lc - (.nu * .s0 / 2) / c2 + lc } # InvGamma prior + log-scale Jacobian
+            # Repeated draws from the SAME conditional (tau_raw, ss, nn held fixed) -- a valid
+            # sub-block rescan. Costs one scalar slice each; the main draw dominates the sweep.
+            for (.rep in seq_len(max(1L, as.integer(slab_c2_n_slice)))) {
             .lt <- log(collapse_slab_c2); .y0 <- .lp(.lt) - stats::rexp(1)
             .L <- .lt - stats::runif(1); .R <- .L + 1; .g <- 0L
             while (.lp(.L) > .y0 && .g < 60L) { .L <- .L - 1; .g <- .g + 1L }; .g <- 0L
@@ -3395,6 +3404,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
               if (.lp(.q) > .y0) { .ln <- .q; break }
               if (.q < .lt) .L <- .q else .R <- .q }
             collapse_slab_c2 <- min(max(exp(.ln), 1e-4), 1e6)
+            }
           }
         }
         # ---- global horseshoe scale tau (shared across ALL RE cells) --------------------
