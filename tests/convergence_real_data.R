@@ -19,6 +19,9 @@ ARMS   <- strsplit(Sys.getenv("ARMS", "baseline,mean_shift"), ",")[[1]]
 # the _sym RE-variance updater -- the only one that accepts dof_mean_pinned. Passing only
 # `symmetric = TRUE` silently measures the DIAGONAL horseshoe.
 SYM_HS <- isTRUE(as.logical(Sys.getenv("SYM_HS", "TRUE")))
+THIN    <- as.integer(Sys.getenv("THIN", "2"))       # storage thinning; postb_total is k*p*G*draws
+WORKERS <- as.integer(Sys.getenv("WORKERS", "4"))    # raise on a many-core box, or run arms concurrently
+TAG     <- Sys.getenv("TAG", "")                     # label so concurrent runs are distinguishable
 
 inp <- readRDS("output/pixel_model_inputs_GLOBIOM_init2000.rds")
 set.seed(1)
@@ -32,13 +35,14 @@ keepY <- colSums(Y) > 0; Y <- Y[, keepY, drop = FALSE]; Y <- Y / rowSums(Y)
 base_i <- which.max(colSums(Y))
 re_idx <- which(colnames(X) %in% c("intercept", "log1p_GDP", "log1p_Pop", "GHM_HI", "CISI"))
 
-cat(sprintf("\nREAL design: %d pixels x %d cov, %d classes, %d groups | %d chains x %d iter (burn %d)\n",
-            nrow(X), ncol(X), ncol(Y), length(unique(g)), NCHAIN, NITER, NBURN))
+cat(sprintf("\n%sREAL design: %d pixels x %d cov, %d classes, %d groups | %d chains x %d iter (burn %d, thin %d)\n",
+            if (nzchar(TAG)) paste0("[", TAG, "] ") else "",
+            nrow(X), ncol(X), ncol(Y), length(unique(g)), NCHAIN, NITER, NBURN, THIN))
 cat(sprintf("RE covariates: %s\n", paste(colnames(X)[re_idx], collapse = ", ")))
 cat(sprintf("shrinkage: symmetric_hs = %s  (=> re_prec_sym = %s, the _sym RE-variance updater)\n\n",
             SYM_HS, SYM_HS))
 
-plan(multisession, workers = min(NCHAIN, 4))
+plan(multisession, workers = min(NCHAIN, WORKERS))
 fit_arm <- function(arm) {
   future_lapply(seq_len(NCHAIN), function(ch) {
     # sourceCpp pointers do NOT survive into multisession workers ("NULL value passed as
@@ -49,7 +53,7 @@ fit_arm <- function(arm) {
     mnlogit_rcpp_sym(
       X = X, Y = Y, intercept = FALSE, baseline = base_i, symmetric = TRUE,
       symmetric_hs = SYM_HS,
-      niter = NITER, nburn = NBURN, thin = 2L, y_weight = w,
+      niter = NITER, nburn = NBURN, thin = as.integer(THIN), y_weight = w,
       use_re = TRUE, group_idx = g, re_idx = re_idx,
       use_horseshoe = TRUE, re_regularize = TRUE, estimate_slab_c2 = TRUE,
       re_mean_shift     = arm %in% c("mean_shift", "mean_shift_nodof"),
