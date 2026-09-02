@@ -81,6 +81,32 @@ if (!is.null(FROM_INPUTS)) {
   group_idx <- as.integer(as.factor(d$Grouping_Key))
   coordX <- d$X; coordY <- d$Y; grp_lab <- as.character(d$Grouping_Key)
 }
+
+# --- Mundlak (NCUT_MUNDLAK) -------------------------------------------------------------------
+# Normally the pixel driver adds these at design-assembly time (DRIVER_MUNDLAK) and they arrive
+# inside the dumped X_mat, so nothing is needed here. This switch covers an OLDER dump, or the
+# reconstruct branch. Guarded on the columns not already being present: applying it twice would
+# be a silent duplicate design (build_mundlak_design() also refuses the name collision).
+if (isTRUE(as.logical(Sys.getenv("NCUT_MUNDLAK", "FALSE")))) {
+  if (any(grepl("^MDL_", colnames(X)))) {
+    cat(">>> NCUT_MUNDLAK: columns already present in the design (from DRIVER_MUNDLAK); not re-adding.\n")
+  } else {
+    source("codes/mundlak.R")
+    .mc <- intersect(trimws(strsplit(Sys.getenv("NCUT_MUNDLAK_COLS",
+             "CISI,log1p_Pop,log1p_GDP,GHM_HI"), ",")[[1]]), colnames(X))
+    .rc <- trimws(strsplit(Sys.getenv("NCUT_MUNDLAK_RE", "intercept"), ",")[[1]])
+    .rc <- .rc[.rc == "intercept" | .rc %in% colnames(X)]
+    if (!length(.mc) || !length(.rc)) {
+      warning("NCUT_MUNDLAK set but no usable NCUT_MUNDLAK_COLS / NCUT_MUNDLAK_RE in X; skipping.")
+    } else {
+      .md <- build_mundlak_design(X, group_idx, mean_cols = .mc, re_cols = .rc)
+      X <- .md$X
+      cat(sprintf(">>> Mundlak ON: +%d column(s) [means: %s | RE rows: %s]\n",
+                  length(.md$names), paste(.mc, collapse = ","), paste(.rc, collapse = ",")))
+    }
+  }
+}
+
 # common: optional subsample + socio RE index
 if (SUB > 0 && SUB < nrow(X)) { set.seed(1); sel <- sort(sample(nrow(X), SUB))
   X <- X[sel, , drop = FALSE]; Y <- Y[sel, , drop = FALSE]; group_idx <- group_idx[sel]

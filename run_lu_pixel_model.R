@@ -1468,6 +1468,37 @@ X_mat <- cbind(
 )
 X_mat[!is.finite(X_mat)] <- 0
 
+# --- Mundlak device (DRIVER_MUNDLAK) --------------------------------------------------------
+# b_c ~ N(mu + gamma' xbar_c, sigma^2), added in the equivalent EXPLICIT form (group means as
+# design columns) so the sampler itself is untouched. Purges between-group confounding from beta
+# and makes mu the population-averaged effect GIVEN group composition.
+# Measured on GLOBIOM init-2000 (8k px, 4 chains, 3 splits, chains pooled): removes the FE-RE
+# correlation it targets (median |r| 0.258 -> 0.139, eliminated in 2 of 3 splits) at zero
+# predictive cost (-1.1 +/- 4.2 nats). It is an INTERPRETATION fix, not an accuracy fix.
+# Inserted HERE (before linear_cols / horseshoe_idx_pixel are derived) so the new columns are
+# covered by both; they therefore sit in the horseshoe pool and gamma can be shrunk to zero,
+# which degrades gracefully back to plain RE for covariates whose group means carry nothing.
+MUNDLAK     <- isTRUE(as.logical(Sys.getenv("DRIVER_MUNDLAK", "FALSE")))
+mundlak_def <- NULL
+if (MUNDLAK && use_re) {
+  source("codes/mundlak.R")
+  .mdl_mc <- trimws(strsplit(Sys.getenv("DRIVER_MUNDLAK_COLS", "CISI,log1p_Pop,log1p_GDP,GHM_HI"), ",")[[1]])
+  .mdl_rc <- trimws(strsplit(Sys.getenv("DRIVER_MUNDLAK_RE",   "intercept"), ",")[[1]])
+  .mdl_mc <- intersect(.mdl_mc, colnames(X_mat))
+  .mdl_rc <- .mdl_rc[.mdl_rc == "intercept" | .mdl_rc %in% colnames(X_mat)]
+  if (!length(.mdl_mc) || !length(.mdl_rc)) {
+    warning("DRIVER_MUNDLAK set, but no usable DRIVER_MUNDLAK_COLS / DRIVER_MUNDLAK_RE in X_mat; skipping.")
+  } else {
+    # the SAME group vector the sampler receives (cf. group_idx_vec below), so the stored
+    # group_levels line up and apply_mundlak_design() reproduces these columns at predict time
+    .mdl_g <- as.integer(as.factor(dat_pixel$Grouping_Key))
+    mundlak_def <- build_mundlak_design(X_mat, .mdl_g, mean_cols = .mdl_mc, re_cols = .mdl_rc)
+    X_mat <- mundlak_def$X
+    cat(sprintf(">>> Mundlak ON: +%d group-mean column(s) [means: %s | RE rows: %s]\n",
+                length(mundlak_def$names), paste(.mdl_mc, collapse = ","), paste(.mdl_rc, collapse = ",")))
+  }
+}
+
 # Detect sum-to-constant (compositional) blocks. Robust (median/MAD) detector so the focal shares
 # qualify: they ARE constant-sum (median rowsum 1.0, MAD 0 -> 99.4% of valid pixels sum to exactly
 # 1), but a plain mean/sd test was fooled by ~0.6% partial-coverage border pixels (lone 0.5 rowsums)
@@ -1561,6 +1592,8 @@ if (use_re) {
 # (full LUM classes + complete driver set), without re-running the heavy data build each time.
 if (isTRUE(as.logical(Sys.getenv("DRIVER_DUMP_INPUTS", "FALSE")))) {
   saveRDS(list(X_mat = X_mat, Y_pixel = Y_pixel, weights_pixel = weights_pixel,
+               mundlak_def = mundlak_def,   # NULL unless DRIVER_MUNDLAK; needed to rebuild the
+                                            # same group-mean columns on new data at predict time
                group_idx_vec = group_idx_vec, re_group_names = if (use_re) re_group_names else NULL,
                baseline_class = baseline_class, col_names = colnames(X_mat),
                focal_cov_cols = focal_cov_cols, spatial_cont_cols_trans = spatial_cont_cols_trans,
