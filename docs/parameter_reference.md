@@ -172,6 +172,37 @@ product is, so `tau` shrinks while `sigma` inflates until the RE space absorbs t
 (b[x1] 0.731 -> 0.256 against truth 0.700). Anchoring must be imposed INSIDE the draw; a post-hoc
 rescale breaks the prior's own cap. Default OFF.
 
+## 3b. FE horseshoe `kappa` — the local/global ridge (structural, not a bug)
+
+`post_kappa_pooled` stores the SHRINKAGE FACTOR `kappa = 1/(1 + tau^2 lambda^2)`, not lambda.
+(The convergence harness labels this block "lambda (HS)"; it is kappa.)
+
+**It is aliased, in every measurement.** lambda and tau are identified only through their product
+`lambda^2 tau^2`, so each chain settles on a different split of the same total scale. Measured on
+3 independent splits (8k px, 4 chains x 1200): Rhat 1.73 / 1.77 / 1.76, ESS 6 / 6 / 6,
+between/within variance ratio 17.8 / 22.7 / 18.8 — STUCK every time.
+
+This is the fourth member of the same family as `tau_g` (section 8), `kappa_v` (8b) and the RE
+slab `c2` (7b): a scale that enters only through a sum or product with another free scale.
+**Consequence for any fix: NCP / Makalic-Schmidt reparameterisation would help the sampler
+TRAVERSE this ridge, but cannot make lambda identified.** Do not expect Rhat to reach 1.01.
+
+**Does the horseshoe earn its keep? UNRESOLVED.** Held-out LL, chains pooled, kernel live and
+`fe_support_strength = 0`:
+
+| split | HS | ridge (A0=2) | diff | note |
+|---|---|---|---|---|
+| 1 | -3724.1 | -3696.8 | -27.3 | ridge better |
+| 2 | -3718.8 | **-4004.1** | +285.3 | ridge BLEW UP |
+| 3 | -3712.5 | -3690.7 | -21.8 | both arms ESS 9 — unusable |
+
+mean +78.7, sd 178.9 -> not distinguishable. The typical case mildly favours the RIDGE (~20-27
+nats); the mean is carried entirely by one ridge failure. Note the stability asymmetry: HS spans
+12 nats across splits, the ridge spans 313. That is consistent with the horseshoe buying VARIANCE
+REDUCTION rather than mean accuracy — but the split-2 blow-up has NOT been traced to a cause, and
+"one of four pooled chains diverged" would explain it without any robustness story. Resolve that
+before drawing conclusions.
+
 ## 7b. RE slab `c2` — weakly identified, but KEEP IT ON (measured)
 
 `re_regularize` caps the RE variance via `tau_eff = tau_raw + 1/c2`; `estimate_slab_c2` samples
