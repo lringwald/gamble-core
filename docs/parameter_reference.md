@@ -172,22 +172,43 @@ product is, so `tau` shrinks while `sigma` inflates until the RE space absorbs t
 (b[x1] 0.731 -> 0.256 against truth 0.700). Anchoring must be imposed INSIDE the draw; a post-hoc
 rescale breaks the prior's own cap. Default OFF.
 
-## 3b. FE horseshoe `kappa` — the local/global ridge (structural, not a bug)
+## 3b. FE horseshoe: the lambda/tau scaling ridge (real, but largely cosmetic)
 
 `post_kappa_pooled` stores the SHRINKAGE FACTOR `kappa = 1/(1 + tau^2 lambda^2)`, not lambda.
 (The convergence harness labels this block "lambda (HS)"; it is kappa.)
 
-**It is aliased, in every measurement.** lambda and tau are identified only through their product
-`lambda^2 tau^2`, so each chain settles on a different split of the same total scale. Measured on
-3 independent splits (8k px, 4 chains x 1200): Rhat 1.73 / 1.77 / 1.76, ESS 6 / 6 / 6,
-between/within variance ratio 17.8 / 22.7 / 18.8 — STUCK every time.
+**The scaling ridge is real.** `(tau, lambda) -> (c*tau, lambda/c)` leaves the model invariant, a
+continuous 1-D orbit. Chains do sit at different points on it — 4 chains, 5k px:
 
-This is the fourth member of the same family as `tau_g` (section 8), `kappa_v` (8b) and the RE
-slab `c2` (7b): a scale that enters only through a sum or product with another free scale.
-**Consequence for any fix: NCP / Makalic-Schmidt reparameterisation would help the sampler
-TRAVERSE this ridge, but cannot make lambda identified.** Do not expect Rhat to reach 1.01.
+    final tau2      0.0673  0.0981  0.0927  0.0350    ratio 2.80
+    median lambda2  0.4726  0.3386  0.3929  1.1180    ratio 3.30
+    product         0.0318  0.0332  0.0364  0.0391    ratio 1.23   <- agrees
 
-**Does the horseshoe earn its keep? UNRESOLVED.** Held-out LL, chains pooled, kernel live and
+tau2 and lambda2 move in OPPOSITE directions; the product is far more stable. Textbook.
+
+**But kappa's Rhat ~1.75 / ESS 6 / B/W 15 overstates the problem.** kappa is invariant to the
+scaling, and chains agree on it to three decimals (mean 0.826 / 0.824 / 0.824 / 0.824; median
+across-chain range 0.023 on a [0,1] scale). B/W is large because kappa barely moves WITHIN a
+chain — a small denominator, not a large numerator. Rhat is scale-free and so flags a
+near-constant quantity on tiny absolute differences.
+
+Not entirely cosmetic: a 0.023 range near kappa = 0.82 moves `1-kappa` from 0.174 to 0.151,
+about 13% relative variation in retained signal. Small, real, probably not worth chasing.
+
+**Do NOT impose an ordering constraint (lambda < tau) to fix this.** Two reasons: (1) an
+inequality is a positive-measure truncation of a continuous orbit — it fences the ridge without
+pinning it, and the chain still slides inside the fence; continuous degeneracies need a
+MEASURE-ZERO normalisation (fix geometric-mean lambda = 1, or pin tau) or a move ALONG the orbit
+(a joint MH proposal `(tau,lambda) -> (c*tau, lambda/c)`, likelihood-invariant so the ratio is
+prior + Jacobian only — same pattern as the `re_mean_shift` interweave). (2) Large `lambda_j` IS
+the horseshoe's mechanism for letting signals escape shrinkage; capping it below the global scale
+converts the horseshoe into an expensive ridge.
+
+**Consequence for reparameterisation work:** NCP / Makalic-Schmidt would help traverse this orbit
+but cannot identify lambda separately from tau, and the identified combination already agrees
+across chains. Expect cleaner tau/lambda diagnostics, not better inference.
+
+**Does the horseshoe earn its keep? UNRESOLVED.** Held-out LL, chains pooled, kernel live,
 `fe_support_strength = 0`:
 
 | split | HS | ridge (A0=2) | diff | note |
@@ -196,12 +217,11 @@ TRAVERSE this ridge, but cannot make lambda identified.** Do not expect Rhat to 
 | 2 | -3718.8 | **-4004.1** | +285.3 | ridge BLEW UP |
 | 3 | -3712.5 | -3690.7 | -21.8 | both arms ESS 9 — unusable |
 
-mean +78.7, sd 178.9 -> not distinguishable. The typical case mildly favours the RIDGE (~20-27
-nats); the mean is carried entirely by one ridge failure. Note the stability asymmetry: HS spans
-12 nats across splits, the ridge spans 313. That is consistent with the horseshoe buying VARIANCE
-REDUCTION rather than mean accuracy — but the split-2 blow-up has NOT been traced to a cause, and
-"one of four pooled chains diverged" would explain it without any robustness story. Resolve that
-before drawing conclusions.
+mean +78.7, sd 178.9 -> not distinguishable. Typical case mildly favours the RIDGE (~20-27 nats);
+the mean is carried entirely by one ridge failure. HS held-out spans 12 nats across splits, the
+ridge spans 313 — consistent with the horseshoe buying VARIANCE REDUCTION rather than mean
+accuracy, but the split-2 blow-up has NOT been traced and one diverged chain among the four
+pooled would explain it with no robustness story.
 
 ## 7b. RE slab `c2` — weakly identified, but KEEP IT ON (measured)
 
