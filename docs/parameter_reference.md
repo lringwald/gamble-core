@@ -274,8 +274,11 @@ expected log score (horseshoe wins clearly) unless you specifically care about t
 pathology is real, but removing it is WORSE.
 
 **c2 is weakly identified on the pixel design.** The slab only bites when RE variances press
-against the cap, and they do not: of 1560 RE cells only 130 are active (92% pinned/masked), and
-their SDs are tiny (median 0.038), so `tau_eff` is ~680 while `1/c2` is ~0.63 — the slab supplies
+against the cap, and they do not. (`sigma_beta_pooled` is 60 x 26 = 1560 cells, of which 130 are
+live; that is NOT masking — it is 5 RE covariates x 26 classes, the matrix simply being stored
+over all 60 covariates. Data coverage is near-complete: only 2% of (class, country) cells lack
+the class, and 23 of 27 classes appear in all 26 countries.) The live RE
+SDs are tiny (median 0.038), so `tau_eff` is ~680 while `1/c2` is ~0.63 — the slab supplies
 **0.1% of the precision for the median active cell**, >10% for only 20% of them. So c2 is informed
 by a handful of cells and otherwise follows its prior: 4 chains land at 1.03 / 2.90 / 0.97 / 1.14,
 Rhat 1.34, ESS 10, between/within variance ratio **107** (stuck, not merely autocorrelated).
