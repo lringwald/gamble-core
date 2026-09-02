@@ -58,5 +58,6 @@ print(round(rbind(obs = colMeans(Y[te,]), IV = colMeans(P_iv), factorized = colM
 
 ok1 <- lamB["q025"] <= LAMBDA_TRUE && LAMBDA_TRUE <= lamB["q975"]
 ok2 <- jll(P_iv, Y[te,]) >= jll(P_no, Y[te,]) - 1
-cat(sprintf("\nPASS lambda-CI-brackets-truth: %s | PASS IV>=factorized OOS: %s\n", ok1, ok2))
+cat(sprintf("\n%s lambda-CI-brackets-truth\n%s IV>=factorized OOS\n",
+            if (ok1) "[PASS]" else "[FAIL]", if (ok2) "[PASS]" else "[FAIL]"))
 cat("TEST DONE\n")

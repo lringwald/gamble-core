@@ -69,10 +69,12 @@ print(round(rbind(obs = colMeans(Y[te,]), pred_IV = colMeans(P_iv), pred_noIV = 
 ok_lambda <- abs(lam_B - LAMBDA_TRUE) < 0.2
 ok_better <- jll(P_iv, Y[te,]) > jll(P_no, Y[te,])
 stopifnot(length(ok_lambda) == 1L, length(ok_better) == 1L)   # guard against vacuous assertions
-cat(sprintf("\nPASS lambda-recovery: %s | PASS IV-beats-noIV: %s\n", ok_lambda, ok_better))
+cat(sprintf("\n%s lambda-recovery\n%s IV-beats-noIV\n",
+            if (ok_lambda) "[PASS]" else "[FAIL]", if (ok_better) "[PASS]" else "[FAIL]"))
 # use_iv=FALSE must PREDICT (it appended IV columns the fit never saw before the iv_children fix)
 ok_nofit <- length(fit_no$root$iv_children) == 0L && all(is.finite(P_no)) &&
             max(abs(rowSums(P_no) - 1)) < 1e-8
-cat(sprintf("PASS no-IV predicts (iv_children empty, rows sum to 1): %s\n", ok_nofit))
+cat(sprintf("%s no-IV predicts (iv_children empty, rows sum to 1)\n",
+            if (ok_nofit) "[PASS]" else "[FAIL]"))
 if (!all(ok_lambda, ok_better, ok_nofit)) { cat("TEST DONE\n"); quit(status = 1) }
 cat("TEST DONE\n")

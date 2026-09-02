@@ -14,13 +14,25 @@ FAST <- "fast" %in% args
 root <- if (basename(getwd()) == "tests") ".." else "."
 setwd(root)
 
+# NOTE: this list is hand-maintained, which is itself a hazard -- three feature tests
+# (re_mean_shift, joint_shrink, mundlak) sat outside it and never ran here. When adding a
+# test file, add it BELOW.
 files <- c(
   "tests/test_altspec_sampler.R",     # delta: recovery, multi-block, per_class, symmetric, scaling
   "tests/test_altspec_nested.R",      # blocks through nested_cut: wiring, IV path, interactions
   "tests/test_nested_cut.R",
   "tests/test_nested_cut_focal.R",
-  "tests/test_nested_iv.R"
+  "tests/test_nested_iv.R",
+  "tests/test_re_mean_shift.R",       # sum-to-zero RE identification (mu == population average)
+  "tests/test_joint_shrink.R",        # joint FE/RE gate kappa_v, incl. the seed-noise floor
+  "tests/test_mundlak.R"              # group-mean prior mean: gamma recovery + beta debiasing
 )
+.known <- files
+.found <- sort(list.files("tests", pattern = "^test_.*\\.R$", full.names = TRUE))
+.miss  <- setdiff(.found, .known)
+if (length(.miss))
+  cat(sprintf("  [warn] test file(s) present but NOT in the run list: %s\n",
+              paste(basename(.miss), collapse = ", ")))
 if (!FAST) files <- c(files, "codes/test_suite_lu_pixel.R", "codes/test_suite_ls_count.R")
 files <- files[file.exists(files)]
 

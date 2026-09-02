@@ -122,11 +122,11 @@ ok3 <- lam["macro_totals"] > 0 && lam["macro_totals"] <= 1 &&
        lo["macro_totals"] <= LAMBDA_TRUE && LAMBDA_TRUE <= hi["macro_totals"]
 ok5 <- lam["leaf_only"] > 0 && lam["leaf_only"] <= 1 &&
        lo["leaf_only"] <= LAMBDA_TRUE && LAMBDA_TRUE <= hi["leaf_only"]
-cat(sprintf("\nPASS (1) design map: %s\n", all(ok_cols, ok_val, ok_lo, ok_drop, ok_T)))
-cat(sprintf("PASS (2) IV~design R2 drops (%.2f -> %.2f): %s\n", r2["flat"], r2["macro_totals"], ok2))
-cat(sprintf("PASS (3) macro_totals lambda in (0,1], CI brackets truth (%.3f [%.3f,%.3f] vs true %.2f): %s\n",
-            lam["macro_totals"], lo["macro_totals"], hi["macro_totals"], LAMBDA_TRUE, ok3))
-cat(sprintf("PASS (4) leaves untouched / predict+AME replay routing: %s\n", all(ok_leaf, ok_ame)))
-cat(sprintf("PASS (5) leaf_only lambda in (0,1], CI brackets truth (%.3f [%.3f,%.3f]): %s\n",
-            lam["leaf_only"], lo["leaf_only"], hi["leaf_only"], ok5))
+cat(sprintf("\n%s (1) design map\n", if (all(ok_cols, ok_val, ok_lo, ok_drop, ok_T)) "[PASS]" else "[FAIL]"))
+cat(sprintf("%s (2) IV~design R2 drops (%.2f -> %.2f)\n", if (ok2) "[PASS]" else "[FAIL]", r2["flat"], r2["macro_totals"]))
+cat(sprintf("%s (3) macro_totals lambda in (0,1], CI brackets truth (%.3f [%.3f,%.3f] vs true %.2f)\n",
+            if (ok3) "[PASS]" else "[FAIL]", lam["macro_totals"], lo["macro_totals"], hi["macro_totals"], LAMBDA_TRUE))
+cat(sprintf("%s (4) leaves untouched / predict+AME replay routing\n", if (all(ok_leaf, ok_ame)) "[PASS]" else "[FAIL]"))
+cat(sprintf("%s (5) leaf_only lambda in (0,1], CI brackets truth (%.3f [%.3f,%.3f])\n",
+            if (ok5) "[PASS]" else "[FAIL]", lam["leaf_only"], lo["leaf_only"], hi["leaf_only"]))
 cat("TEST DONE\n")
