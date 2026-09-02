@@ -172,6 +172,41 @@ product is, so `tau` shrinks while `sigma` inflates until the RE space absorbs t
 (b[x1] 0.731 -> 0.256 against truth 0.700). Anchoring must be imposed INSIDE the draw; a post-hoc
 rescale breaks the prior's own cap. Default OFF.
 
+## 3a. Mundlak group-mean loadings `gamma` (codes/mundlak.R)
+
+    b_c ~ N(mu + gamma' xbar_c, sigma^2)
+
+Implemented in the equivalent EXPLICIT form, so no sampler change is needed: marginalising `b_c`
+turns the prior mean into design columns, `xbar_g(i)` for the random intercept and
+`x_iv * xbar_g(i,j)` for a random slope on v. `gamma` is then an ordinary FE coefficient (so the
+horseshoe can shrink it, if wanted). Build with `build_mundlak_design()`; rebuild a prediction
+design with `apply_mundlak_design()`, which reuses the stored centring/scaling — recomputing group
+means on a new sample is a silent train/test mismatch.
+
+**Identification.** `beta` comes from WITHIN-group variation, `(beta+gamma)` from BETWEEN. With
+zero within-variation the two are perfectly aliased; on this design the RE covariates are 60-93%
+within, so both are identified. Group means of a globally-constant column carry no between
+information and are refused.
+
+**Measured on the GLOBIOM pixel design** (8k px, 4 chains x 1200, chains pooled, 3 splits),
+`re_cols = "intercept"`, `mean_cols = CISI / log1p_Pop / log1p_GDP / GHM_HI`:
+
+| split | base | +Mundlak | diff | corr(xbar, RE) median | share > p=.05 crit |
+|---|---|---|---|---|---|
+| 1 | -3765.8 | -3762.4 | +3.4 | 0.234 -> 0.119 | 21% -> 0% |
+| 2 | -3740.0 | -3744.8 | -4.8 | 0.298 -> 0.196 | 35% -> 21% |
+| 3 | -3743.6 | -3745.5 | -1.9 | 0.243 -> 0.103 | 20% -> 0% |
+
+Held-out **-1.1 +/- 4.2 nats — a wash**. The FE-RE correlation it targets is roughly halved
+overall and eliminated in 2 of 3 splits. gamma magnitudes reproduce the motivating diagnostic
+independently: log1p_Pop 0.177 (it had the strongest correlation, 44% above crit), log1p_GDP
+0.098, CISI 0.039, GHM_HI 0.028.
+
+**So this is a BIAS / INTERPRETATION fix, not an accuracy or mixing fix.** Use it when you want
+`mu` to be the population-averaged effect given group composition and `beta` purged of
+between-country confounding — not to improve prediction. Split 2 shows it does not fully absorb
+the correlation every time (35% -> 21%).
+
 ## 3b. FE horseshoe: the lambda/tau scaling ridge (real, but largely cosmetic)
 
 `post_kappa_pooled` stores the SHRINKAGE FACTOR `kappa = 1/(1 + tau^2 lambda^2)`, not lambda.
