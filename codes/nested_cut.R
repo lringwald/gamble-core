@@ -590,7 +590,18 @@
 .ncut_sigma_iv <- function(iv_by_m, Q) {
   M <- length(iv_by_m); nr <- nrow(iv_by_m[[1]]); nc <- ncol(iv_by_m[[1]]); cn <- colnames(iv_by_m[[1]])
   Fm <- vapply(iv_by_m, as.vector, numeric(nr * nc))          # [(nr*nc) x M]
-  mu <- rowMeans(Fm); Fc <- Fm - mu; Q <- max(1L, min(Q, M - 1L))
+  mu <- rowMeans(Fm)
+  # M = 1 carries NO spread: Fc is identically zero, and the 1/sqrt(M-1) scaling below is 1/0.
+  # `Q <- max(1L, min(Q, M-1L))` forced Q = 1 regardless, so every perturbation field came out
+  # mu +/- sqrt(3)*NaN. The nest then received an all-NaN IV column and the sampler stopped with
+  # a generic "X contains NA/Inf" (field 1 clean, fields 2+ non-finite in every cell). With one
+  # imputation there is no IV uncertainty to carry, so the mean field IS the whole story and
+  # moments coincides with draws.
+  if (M < 2L) {
+    f <- matrix(mu, nr, nc); colnames(f) <- cn
+    return(list(fields = list(f), weights = 1))
+  }
+  Fc <- Fm - mu; Q <- max(1L, min(Q, M - 1L))
   ev <- eigen(crossprod(Fc), symmetric = TRUE)                # M x M gram (cheap)
   fields <- list(matrix(mu, nr, nc)); weights <- (1 - Q / 3)
   for (q in seq_len(Q)) {
@@ -611,6 +622,10 @@
 # of kurtosis ~ sqrt(24/M); default tols are ~2 SD at M~30 to avoid false fallbacks.)
 .ncut_iv_gaussianity <- function(iv_by_m, Q, skew_tol = 1.0, kurt_tol = 2.0) {
   M <- length(iv_by_m); nr <- nrow(iv_by_m[[1]]); nc <- ncol(iv_by_m[[1]])
+  # M = 1 has no spread to test. Say so explicitly rather than reaching the v < 1e-12 guard below
+  # and reporting gaussian = TRUE off all-zero scores; with the M<2 branch in .ncut_sigma_iv the
+  # two carriers coincide anyway, so either routing is correct.
+  if (M < 2L) return(list(gaussian = TRUE, max_skew = 0, max_kurt = 0, degenerate = TRUE))
   Fm <- vapply(iv_by_m, as.vector, numeric(nr * nc)); Fc <- Fm - rowMeans(Fm)
   Q <- max(1L, min(Q, M - 1L)); ev <- eigen(crossprod(Fc), symmetric = TRUE)
   sk <- ku <- numeric(Q)
@@ -876,6 +891,16 @@ nested_cut_store_status <- function(store_dir) {
     # with the focal/prev information silently DELETED rather than re-homed.
     .as_nest <- if (is.null(.inpn$alt_spec)) NULL else
       lapply(.inpn$alt_spec, function(b) list(Z = b$Z[keep, , drop = FALSE], coef = b$coef, scale = b$scale))
+    # Guard: a non-finite design at a NEST is almost always a non-finite INCLUSIVE VALUE from a
+    # child (IV = logsumexp of that child's utilities, so one extreme leaf draw overflows it). The
+    # sampler's generic "X contains NA/Inf" names neither the column nor the node.
+    .Xk <- Xnode[keep, , drop = FALSE]
+    if (!all(is.finite(.Xk))) {
+      .fin <- is.finite(.Xk); .bad <- which(!apply(.fin, 2, all))
+      stop(sprintf("[nested_cut] %s (field %d): non-finite design column(s): %s",
+                   path, j, paste(sprintf("%s [%d/%d cells]", colnames(.Xk)[.bad],
+                                          colSums(!.fin)[.bad], nrow(.Xk)), collapse = ", ")))
+    }
     res_j <- .ncut_fit_draws(Xnode[keep, , drop = FALSE], Yk, group_idx[keep], use_re, re_nd,
                              nb_j + (niter - nburn), nb_j, thin, draws_per_impute, init_state = warm, stream_disk = stream_disk,
                              chain_id = j, prog_label = sprintf("%s imp%d/%d", path, j, length(fit_fields)),

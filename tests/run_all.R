@@ -18,6 +18,7 @@ setwd(root)
 # (re_mean_shift, joint_shrink, mundlak) sat outside it and never ran here. When adding a
 # test file, add it BELOW.
 files <- c(
+  "tests/test_nested_cut_units.R",    # fast helper units (M=1 IV fields) -- runs first, fails fast
   "tests/test_altspec_sampler.R",     # delta: recovery, multi-block, per_class, symmetric, scaling
   "tests/test_altspec_nested.R",      # blocks through nested_cut: wiring, IV path, interactions
   "tests/test_nested_cut.R",
