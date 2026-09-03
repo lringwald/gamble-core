@@ -28,7 +28,12 @@ predict_shares <- function(fit, X, bart_cols, linear_cols, group_idx = NULL, gro
   # the LAST category; with any other baseline the BART columns were being placed in the wrong
   # slots. Take it from the fit when available.
   .bl <- fit$baseline
-  bart_meta <- list(symmetric = TRUE, p_all = J,
+  # `symmetric` selects the RECONSTRUCTION GAUGE: TRUE centres the per-category functions across
+  # categories (CLR, zero-sum), FALSE places the p baseline-relative ensembles and leaves the
+  # baseline column at 0. The two differ by a PER-ROW CONSTANT, so predicted probabilities are
+  # identical (verified to 3e-16) -- but f itself is NOT, so a PDP read off the wrong gauge is
+  # shifted. Take it from the fit rather than assuming.
+  bart_meta <- list(symmetric = isTRUE(fit$bart_symmetric), p_all = J,
                     pp = if (!is.null(.bl) && .bl >= 1 && .bl <= J) setdiff(seq_len(J), .bl) else seq_len(J - 1))
   has_re <- length(dim(fit$postb_total)) == 4L && !is.null(group_idx)
   if (has_re && is.null(group_levels)) stop("group_levels (appearance-order unique(group_idx)) required for RE prediction.")

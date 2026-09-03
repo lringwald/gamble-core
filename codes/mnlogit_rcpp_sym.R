@@ -4251,6 +4251,8 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
     posterior_store = if (save_posterior_to_disk) posterior_batch_files else NULL,
     bart_batch_size = if (save_bart_to_disk || save_posterior_to_disk) bart_batch_size else NULL,
     post_f_mean = if (use_bart) post_f_sum / nretain else NULL,
+    bart_symmetric = isTRUE(bart_symmetric),   # was recorded only in the DISK metadata; the
+                                               # reconstruction gauge depends on it
     post_f_sd = if (use_bart) sqrt(pmax(post_f_sum_sq / nretain - (post_f_sum / nretain)^2, 0)) else NULL,
     post_f = if (use_bart && store_f) post_f else NULL,
     bart_scaling = if (use_bart & !do_slim_trees) bart_scaling else NULL,
