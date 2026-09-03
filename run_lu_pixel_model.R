@@ -1478,6 +1478,30 @@ X_mat[!is.finite(X_mat)] <- 0
 # Inserted HERE (before linear_cols / horseshoe_idx_pixel are derived) so the new columns are
 # covered by both; they therefore sit in the horseshoe pool and gamma can be shrunk to zero,
 # which degrades gracefully back to plain RE for covariates whose group means carry nothing.
+# --- Coordinate covariates (DRIVER_ADD_COORDS) ----------------------------------------------
+# A smooth spatial surface: with BART these give the trees something to split space on, absorbing
+# residual spatial structure the named drivers miss. dat_pixel X/Y are EPSG:3035 (ETRS89-LAEA)
+# METRES, not degrees -- confirmed from their range (2.6-6.0e6 easting, 1.4-5.3e6 northing).
+#   DRIVER_COORD_TYPE=lonlat (default) reprojects to EPSG:4326 -> lon/lat degrees, interpretable.
+#   DRIVER_COORD_TYPE=laea keeps native metres -- equal-area, so distances are undistorted; for
+#   tree SPLITS the two are near-equivalent (both monotone in position), so this is a readability
+#   choice more than a modelling one. Scaled to ~unit variance either way so BART's split grid and
+#   the linear prior are not dominated by raw magnitude.
+if (isTRUE(as.logical(Sys.getenv("DRIVER_ADD_COORDS", "FALSE")))) {
+  .ct <- tolower(Sys.getenv("DRIVER_COORD_TYPE", "lonlat"))
+  .xy <- data.frame(x = dat_pixel$X, y = dat_pixel$Y)
+  if (identical(.ct, "lonlat")) {
+    if (!requireNamespace("sf", quietly = TRUE))
+      stop("DRIVER_COORD_TYPE=lonlat needs the sf package; use DRIVER_COORD_TYPE=laea instead.")
+    .pts <- sf::st_transform(sf::st_as_sf(.xy, coords = c("x","y"), crs = 3035), 4326)
+    .cc  <- sf::st_coordinates(.pts); .nm <- c("lon", "lat")
+  } else { .cc <- as.matrix(.xy); .nm <- c("coord_X", "coord_Y") }
+  .cc <- scale(.cc); colnames(.cc) <- .nm
+  X_mat <- cbind(X_mat, .cc)
+  cat(sprintf(">>> Coordinates ON (%s): +%s  [range %.2f..%.2f, %.2f..%.2f after scaling]\n",
+              .ct, paste(.nm, collapse=","), min(.cc[,1]), max(.cc[,1]), min(.cc[,2]), max(.cc[,2])))
+}
+
 MUNDLAK     <- isTRUE(as.logical(Sys.getenv("DRIVER_MUNDLAK", "FALSE")))
 mundlak_def <- NULL
 if (MUNDLAK && use_re) {
@@ -1559,7 +1583,31 @@ horseshoe_idx_pixel <- linear_cols[-1]
 bart_cols <- NULL
 if (isTRUE(use_bart)) {
   .icpt <- which(colnames(X_mat) == "intercept"); .focal <- grep("^focal_", colnames(X_mat))
-  bart_cols <- setdiff(seq_len(ncol(X_mat)), c(.icpt, .focal))
+  # DRIVER_BART_COLS selects WHICH covariates BART gets; everything else stays linear.
+  #   ""      (default) = every non-focal, non-intercept column  [previous behaviour, unchanged]
+  #   "topo"            = the terrain block (+ coordinates when DRIVER_ADD_COORDS), so the smooth
+  #                       spatial/terrain surface is non-parametric while socio/climate stay linear
+  #                       and interpretable -- the "linear spec + BART on topo" design.
+  #   "a,b,c"           = an explicit comma-separated column list (regex-free, exact names).
+  # focal LU-lags and the intercept ALWAYS stay linear: focal is autoregressive and must keep a
+  # coefficient, and BART carries its own centred intercept.
+  .bsel <- trimws(Sys.getenv("DRIVER_BART_COLS", ""))
+  bart_cols <- if (!nzchar(.bsel)) {
+    setdiff(seq_len(ncol(X_mat)), c(.icpt, .focal))
+  } else if (identical(tolower(.bsel), "topo")) {
+    .topo <- c("Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "lon", "lat", "coord_X", "coord_Y")
+    .hit  <- which(colnames(X_mat) %in% .topo)
+    if (!length(.hit)) stop("DRIVER_BART_COLS=topo but none of ", paste(.topo, collapse=", "), " are in the design.")
+    setdiff(.hit, c(.icpt, .focal))
+  } else {
+    .want <- trimws(strsplit(.bsel, ",")[[1]])
+    .miss <- setdiff(.want, colnames(X_mat))
+    if (length(.miss)) stop("DRIVER_BART_COLS names column(s) not in the design: ", paste(.miss, collapse=", "))
+    setdiff(which(colnames(X_mat) %in% .want), c(.icpt, .focal))
+  }
+  cat(sprintf(">>> BART covariates (%s): %d of %d -> %s\n",
+              if (nzchar(.bsel)) .bsel else "all non-focal", length(bart_cols), ncol(X_mat),
+              paste(head(colnames(X_mat)[bart_cols], 10), collapse=", ")))
   if (isTRUE(as.logical(Sys.getenv("DRIVER_BART_SCREEN", "TRUE")))) {
     .scr <- screen_bart_design(X_mat, bart_cols,
               min_pr_frac = as.numeric(Sys.getenv("DRIVER_BART_MIN_PR_FRAC", "0.005")))

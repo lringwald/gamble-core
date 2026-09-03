@@ -4614,6 +4614,16 @@ reconstruct_bart_f_mean <- function(tree_store, X_bart, bart_meta) {
                 function(cc) as.numeric(predict_slim_bart_cpp(X_bart, draw[[cc]])),
                 numeric(n))                                    # n x p ensemble predictions
     if (isTRUE(bart_meta$symmetric)) {
+      # The store holds ONE TREE PER NON-BASELINE CATEGORY (p = p_all - 1), so g is n x p while
+      # f_sum is n x p_all. Centring g directly gave "non-conformable arrays". Expand into the
+      # full width at pp first, then centre -- exactly the sampler's own expand_to_zs().
+      if (ncol(g) != p_all) {
+        full <- matrix(0, n, p_all)
+        pp_i <- bart_meta$pp %||% seq_len(p_all - 1L)
+        if (length(pp_i) != ncol(g))
+          stop(sprintf("reconstruct_bart_f_mean: %d tree column(s) but pp indexes %d.", ncol(g), length(pp_i)))
+        full[, pp_i] <- g; g <- full
+      }
       f <- sweep(g, 1, rowMeans(g), "-")                       # CLR: center per-category g (zero-sum)
     } else {
       f <- matrix(0, n, p_all); f[, bart_meta$pp] <- g         # baseline-coded

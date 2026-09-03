@@ -24,7 +24,12 @@ predict_shares <- function(fit, X, bart_cols, linear_cols, group_idx = NULL, gro
   # pooled covariates, so only the RE covariates inflate). k x J sd matrix reused below.
   Xl <- as.matrix(X[, linear_cols, drop = FALSE])
   Xb <- as.matrix(X[, bart_cols,  drop = FALSE])
-  bart_meta <- list(symmetric = TRUE, p_all = J, pp = seq_len(J - 1))
+  # pp = the NON-BASELINE category positions. `seq_len(J-1)` is only correct when the baseline is
+  # the LAST category; with any other baseline the BART columns were being placed in the wrong
+  # slots. Take it from the fit when available.
+  .bl <- fit$baseline
+  bart_meta <- list(symmetric = TRUE, p_all = J,
+                    pp = if (!is.null(.bl) && .bl >= 1 && .bl <= J) setdiff(seq_len(J), .bl) else seq_len(J - 1))
   has_re <- length(dim(fit$postb_total)) == 4L && !is.null(group_idx)
   if (has_re && is.null(group_levels)) stop("group_levels (appearance-order unique(group_idx)) required for RE prediction.")
   # broadcast fitted-category eta -> output categories via class_map, with -log(#siblings) to keep parent totals.

@@ -130,11 +130,21 @@ predict_gamble <- function(fit, X = NULL, group_idx = NULL, group_levels = NULL,
   # ---- 4. flat MNL ---------------------------------------------------------------------------
   if (is.null(fit$postb_total)) stop("predict_gamble: fit has no postb_total -- not a fitted MNL.")
   k <- dim(fit$postb_total)[1]
-  if (ncol(X) != k)
-    stop(sprintf("predict_gamble: X has %d columns, the fit has %d coefficients (%s). The design ",
-                 ncol(X), k, paste(head(fit$var_names %||% dimnames(fit$postb_total)[[1]], 3), collapse=", ")),
-         "must be the FITTED design -- see the reconstruction gotcha in docs/.")
+  # With BART, postb_total holds ONLY the linear block, so X legitimately has more columns than
+  # there are linear coefficients (the BART covariates carry no linear coefficient). Check the
+  # LINEAR selection against k, not the full width.
   if (is.null(linear_cols)) linear_cols <- seq_len(k)
+  if (length(linear_cols) != k)
+    stop(sprintf("predict_gamble: linear_cols selects %d column(s) but the fit has %d linear ",
+                 length(linear_cols), k),
+         sprintf("coefficient(s) (%s). ", paste(head(fit$var_names %||% dimnames(fit$postb_total)[[1]], 3), collapse=", ")),
+         "The design must be the FITTED design -- see the reconstruction gotcha in docs/.")
+  if (max(c(linear_cols, bart_cols)) > ncol(X))
+    stop(sprintf("predict_gamble: column index %d exceeds the %d columns supplied.",
+                 max(c(linear_cols, bart_cols)), ncol(X)))
+  if (!is.null(fit$tree_store) && length(fit$tree_store) && is.null(bart_cols))
+    stop("predict_gamble: this fit HAS BART trees but bart_cols is NULL -- the BART utility would ",
+         "be silently dropped. Pass bart_cols (the fitted bart_idx).")
   P <- predict_shares(fit, X, bart_cols = bart_cols, linear_cols = linear_cols,
                       group_idx = group_idx, group_levels = group_levels,
                       type = type, thin = thin, ...)
