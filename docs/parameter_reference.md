@@ -202,10 +202,25 @@ overall and eliminated in 2 of 3 splits. gamma magnitudes reproduce the motivati
 independently: log1p_Pop 0.177 (it had the strongest correlation, 44% above crit), log1p_GDP
 0.098, CISI 0.039, GHM_HI 0.028.
 
-**So this is a BIAS / INTERPRETATION fix, not an accuracy or mixing fix.** Use it when you want
+**Use `re_cols = c("intercept", <slope>)`, not intercept alone.** The table above tracked only the
+INTERCEPT row, which is too narrow: measured on both rows over 3 splits, intercept-only can
+DISPLACE the between-group correlation into the random slopes instead of removing it.
+
+| | intercept row | log1p_Pop row |
+|---|---|---|
+| split 1 base -> int -> int+slope | 0.249 -> **0.271** -> 0.105 | 0.340 -> **0.481** -> 0.182 |
+| split 2 | 0.285 -> 0.247 -> 0.152 | 0.164 -> 0.162 -> 0.133 |
+| split 3 | 0.243 -> 0.094 -> 0.091 | 0.286 -> 0.252 -> 0.232 |
+
+In split 1 intercept-only drove log1p_Pop's slope correlation from 43% to **72%** above the
+p=.05 threshold. Absorbing between-group structure at the intercept alone leaves the slopes free
+to pick it up. `intercept + log1p_Pop` reduced the correlation on BOTH rows in ALL three splits.
+Held-out: intercept +2.2 (sd 8.8), intercept+slope +4.0 (sd 7.2) — both a wash, slope marginally
+ahead. The production default is therefore `intercept,log1p_Pop`, filtered to columns present.
+
+**It remains a BIAS / INTERPRETATION fix, not an accuracy or mixing fix.** Use it when you want
 `mu` to be the population-averaged effect given group composition and `beta` purged of
-between-country confounding — not to improve prediction. Split 2 shows it does not fully absorb
-the correlation every time (35% -> 21%).
+between-country confounding — not to improve prediction.
 
 ## 3b. FE horseshoe: the lambda/tau scaling ridge (real, but largely cosmetic)
 

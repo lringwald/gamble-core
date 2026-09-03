@@ -1483,7 +1483,12 @@ mundlak_def <- NULL
 if (MUNDLAK && use_re) {
   source("codes/mundlak.R")
   .mdl_mc <- trimws(strsplit(Sys.getenv("DRIVER_MUNDLAK_COLS", "CISI,log1p_Pop,log1p_GDP,GHM_HI"), ",")[[1]])
-  .mdl_rc <- trimws(strsplit(Sys.getenv("DRIVER_MUNDLAK_RE",   "intercept"), ",")[[1]])
+  # DEFAULT INCLUDES THE SLOPE. Measured (3 splits): intercept-only can DISPLACE the between-group
+  # correlation into the random slopes rather than remove it -- in one split it drove log1p_Pop's
+  # slope correlation 0.340 -> 0.481 (43% -> 72% above the p=.05 threshold). intercept+slope
+  # reduced it on BOTH rows in ALL three splits. Names absent from X are filtered out below, so
+  # this degrades to "intercept" on a design without log1p_Pop.
+  .mdl_rc <- trimws(strsplit(Sys.getenv("DRIVER_MUNDLAK_RE", "intercept,log1p_Pop"), ",")[[1]])
   .mdl_mc <- intersect(.mdl_mc, colnames(X_mat))
   .mdl_rc <- .mdl_rc[.mdl_rc == "intercept" | .mdl_rc %in% colnames(X_mat)]
   if (!length(.mdl_mc) || !length(.mdl_rc)) {

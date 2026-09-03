@@ -94,7 +94,8 @@ if (isTRUE(as.logical(Sys.getenv("NCUT_MUNDLAK", "FALSE")))) {
     source("codes/mundlak.R")
     .mc <- intersect(trimws(strsplit(Sys.getenv("NCUT_MUNDLAK_COLS",
              "CISI,log1p_Pop,log1p_GDP,GHM_HI"), ",")[[1]]), colnames(X))
-    .rc <- trimws(strsplit(Sys.getenv("NCUT_MUNDLAK_RE", "intercept"), ",")[[1]])
+    # see run_lu_pixel_model.R: intercept-only can displace the correlation into the slopes
+    .rc <- trimws(strsplit(Sys.getenv("NCUT_MUNDLAK_RE", "intercept,log1p_Pop"), ",")[[1]])
     .rc <- .rc[.rc == "intercept" | .rc %in% colnames(X)]
     if (!length(.mc) || !length(.rc)) {
       warning("NCUT_MUNDLAK set but no usable NCUT_MUNDLAK_COLS / NCUT_MUNDLAK_RE in X; skipping.")
