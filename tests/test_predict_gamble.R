@@ -3,6 +3,7 @@ suppressMessages({library(Rcpp); library(RcppArmadillo)})
 source("codes/mnl_aux_func.R"); source("codes/mnlogit_rcpp_sym.R")
 source("codes/prior_model_predict.R"); source("codes/nested_cut.R")
 source("codes/mundlak.R"); source("codes/predict_gamble.R")
+if (!exists("compute_focal_coord")) source("experiments/focal/compute_focal_coord.R")
 np <- 0L; nf <- 0L
 ok <- function(c_, m) { if (isTRUE(c_)) { np <<- np+1L; cat(sprintf("[PASS] %s\n", m)) }
                         else { nf <<- nf+1L; cat(sprintf("[FAIL] %s\n", m)) } }
@@ -66,6 +67,33 @@ r5 <- recover_mnlogit_posterior(dd)
 ok(!is.null(r5$baseline), "disk: baseline recovered")
 Pr <- predict_gamble(r5, X)
 ok(max(abs(rowSums(Pr) - 1)) < 1e-10, "disk: recovered fit predicts")
+
+# ---- RECIPE PATH: focal/lags rebuilt from Y_prev, no hand-written builder ----
+suppressMessages(library(data.table))
+set.seed(5); ng <- 18; gr <- expand.grid(X = 1:ng, Y = 1:ng)
+nr <- nrow(gr); lu <- c("A","B","C")
+S0 <- matrix(runif(nr*3), nr, 3); S0 <- S0/rowSums(S0); colnames(S0) <- lu
+d0 <- data.table(X = gr$X, Y = gr$Y, out_year = 2000L, Grouping_Key = rep(c("g1","g2"), length.out = nr),
+                 z = rnorm(nr))
+d0[, (lu) := as.data.table(S0)]
+br <- build_recipe(d0, feature_cols = "z", lu_classes = lu, outcome_classes = lu)
+Yr <- t(apply(br$X, 1, function(r) rmultinom(1, 1, c(.4,.35,.25))))
+colnames(Yr) <- lu
+fr <- mnlogit_rcpp_sym(X = br$X, Y = Yr, intercept = FALSE, baseline = 3L, symmetric = TRUE,
+                       niter = 300, nburn = 120, thin = 2L, calc_loo = FALSE)
+Pa <- predict_gamble(fr, raw = d0, recipe = br$recipe)                       # focal from d0's own state
+S1 <- matrix(runif(nr*3), nr, 3); S1 <- S1/rowSums(S1); colnames(S1) <- lu
+Pb <- predict_gamble(fr, raw = d0, recipe = br$recipe, Y_prev = S1)          # focal from a NEW state
+ok(max(abs(rowSums(Pa) - 1)) < 1e-10 && max(abs(rowSums(Pb) - 1)) < 1e-10,
+   "recipe path: rows sum to 1 with and without Y_prev")
+ok(mean(abs(Pa - Pb)) > 1e-4,
+   "recipe path: a DIFFERENT Y_prev changes predictions (focal genuinely recomputed)")
+Pc <- predict_gamble(fr, raw = d0, recipe = br$recipe, Y_prev = S0)
+ok(max(abs(Pc - Pa)) < 1e-12, "recipe path: Y_prev == the raw state reproduces the no-Y_prev design")
+e3 <- try(predict_gamble(fr, X = br$X, Y_prev = S1), silent = TRUE)
+ok(inherits(e3, "try-error"), "bare X + Y_prev without recipe/lag_builder errors")
+e4 <- try(predict_gamble(fr, raw = d0, recipe = br$recipe, Y_prev = S1[, 1:2, drop = FALSE]), silent = TRUE)
+ok(inherits(e4, "try-error"), "Y_prev with wrong class count errors")
 
 # ---- DISPATCH: nested/count route to their own predictors (checked without a full fit) ----
 # The nested paths are exercised end-to-end elsewhere (predict_nested_cut on a real saved fit

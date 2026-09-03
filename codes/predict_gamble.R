@@ -2,7 +2,7 @@
 # predict_gamble() — ONE entry point from a fitted model to predicted shares.
 #
 #   P <- predict_gamble(fit, X, group_idx = g)                    # design already assembled
-#   P <- predict_gamble(fit, X, group_idx = g, Y_prev = Y0, ...)  # + lag/focal features
+#   P <- predict_gamble(fit, raw = d, recipe = rc, Y_prev = Y0)   # focal/lags rebuilt from Y_prev
 #
 # Dispatches on what `fit` IS, so the caller does not have to know which sampler produced it:
 #
@@ -57,25 +57,53 @@
 
 `%||%` <- function(a, b) if (!is.null(a)) a else b
 
-predict_gamble <- function(fit, X, group_idx = NULL, group_levels = NULL,
+predict_gamble <- function(fit, X = NULL, group_idx = NULL, group_levels = NULL,
+                           raw = NULL, recipe = NULL,
                            Y_prev = NULL, lag_builder = NULL,
                            alt_spec_Z = NULL, mundlak_def = NULL,
                            bart_cols = NULL, linear_cols = NULL,
                            type = c("mean", "predictive"), thin = 1L,
                            D = 200L, offset = NULL, ...) {
   type <- match.arg(type)
-  X <- as.matrix(X)
 
-  # ---- 1. lag / focal features from the previous state --------------------------------------
-  # Temporal and spatial lags are DESIGN, not model: they must be built the same way they were at
-  # fit time. Supply `lag_builder(X, Y_prev, ...)` (e.g. a closure over apply_recipe / the focal
-  # emitter) rather than having this function guess a naming convention.
-  if (!is.null(Y_prev)) {
-    if (is.null(lag_builder))
-      stop("predict_gamble: Y_prev supplied but no lag_builder. Lag/focal columns must be built ",
-           "exactly as at fit time -- pass lag_builder = function(X, Y_prev) <returns X with the ",
-           "lag columns>, e.g. wrapping apply_recipe().")
-    X <- as.matrix(lag_builder(X, Y_prev))
+  # A `prior_model` bundle carries its own recipe -- unwrap so callers can pass either.
+  if (is.null(recipe) && !is.null(fit$recipe) && !is.null(fit$fit)) { recipe <- fit$recipe; fit <- fit$fit }
+
+  # ---- 1. build the design, recomputing lag/focal from the previous state --------------------
+  # The RECIPE is the carrier for how lags were built: lu_classes + coord + res + slice define the
+  # spatial neighbourhood, transforms the derived columns, col_order the exact training order. So
+  # with a recipe nothing has to be inferred -- inject Y_prev as the LU state and re-run it, which
+  # is what project_prior() does each step.
+  if (!is.null(recipe)) {
+    if (is.null(raw)) stop("predict_gamble: `recipe` given but `raw` is NULL -- the recipe rebuilds ",
+                           "the design from raw data (it needs coords and the LU state).")
+    d <- data.table::as.data.table(data.table::copy(raw))
+    if (!is.null(Y_prev)) {
+      lu <- recipe$lu_classes
+      Yp <- as.matrix(Y_prev); Yp <- Yp / pmax(rowSums(Yp), 1e-12)      # shares, as at fit time
+      if (nrow(Yp) != nrow(d)) stop(sprintf("predict_gamble: Y_prev has %d rows, raw has %d.", nrow(Yp), nrow(d)))
+      if (ncol(Yp) != length(lu)) stop(sprintf("predict_gamble: Y_prev has %d columns, the recipe has %d LU classes (%s).",
+                                               ncol(Yp), length(lu), paste(head(lu, 3), collapse=", ")))
+      d[, (lu) := data.table::as.data.table(Yp)]                        # t-1 state -> focal source
+    }
+    a <- apply_recipe(recipe, d)
+    X <- a$X
+    if (is.null(group_idx))    group_idx    <- a$group_idx
+    if (is.null(group_levels)) group_levels <- recipe$group_levels_appear
+  } else {
+    if (is.null(X)) stop("predict_gamble: supply either `X`, or `raw` + `recipe`.")
+    X <- as.matrix(X)
+    # No recipe: a bare fit does NOT record the focal radius/kernel/coords or the transform
+    # pipeline, so those columns cannot be reconstructed from the fit alone. Take an explicit
+    # builder rather than guess a naming convention.
+    if (!is.null(Y_prev)) {
+      if (is.null(lag_builder))
+        stop("predict_gamble: Y_prev supplied with neither a `recipe` nor a `lag_builder`. Pass ",
+             "recipe = <the fit's recipe> together with raw = <data>, which rebuilds focal/lags ",
+             "exactly as at fit time; or lag_builder = function(X, Y_prev) for a design assembled ",
+             "outside build_recipe().")
+      X <- as.matrix(lag_builder(X, Y_prev))
+    }
   }
 
   # ---- 2. Mundlak group-mean columns ---------------------------------------------------------
