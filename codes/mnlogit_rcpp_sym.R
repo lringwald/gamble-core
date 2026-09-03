@@ -1892,6 +1892,10 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
         cov_names = if (!is.null(cov_names_save)) cov_names_save else paste0("V", 1:k),
         cat_names = if (!is.null(colnames(Y))) colnames(Y) else paste0("C", 1:p),
         baseline_name = if (!is.null(colnames(Y))) colnames(Y)[baseline] else "Base",
+        baseline = baseline,          # the INDEX; recovery previously returned neither
+        alt_spec = if (use_alt_spec)  # enough to rebuild Z at predict time
+          lapply(alt_blocks, function(b) list(coef = b$coef, z_scale = b$z_scale,
+                                              names = colnames(b$Z))) else NULL,
         k = k,
         p = p,
         use_re = use_re,
@@ -3940,6 +3944,9 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
         # Construct the whole state sample
         state_sample <- list(
           iter = iter,
+          # delta MUST ride along: without it a streamed alt-spec fit recovers as a linear-only
+          # model and silently drops the conditional-logit term from every prediction.
+          delta = if (use_alt_spec) curr_delta else NULL,
           beta = if (use_re) curr_beta_c_full else curr_beta_full,
           mu = if (use_re) mu_pooled_full else curr_beta_full,
           sigma_re = if (use_re) sigma_beta_pooled_full else NULL,
@@ -4342,6 +4349,7 @@ recover_mnlogit_posterior <- function(path_or_files, chain_id = NULL) {
   has_loo <- !is.null(s1$log_lik_pw)
   has_hs <- !is.null(s1$horseshoe)
   has_bart <- !is.null(s1$bart_trees)
+  has_delta <- !is.null(s1$delta)
 
   # 3. Restore metadata to determine symmetric mode and categories
   base_dir <- if (dir.exists(path_or_files[1])) path_or_files[1] else dirname(path_or_files[1])
@@ -4393,6 +4401,7 @@ recover_mnlogit_posterior <- function(path_or_files, chain_id = NULL) {
   if (has_sigma_re) res_list$post_sigma_re <- matrix(0, k * p_all, nretain)
   if (has_loo) res_list$post_log_lik_pointwise <- matrix(0, nretain, length(s1$log_lik_pw))
   if (has_bart) res_list$tree_store <- vector("list", nretain)
+  if (has_delta) res_list$post_delta <- matrix(0, length(s1$delta), nretain)
 
   if (has_hs) {
     k_hs <- dim(s1$horseshoe$lambda2)[1] %||% length(s1$horseshoe$lambda2)
@@ -4447,6 +4456,7 @@ recover_mnlogit_posterior <- function(path_or_files, chain_id = NULL) {
     if (has_sigma_re && !symmetric_mode) res_list$post_sigma_re[, s] <- as.vector(samp$sigma_re)
     if (has_loo) res_list$post_log_lik_pointwise[s, ] <- samp$log_lik_pw
     if (has_bart) res_list$tree_store[[s]] <- samp$bart_trees
+    if (has_delta) res_list$post_delta[, s] <- samp$delta
 
     if (has_hs) {
       k_hs <- dim(samp$mu)[1]
@@ -4500,6 +4510,11 @@ recover_mnlogit_posterior <- function(path_or_files, chain_id = NULL) {
   res_list$postb <- res_list$postb_total
   res_list$var_names <- cov_names
   res_list$cat_names <- cat_names
+  # `baseline` was already DERIVED above from meta$baseline_name but never returned, so a
+  # recovered fit could not be scored on the baseline-coded path. `alt_spec` carries the block
+  # coef/scale metadata needed to rebuild Z at predict time (post_delta alone is not enough).
+  res_list$baseline <- baseline
+  if (!is.null(meta) && !is.null(meta$alt_spec)) res_list$alt_spec_meta <- meta$alt_spec
 
   # 6. Apply back-transformation ONLY if the on-disk batches are still in scaled space.
   # The per-draw disk-save loop already back-transforms every batch to physical scale

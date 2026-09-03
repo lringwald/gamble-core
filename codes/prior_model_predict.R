@@ -35,7 +35,11 @@ predict_shares <- function(fit, X, bart_cols, linear_cols, group_idx = NULL, gro
 
   if (type == "mean") {
     f <- reconstruct_bart_f_mean(fit$tree_store, Xb, bart_meta)          # n x J (posterior-mean BART f)
-    eta <- f
+    # A LINEAR-ONLY fit has no tree_store, so reconstruct_bart_f_mean returns NULL and every
+    # downstream `eta + ...` collapsed to numeric(0) -- softmax then failed with an opaque
+    # "dim(X) must have a positive length". use_bart = FALSE is the PRODUCTION default, so this
+    # path is the common one, not an edge case. Start from an explicit zero utility instead.
+    eta <- if (is.null(f)) matrix(0, nrow(X), J) else f
     if (has_re) {
       B     <- apply(fit$postb_total, c(1, 2, 3), mean)                  # k x J x G
       Bpool <- apply(fit$postb_pooled, c(1, 2), mean)                    # k x J
@@ -66,13 +70,16 @@ predict_shares <- function(fit, X, bart_cols, linear_cols, group_idx = NULL, gro
   }
 
   # ---- posterior-predictive: average softmax over (thinned) draws ----
-  nd <- length(fit$tree_store); ds <- seq(1L, nd, by = thin); Pbar <- matrix(0, nrow(X), J)
+  has_bart <- !is.null(fit$tree_store) && length(fit$tree_store) > 0L
+  nd <- if (has_bart) length(fit$tree_store) else dim(fit$postb_pooled)[3]
+  ds <- seq(1L, nd, by = thin); Pbar <- matrix(0, nrow(X), J)
   for (d in ds) {
-    g_ens <- vapply(seq_along(fit$tree_store[[d]]),
-                    function(cc) as.numeric(predict_slim_bart_cpp(Xb, fit$tree_store[[d]][[cc]])),
-                    numeric(nrow(X)))
-    fd <- sweep(g_ens, 1, rowMeans(g_ens), "-")                          # CLR centering (symmetric)
-    eta <- fd
+    eta <- if (!has_bart) matrix(0, nrow(X), J) else {
+      g_ens <- vapply(seq_along(fit$tree_store[[d]]),
+                      function(cc) as.numeric(predict_slim_bart_cpp(Xb, fit$tree_store[[d]][[cc]])),
+                      numeric(nrow(X)))
+      sweep(g_ens, 1, rowMeans(g_ens), "-")                              # CLR centering (symmetric)
+    }
     if (has_re) {
       for (g in unique(group_idx)) {
         r <- which(group_idx == g); key <- match(g, group_levels)
