@@ -166,6 +166,18 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
                                   bart_base = 0.95,
                                   bart_power = 2.0,
                                   bart_k = 2.0,                # leaf-prior shrinkage (dbarts default 2; larger = tighter f, tames near-separation tails)
+                                  # PER-CLASS leaf shrinkage. dbarts rescales the response on every
+                                  # setResponse, so the leaf prior is 0.5/(k*sqrt(m)) RELATIVE TO THE
+                                  # WORKING-RESPONSE RANGE -- and Polya-Gamma standardises that range
+                                  # across classes (measured: 31.4-74.9, only 2.4x spread over 26
+                                  # categories). Every class therefore gets the same prior latitude
+                                  # while signal-to-noise varies with prevalence, so a rare class
+                                  # fills that latitude with noise (measured sd(f) 3.56 for a class
+                                  # seen in 0.08% of pixels). k_j = bart_k * sqrt(p_max / p_j) tightens
+                                  # rare classes and leaves the most common one at exactly bart_k.
+                                  bart_k_prevalence = FALSE,
+                                  bart_k_prev_cap = 10,        # max multiple of bart_k, so a near-empty
+                                                               # class is silenced rather than divergent
                                   bart_symmetric = FALSE,
                                   re_cor_threshold = 0.85,
                                   re_cor_min_groups = 0.5,
@@ -1772,6 +1784,18 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
       n_ens <- p_all
     }
 
+    # per-ensemble leaf shrinkage from class prevalence (weighted, as the sampler sees it)
+    .prev <- colSums(Y * y_weight); .prev <- .prev / sum(.prev)
+    .k_ens <- rep(bart_k, n_ens)
+    if (isTRUE(bart_k_prevalence)) {
+      .cat_of <- if (bart_symmetric) seq_len(n_ens) else pp        # ensemble -> category
+      .pj <- pmax(.prev[.cat_of], 1e-12)
+      .mult <- pmin(sqrt(max(.prev) / .pj), max(1, bart_k_prev_cap))
+      .k_ens <- bart_k * .mult
+      cat(sprintf("BART per-class leaf shrinkage: k in [%.2f, %.2f] (base %.2f, cap %gx)\n",
+                  min(.k_ens), max(.k_ens), bart_k, bart_k_prev_cap))
+    }
+
     for (ic in 1:n_ens) {
       ctrl <- dbarts::dbartsControl(
         n.samples = 1, n.burn = 0,
@@ -1790,7 +1814,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
         X_bart_final, init_resp,
         control = ctrl, sigma = 1.0,
         tree.prior = dbarts:::cgm(base = bart_base, power = bart_power),
-        node.prior = dbarts:::normal(bart_k),
+        node.prior = dbarts:::normal(.k_ens[ic]),
         resid.prior = dbarts:::chisq(df = 1e10, quant = 0.5)
       )
     }
