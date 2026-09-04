@@ -1762,6 +1762,16 @@ sampler_extra <- switch(SAMPLER,
   mnlogit_rcpp = list(use_horseshoe = TRUE, equation_specific_hs = TRUE, support_prior_strength = 2, re_asis = FALSE), # RE-scale ASIS implemented in core.cpp but DISABLED: validates on the symmetric core (cor 0.994) but the baseline-coded base core shows a residual bias (cor 0.87) not yet root-caused. Production uses mnlogit_rcpp_sym.
   mnlogit_rcpp_sym = list(
     bart_symmetric = TRUE, bart_base = 0.90, bart_power = 3.0, bart_k = 2.0,   # validated BART: symmetric (CLR) + tight depth prior (surface cor 0.74 vs 0.56); ignored when use_bart=FALSE
+    # PER-CLASS leaf shrinkage k_j = bart_k * sqrt(p_max/p_j). dbarts rescales the response every
+    # setResponse, so the leaf prior is relative to the WORKING-RESPONSE RANGE -- and Polya-Gamma
+    # standardises that range across classes (measured 31.4-74.9 over 26 ensembles). Every class
+    # therefore gets the same prior latitude while signal-to-noise varies with prevalence, so rare
+    # classes fill it with noise. Measured held-out on 27 GLOBIOM classes, WITH bart_symmetric,
+    # against a linear-topography arm: total +38.4 -> +75.4, rare classes -51.6 -> -9.0, common
+    # +90.0 -> +84.4. The two fixes are complementary: symmetric alone helps only the common
+    # classes, k~prev alone only the rare ones. DRIVER_BART_K_PREV=FALSE restores flat k.
+    bart_k_prevalence = isTRUE(as.logical(Sys.getenv("DRIVER_BART_K_PREV", "TRUE"))),
+    bart_k_prev_cap   = as.numeric(Sys.getenv("DRIVER_BART_K_PREV_CAP", "10")),
     store_bart_trees = TRUE, do_slim_trees = TRUE,                              # calibrated slim trees -> out-of-sample prediction via reconstruct_bart_f_mean
     use_horseshoe = TRUE, equation_specific_hs = FALSE, symmetric_hs = TRUE,   # HS ON 2026-08-13:
     # +14.2 (Forests) / +15.5 (Pasture) held-out with the RE slab estimated. estimate_c2 stays FALSE
