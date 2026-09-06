@@ -3971,6 +3971,11 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
           # delta MUST ride along: without it a streamed alt-spec fit recovers as a linear-only
           # model and silently drops the conditional-logit term from every prediction.
           delta = if (use_alt_spec) curr_delta else NULL,
+          # scalar hyperparameters: cheap to carry, and without them a streamed run cannot be
+          # diagnosed on the blocks that actually mix worst (the RE slab and the shrinkage gates)
+          slab_c2 = if (isTRUE(estimate_slab_c2)) collapse_slab_c2 else NULL,
+          re_tau  = if (isTRUE(use_re) && isTRUE(re_hs_global)) re_tau_cur else NULL,
+          kappa_v = if (joint_shrink_on) kappa_v else NULL,
           beta = if (use_re) curr_beta_c_full else curr_beta_full,
           mu = if (use_re) mu_pooled_full else curr_beta_full,
           sigma_re = if (use_re) sigma_beta_pooled_full else NULL,
@@ -4376,6 +4381,7 @@ recover_mnlogit_posterior <- function(path_or_files, chain_id = NULL) {
   has_hs <- !is.null(s1$horseshoe)
   has_bart <- !is.null(s1$bart_trees)
   has_delta <- !is.null(s1$delta)
+  has_slab  <- !is.null(s1$slab_c2); has_retau <- !is.null(s1$re_tau); has_kapv <- !is.null(s1$kappa_v)
 
   # 3. Restore metadata to determine symmetric mode and categories
   base_dir <- if (dir.exists(path_or_files[1])) path_or_files[1] else dirname(path_or_files[1])
@@ -4428,6 +4434,9 @@ recover_mnlogit_posterior <- function(path_or_files, chain_id = NULL) {
   if (has_loo) res_list$post_log_lik_pointwise <- matrix(0, nretain, length(s1$log_lik_pw))
   if (has_bart) res_list$tree_store <- vector("list", nretain)
   if (has_delta) res_list$post_delta <- matrix(0, length(s1$delta), nretain)
+  if (has_slab)  res_list$post_slab_c2 <- numeric(nretain)
+  if (has_retau) res_list$post_re_tau  <- numeric(nretain)
+  if (has_kapv)  res_list$post_kappa   <- matrix(0, length(s1$kappa_v), nretain)
 
   if (has_hs) {
     k_hs <- dim(s1$horseshoe$lambda2)[1] %||% length(s1$horseshoe$lambda2)
@@ -4483,6 +4492,9 @@ recover_mnlogit_posterior <- function(path_or_files, chain_id = NULL) {
     if (has_loo) res_list$post_log_lik_pointwise[s, ] <- samp$log_lik_pw
     if (has_bart) res_list$tree_store[[s]] <- samp$bart_trees
     if (has_delta) res_list$post_delta[, s] <- samp$delta
+    if (has_slab)  res_list$post_slab_c2[s] <- samp$slab_c2
+    if (has_retau) res_list$post_re_tau[s]  <- samp$re_tau
+    if (has_kapv)  res_list$post_kappa[, s] <- samp$kappa_v
 
     if (has_hs) {
       k_hs <- dim(samp$mu)[1]
@@ -4609,6 +4621,10 @@ recover_mnlogit_posterior <- function(path_or_files, chain_id = NULL) {
 
   # Surface BART reconstruction metadata so f = C g can be rebuilt on recovery / downstream
   if (!is.null(meta) && isTRUE(meta$use_bart)) {
+    # ALSO surface the flat field. An in-memory fit carries $bart_symmetric while recovery
+    # previously carried only $bart$symmetric, so a consumer reading the flat name silently got
+    # NULL -> FALSE -> the baseline-coded reconstruction branch -> "f[, pp] <- g" width crash.
+    res_list$bart_symmetric <- isTRUE(meta$bart_symmetric)
     res_list$bart <- list(
       symmetric = isTRUE(meta$bart_symmetric),
       bart_idx  = meta$bart_idx,

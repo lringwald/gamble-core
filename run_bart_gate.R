@@ -28,6 +28,7 @@
 # =============================================================================
 Sys.setenv(OMP_NUM_THREADS = 1, VECLIB_MAXIMUM_THREADS = 1, OPENBLAS_NUM_THREADS = 1)
 t_start <- Sys.time()
+`%||%` <- function(a,b) if (!is.null(a)) a else b
 suppressMessages({library(Rcpp); library(RcppArmadillo)})
 
 NITER <- as.integer(Sys.getenv("BG_NITER","8000")); NBURN <- as.integer(Sys.getenv("BG_NBURN","2000"))
@@ -82,9 +83,14 @@ cat(sprintf("  %d sweeps (burn %d, thin %d) x %d chain(s) per arm\n", NITER, NBU
 cat(sprintf("  arms: %s | out: %s\n", paste(ARMS, collapse=", "), OUT))
 cat(sprintf("  ROUGH ETA for both arms: %.1f h (started %s)\n\n", eta_h, format(t_start, "%H:%M")))
 
-fit_arm <- function(use_b) {
-  set.seed(99)
-  mnlogit_rcpp_sym(
+fit_arm <- function(use_b, chain_id = 1L, dpath = NULL) {
+  set.seed(99 + chain_id)          # BG_CHAINS was read and PRINTED but never used, so every run
+  mnlogit_rcpp_sym(                # was single-chain regardless -- and no Rhat was possible.
+    chain_id = chain_id,
+    # Stream the FULL posterior rather than a curated summary: any diagnostic can then be computed
+    # later without refitting, and it reuses the tested recover_mnlogit_posterior() path instead of
+    # a bespoke extraction that might quietly omit a block. ~0.3 GB per chain at these settings.
+    save_posterior_to_disk = !is.null(dpath), disk_path = dpath,
     X = X[tr,], Y = Y[tr,], intercept = FALSE, baseline = bl,
     symmetric = TRUE, symmetric_hs = TRUE,
     niter = NITER, nburn = NBURN, thin = as.integer(THIN), y_weight = w[tr],
@@ -109,7 +115,9 @@ score <- function(f, use_b) {
   Xl <- X[te, lc, drop=FALSE]
   U <- t(vapply(rows, function(i) as.numeric(Xl[i,] %*% B[,,gi[i]]), numeric(J)))
   if (use_b) {
-    bm <- list(symmetric = isTRUE(f$bart_symmetric), p_all = J, pp = setdiff(seq_len(J), f$baseline))
+    .sym <- if (!is.null(f$bart_symmetric)) f$bart_symmetric else f$bart$symmetric
+    bm <- list(symmetric = isTRUE(.sym), p_all = J,
+               pp = f$bart$pp %||% setdiff(seq_len(J), f$baseline))
     ts <- f$tree_store[seq(1, length(f$tree_store), by = max(1, length(f$tree_store) %/% 60))]
     U <- U + reconstruct_bart_f_mean(ts, X[te,,drop=FALSE][rows, tcol, drop=FALSE], bm)
   }
@@ -120,11 +128,18 @@ for (nm in ARMS) {
   fp <- file.path(OUT, sprintf("arm_%s.rds", nm))
   if (file.exists(fp)) { cat(sprintf(">>> %-6s already present, skipping (delete %s to refit)\n", nm, fp)); next }
   ub <- identical(nm, "bart"); t0 <- Sys.time()
-  cat(sprintf(">>> %-6s fitting...\n", nm)); flush.console()
-  f <- fit_arm(ub); sc <- score(f, ub)
+  dp <- file.path(OUT, sprintf("posterior_%s", nm)); dir.create(dp, recursive=TRUE, showWarnings=FALSE)
+  cat(sprintf(">>> %-6s fitting (%d chain%s), posterior -> %s\n", nm, NCH, if (NCH>1) "s" else "", dp)); flush.console()
+  for (ci in seq_len(NCH)) invisible(fit_arm(ub, ci, dp))
+  # streamed runs return no postb_total in RAM -- read chain 1 back for scoring, which also
+  # exercises the recovery path the later diagnostics will use
+  f <- recover_mnlogit_posterior(dp, chain_id = 1L); sc <- score(f, ub)
+  # Per-chain posterior traces for EVERY structural block, so convergence can be checked without
+  # refitting. Full fit objects are far too large to keep at this size; these are the summaries
+  # each block is actually judged on.
   saveRDS(list(P = sc$P, rows = sc$rows, arm = nm, minutes = as.numeric(difftime(Sys.time(), t0, units="mins")),
-               sd_f = if (ub) sd(as.vector(f$post_f_mean)) else NA_real_,
-               niter = NITER, nburn = NBURN, thin = THIN, cats = cats, te = te), fp)
+               niter = NITER, nburn = NBURN, thin = THIN, nchains = NCH, cats = cats, te = te,
+               posterior_dir = dp), fp)
   cat(sprintf(">>> %-6s done in %.1f h -> %s\n", nm, as.numeric(difftime(Sys.time(), t0, units="hours")), fp))
   rm(f); gc()
 }

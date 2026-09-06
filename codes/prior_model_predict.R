@@ -33,7 +33,8 @@ predict_shares <- function(fit, X, bart_cols, linear_cols, group_idx = NULL, gro
   # baseline column at 0. The two differ by a PER-ROW CONSTANT, so predicted probabilities are
   # identical (verified to 3e-16) -- but f itself is NOT, so a PDP read off the wrong gauge is
   # shifted. Take it from the fit rather than assuming.
-  bart_meta <- list(symmetric = isTRUE(fit$bart_symmetric), p_all = J,
+  .sym <- if (!is.null(fit$bart_symmetric)) fit$bart_symmetric else fit$bart$symmetric
+  bart_meta <- list(symmetric = isTRUE(.sym), p_all = J,
                     pp = if (!is.null(.bl) && .bl >= 1 && .bl <= J) setdiff(seq_len(J), .bl) else seq_len(J - 1))
   has_re <- length(dim(fit$postb_total)) == 4L && !is.null(group_idx)
   if (has_re && is.null(group_levels)) stop("group_levels (appearance-order unique(group_idx)) required for RE prediction.")
