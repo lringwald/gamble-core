@@ -17,7 +17,8 @@
 #   BG_THIN       8   storage thinning      BG_CHAINS   1   chains per arm
 #   BG_NPIX       0   0 = all 64,178        BG_TESTFRAC 0.2 held-out fraction
 #   BG_SPLIT random   random | country      BG_ARMS  linear,bart
-#   BG_OUT  output/bart_gate                BG_INPUT output/pixel_model_inputs_GLOBIOM_init2000.rds
+#   BG_OUT  output/bart_gate_<BRANCH>_<date>_<HHMM>   (fresh stamp each run; pass it back to RESUME)
+#   BG_INPUT output/pixel_model_inputs_GLOBIOM_init2000.rds
 #   BG_CORES ncores-2  chains fitted in parallel (SUBLINEAR: bandwidth-bound, ~3x from 4 workers)
 #
 # RUNTIME, measured at 20k pixels x 1000 sweeps (31.5 min linear, 42.6 min BART, 1 chain):
@@ -37,8 +38,16 @@ THIN  <- as.integer(Sys.getenv("BG_THIN","8"));     NCH   <- as.integer(Sys.gete
 NPIX  <- as.integer(Sys.getenv("BG_NPIX","0"));     TESTF <- as.numeric(Sys.getenv("BG_TESTFRAC","0.2"))
 SPLIT <- Sys.getenv("BG_SPLIT","random");           ARMS  <- trimws(strsplit(Sys.getenv("BG_ARMS","linear,bart"),",")[[1]])
 NCORES<- as.integer(Sys.getenv("BG_CORES", as.character(max(1L, parallel::detectCores() - 2L))))
-OUT   <- Sys.getenv("BG_OUT","output/bart_gate")
 INPUT <- Sys.getenv("BG_INPUT","output/pixel_model_inputs_GLOBIOM_init2000.rds")
+# Versioned run folder, following the repo's existing stamp convention
+# (cf. output/nested_cut_GLOBIOM_2026-09-03_0558.rds): <name>_<BRANCH>_<date>_<HHMM>.
+# A fresh stamp each run means a 48 h comparison never silently overwrites an earlier one --
+# but it also means a RERUN cannot resume, since it would land in a new folder. Pass BG_OUT
+# explicitly (the path is echoed below) to resume an interrupted run.
+.branch <- sub("^pixel_model_inputs_", "", tools::file_path_sans_ext(basename(INPUT)))
+.branch <- sub("_[0-9]{4}-[0-9]{2}-[0-9]{2}.*$", "", .branch)
+OUT <- Sys.getenv("BG_OUT", file.path("output", sprintf("bart_gate_%s_%s", .branch,
+                                       format(Sys.time(), "%Y-%m-%d_%H%M"))))
 
 # ---- preflight: fail NOW, not 6 hours in ------------------------------------------------------
 if (!file.exists(INPUT)) stop("input not found: ", INPUT,
@@ -47,6 +56,16 @@ for (p in c("sf","dbarts","qs2")) if (!requireNamespace(p, quietly=TRUE)) stop("
 for (f in c("codes/mnl_aux_func.R","codes/mnlogit_rcpp_sym.R")) if (!file.exists(f)) stop("run from the repo root; missing ", f)
 if (NBURN >= NITER) stop("BG_NBURN must be < BG_NITER")
 dir.create(OUT, recursive=TRUE, showWarnings=FALSE)
+writeLines(c(
+  sprintf("run       : %s", format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
+  sprintf("input     : %s", INPUT),
+  sprintf("branch    : %s", .branch),
+  sprintf("sweeps    : %d (burn %d, thin %d)", NITER, NBURN, THIN),
+  sprintf("chains    : %d on %d core(s)", NCH, min(NCH, NCORES)),
+  sprintf("pixels    : %s", if (NPIX > 0) as.character(NPIX) else "all"),
+  sprintf("split     : %s (test fraction %.2f)", SPLIT, TESTF),
+  sprintf("arms      : %s", paste(ARMS, collapse=", ")),
+  sprintf("resume    : BG_OUT=%s", OUT)), file.path(OUT, "manifest.txt"))
 source("codes/mnl_aux_func.R"); source("codes/mnlogit_rcpp_sym.R")
 
 # ---- design ------------------------------------------------------------------------------------
@@ -85,7 +104,9 @@ cat(sprintf("  classes %d | covariates %d | RE groups %d | RE covs %d\n", J, nco
 cat(sprintf("  BART covariates: %s\n", paste(colnames(X)[tcol], collapse=", ")))
 cat(sprintf("  %d sweeps (burn %d, thin %d) x %d chain(s) per arm, %d core(s)\n",
             NITER, NBURN, THIN, NCH, min(NCH, NCORES)))
-cat(sprintf("  arms: %s | out: %s\n", paste(ARMS, collapse=", "), OUT))
+cat(sprintf("  arms: %s\n", paste(ARMS, collapse=", ")))
+cat(sprintf("  out:  %s\n", OUT))
+cat(sprintf("  RESUME after an interruption with:  BG_OUT=%s <same command>\n", OUT))
 cat(sprintf("  ROUGH ETA for both arms: %.1f h (started %s)\n\n", eta_h, format(t_start, "%H:%M")))
 
 fit_arm <- function(use_b, chain_id = 1L, dpath = NULL) {
