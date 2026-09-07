@@ -18,6 +18,7 @@
 #   BG_NPIX       0   0 = all 64,178        BG_TESTFRAC 0.2 held-out fraction
 #   BG_SPLIT random   random | country      BG_ARMS  linear,bart
 #   BG_OUT  output/bart_gate                BG_INPUT output/pixel_model_inputs_GLOBIOM_init2000.rds
+#   BG_CORES ncores-2  chains fitted in parallel (SUBLINEAR: bandwidth-bound, ~3x from 4 workers)
 #
 # RUNTIME, measured at 20k pixels x 1000 sweeps (31.5 min linear, 42.6 min BART, 1 chain):
 #   full sample, 1 chain per arm, both arms —  4000 sweeps ~16 h | 8000 ~32 h | 16000 ~63 h
@@ -35,6 +36,7 @@ NITER <- as.integer(Sys.getenv("BG_NITER","8000")); NBURN <- as.integer(Sys.gete
 THIN  <- as.integer(Sys.getenv("BG_THIN","8"));     NCH   <- as.integer(Sys.getenv("BG_CHAINS","1"))
 NPIX  <- as.integer(Sys.getenv("BG_NPIX","0"));     TESTF <- as.numeric(Sys.getenv("BG_TESTFRAC","0.2"))
 SPLIT <- Sys.getenv("BG_SPLIT","random");           ARMS  <- trimws(strsplit(Sys.getenv("BG_ARMS","linear,bart"),",")[[1]])
+NCORES<- as.integer(Sys.getenv("BG_CORES", as.character(max(1L, parallel::detectCores() - 2L))))
 OUT   <- Sys.getenv("BG_OUT","output/bart_gate")
 INPUT <- Sys.getenv("BG_INPUT","output/pixel_model_inputs_GLOBIOM_init2000.rds")
 
@@ -74,12 +76,15 @@ if (length(tcol) != length(topo)) stop("missing topo column(s): ", paste(setdiff
 re_i <- which(colnames(X) %in% c("intercept","log1p_GDP","log1p_Pop","GHM_HI","CISI"))
 bl   <- which.max(colSums(Y))
 
-eta_h <- (31.5*(nrow(X)/20000)*(NITER/1000)/60) + (42.6*(nrow(X)/20000)*(NITER/1000)/60)
+# chains run in parallel, but bandwidth-bound -> assume each extra worker adds only ~0.33
+.par  <- if (NCH > 1L && NCORES > 1L) 1 + (min(NCH,NCORES)-1)*0.33 + max(0, NCH-NCORES) else NCH
+eta_h <- ((31.5 + 42.6) * (nrow(X)/20000) * (NITER/1000) / 60) * .par
 cat(sprintf("\n%s\nGLOBIOM flat MNL — BART gate\n%s\n", strrep("=",70), strrep("=",70)))
 cat(sprintf("  pixels %d (train %d / test %d, %s split)\n", nrow(X), length(tr), length(te), SPLIT))
 cat(sprintf("  classes %d | covariates %d | RE groups %d | RE covs %d\n", J, ncol(X), length(unique(g)), length(re_i)))
 cat(sprintf("  BART covariates: %s\n", paste(colnames(X)[tcol], collapse=", ")))
-cat(sprintf("  %d sweeps (burn %d, thin %d) x %d chain(s) per arm\n", NITER, NBURN, THIN, NCH))
+cat(sprintf("  %d sweeps (burn %d, thin %d) x %d chain(s) per arm, %d core(s)\n",
+            NITER, NBURN, THIN, NCH, min(NCH, NCORES)))
 cat(sprintf("  arms: %s | out: %s\n", paste(ARMS, collapse=", "), OUT))
 cat(sprintf("  ROUGH ETA for both arms: %.1f h (started %s)\n\n", eta_h, format(t_start, "%H:%M")))
 
@@ -130,7 +135,21 @@ for (nm in ARMS) {
   ub <- identical(nm, "bart"); t0 <- Sys.time()
   dp <- file.path(OUT, sprintf("posterior_%s", nm)); dir.create(dp, recursive=TRUE, showWarnings=FALSE)
   cat(sprintf(">>> %-6s fitting (%d chain%s), posterior -> %s\n", nm, NCH, if (NCH>1) "s" else "", dp)); flush.console()
-  for (ci in seq_len(NCH)) invisible(fit_arm(ub, ci, dp))
+  if (NCH > 1L && NCORES > 1L) {
+    # Chains in parallel. SUBLINEAR: this workload is memory-bandwidth bound, so 4 workers buy
+    # roughly 3x, not 4x (measured in this repo: 10 workers -> 4.4 cores aggregate). Workers must
+    # re-source the sampler -- sourceCpp pointers do not survive into a fresh R process
+    # ("NULL value passed as symbol address").
+    suppressMessages(library(future.apply))
+    future::plan(future::multisession, workers = min(NCH, NCORES))
+    invisible(future.apply::future_lapply(seq_len(NCH), function(ci) {
+      source("codes/mnl_aux_func.R"); source("codes/mnlogit_rcpp_sym.R")
+      fit_arm(ub, ci, dp); NULL
+    }, future.seed = TRUE))
+    future::plan(future::sequential)
+  } else {
+    for (ci in seq_len(NCH)) invisible(fit_arm(ub, ci, dp))
+  }
   # streamed runs return no postb_total in RAM -- read chain 1 back for scoring, which also
   # exercises the recovery path the later diagnostics will use
   f <- recover_mnlogit_posterior(dp, chain_id = 1L); sc <- score(f, ub)
