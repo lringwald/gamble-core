@@ -250,9 +250,25 @@ cat(sprintf("LUM data lineage: %s  (registered years: %s)\n", LUM_DATA_LINEAGE, 
 # Auto-on for the AGMIP scheme; env-overridable via DRIVER_CROP_SPLIT.
 DO_CROP_SPLIT <- as.logical(Sys.getenv("DRIVER_CROP_SPLIT", if (CLASS_SCHEME == "AGMIP") "TRUE" else "FALSE"))
 # HRL Crop Types source per year (same 1km key as LUM). HRL is a 2017-2019 average -> maps to 2018.
-CROP_SOURCE_REGISTRY <- list(
+# YEAR-MATCHED by default, not the 2017-2019 average. The average is exactly sum/3 with an unmapped
+# year counted as ZERO, and HRL's coverage varies enormously by year: BE/IE/LU/NL/CH appear only in
+# 2018 (so the average keeps a third of their crop area), DE and FR have 2017/2019 totals around a
+# sixth of their 2018 one (~55% lost), while stably-mapped countries (ES/BG/CZ/SE/DK) lose 0-5%.
+# EU crop area is 552k/770k/412k km2 by year against 578k for the average -- a 47% swing between
+# years is coverage, not rotation, since rotation moves area BETWEEN crops and leaves the national
+# total flat. Averaging therefore shrinks H, and every km2 of LUM cropland that H fails to account
+# for falls through to Cropland_arable_other and gets split across the residual crops (~75% fodder).
+# Set DRIVER_CROP_AVG=TRUE to restore the old averaged source.
+CROP_SOURCE_REGISTRY <- if (isTRUE(as.logical(Sys.getenv("DRIVER_CROP_AVG", "FALSE")))) list(
   `2018` = list(file = file.path(GRIDWORK_DIR, "Crop_Types/Crop_Types_Avg_2017_2019_1km.rds"),
                 id_col = "LAMASUS_1km_bufferID", code_col = "Crop_Type_Code", area_col = "avg_area_km2")
+) else list(
+  `2017` = list(file = file.path(GRIDWORK_DIR, "Crop_Types/Crop_Types_2017_1km.rds"),
+                id_col = "LAMASUS_1km_bufferID", code_col = "Crop_Type_Code", area_col = "area_km2"),
+  `2018` = list(file = file.path(GRIDWORK_DIR, "Crop_Types/Crop_Types_2018_1km.rds"),
+                id_col = "LAMASUS_1km_bufferID", code_col = "Crop_Type_Code", area_col = "area_km2"),
+  `2019` = list(file = file.path(GRIDWORK_DIR, "Crop_Types/Crop_Types_2019_1km.rds"),
+                id_col = "LAMASUS_1km_bufferID", code_col = "Crop_Type_Code", area_col = "area_km2")
 )
 # HRL Crop_Type_Code -> AgMIP crop class name + cropland group (arable|permanent). 3100/3200
 # ("Unclassified arable/permanent") and 65535 ("Outside area") are NOT listed -> they fold into the
