@@ -27,7 +27,8 @@ files <- c(
   "tests/test_re_mean_shift.R",       # sum-to-zero RE identification (mu == population average)
   "tests/test_joint_shrink.R",        # joint FE/RE gate kappa_v, incl. the seed-noise floor
   "tests/test_mundlak.R",             # group-mean prior mean: gamma recovery + beta debiasing
-  "tests/test_predict_gamble.R"       # unified predictor: dispatch, delta, mundlak, disk round-trip
+  "tests/test_predict_gamble.R",      # unified predictor: dispatch, delta, mundlak, disk round-trip
+  "tests/test_target_class_split.R"   # project target classification cascade (BMLEH_Los1 rules)
 )
 .known <- files
 .found <- sort(list.files("tests", pattern = "^test_.*\\.R$", full.names = TRUE))
