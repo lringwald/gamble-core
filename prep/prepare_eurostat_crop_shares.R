@@ -18,6 +18,23 @@
 #
 # Years: 2017-2019 averaged, matching the HRL layer (Crop_Types_Avg_2017_2019_1km.rds). Averaging
 # smooths crop rotation, which is the point -- a single year misstates the arable mix.
+#
+# ---- THE RESOLUTION TRADE-OFF, AND WHY IT IS NOT A CHOICE --------------------------------------
+# Eurostat forces a trade: apro_cpshr has 79 codes at NUTS2 (spatial detail, thematic coarse);
+# apro_cpsh1 has 214 codes at NUTS0 (thematic detail, spatially coarse). Neither alone reaches the
+# BMLEH target.
+#
+# They COMPOSE, because the aggregates a fine code sits inside are themselves published at NUTS2
+# (F0000 in 252 regions, W1000 in 242, V0000_S0000 in 198). So each level contributes what it has:
+#
+#     area(apples, pixel) = HRL "Fruits" area          <- 1 km spatial pattern
+#                         x share(F0000 | NUTS2)       <- regional fruit composition
+#                         x share(F1110 | F0000, NUTS0)<- national apple fraction
+#
+# The NUTS0 factor is constant within a country, so apples do not vary regionally BEYOND what the
+# fruit aggregate and the HRL pattern already say. That is a real limitation, not a hidden one:
+# every such share is tagged source = "NUTS0-only" in the output so it cannot be mistaken for a
+# measured regional value.
 # =============================================================================
 suppressMessages({library(eurostat); library(data.table)})
 YEARS   <- as.integer(strsplit(Sys.getenv("EU_CROP_YEARS", "2017,2018,2019"), ",")[[1]])
@@ -50,8 +67,26 @@ RESIDUAL_SPLIT <- list(
   Cropland_arable_fodder_rootcrops = "R9000",
   Cropland_arable_other_oil        = c("I1140","I1150","I1190"),
   Cropland_arable_tobacco          = "I3000",
+  Cropland_arable_other_industrial = c("I4000","I5000","I9000"),  # hops, aromatics, other industrial
   Cropland_permanent_flowers       = "N0000",
   Cropland_permanent_nurseries     = "L0000"
+)
+
+# ---- FINE splits, NUTS0 only -------------------------------------------------------------------
+# apro_cpshr (NUTS2) carries only aggregates for these; the detail is in apro_cpsh1, which has 214
+# codes but is published at COUNTRY level. So these shares are constant within a country -- a real
+# limitation, recorded as source = "NUTS0-only" so it is never mistaken for regional variation.
+# Each: the aggregate `total`, the measured `parts`, and the target taking total - sum(parts).
+SPLITS_FINE <- list(
+  Fruits_detail = list(total = "F0000",              # excludes citrus, grapes, strawberries
+                       parts = list(Cropland_permanent_apples = "F1110"),
+                       remainder = "Cropland_permanent_other_fruit"),
+  Veg_detail    = list(total = "V0000",              # fresh vegetables incl. melons
+                       parts = list(Cropland_arable_tomatoes = "V3100"),
+                       remainder = "Cropland_arable_other_veg"),
+  Grapes_detail = list(total = "W1000",
+                       parts = list(Cropland_permanent_wine = "W1100"),   # grapes for wines
+                       remainder = "Cropland_permanent_grapes")           # table/other grapes
 )
 # NOT sourced here, by decision:
 #   energy        <- Forests_SR in the LUM map (short-rotation coppice)
@@ -131,6 +166,33 @@ shares_for <- function(gname, targets) {
 }
 res <- rbindlist(c(lapply(names(SPLITS), function(g) shares_for(g, SPLITS[[g]])),
                    list(shares_for("<arable residual>", RESIDUAL_SPLIT))), use.names = TRUE)
+
+# ---- fine splits from apro_cpsh1 (country level) ------------------------------------------------
+cat("\nfetching apro_cpsh1 (country-level detail: apples, tomatoes, wine grapes) ...\n")
+r1 <- as.data.table(get_eurostat("apro_cpsh1", time_format = "num"))
+t1 <- intersect(c("time","TIME_PERIOD","period"), names(r1))[1]; setnames(r1, t1, "yr")
+r1[, yr := as.integer(substr(as.character(yr), 1, 4))]
+h1 <- r1[strucpro == "AR_THS_HA", unique(crops)]
+d1 <- r1[strucpro %in% c("AR_THS_HA","MAR_THS_HA") & yr %in% YEARS & !is.na(values)]
+d1 <- d1[strucpro == fifelse(crops %in% h1, "AR_THS_HA", "MAR_THS_HA")]
+a1 <- d1[nchar(as.character(geo)) == 2L, .(area = mean(values, na.rm = TRUE)), by = .(geo, crops)]
+fine <- rbindlist(lapply(names(SPLITS_FINE), function(g) {
+  sp <- SPLITS_FINE[[g]]; pn <- names(sp$parts); pc <- unlist(sp$parts)
+  tot <- a1[crops == sp$total, .(geo, tot = area)]
+  prt <- a1[crops %in% pc, .(p = sum(area)), by = geo]
+  j <- merge(tot, prt, by = "geo", all.x = TRUE); j[is.na(p), p := 0]
+  j <- j[tot > 0]
+  if (!nrow(j)) return(NULL)
+  # a part exceeding its own aggregate means the two codes are not nested as assumed -- clamp and
+  # report rather than emit a negative remainder
+  bad <- j[p > tot]; if (nrow(bad)) cat(sprintf("   [warn] %s: %d country(ies) with part > total, clamped: %s\n",
+                                                g, nrow(bad), paste(bad$geo, collapse=",")))
+  j[, p := pmin(p, tot)]
+  rbind(data.table(group = g, geo = j$geo, source = "NUTS0-only", target = pn, share = j$p / j$tot),
+        data.table(group = g, geo = j$geo, source = "NUTS0-only", target = sp$remainder,
+                   share = (j$tot - j$p) / j$tot))
+}), use.names = TRUE)
+res <- rbind(res, fine, use.names = TRUE)
 res <- res[is.finite(share)]
 fwrite(res, file.path(OUT_DIR, "crop_shares_nuts2.csv"))
 cov <- res[, .(n_geo = uniqueN(geo)), by = .(group, source)]
@@ -142,11 +204,18 @@ cat("\n--- resolution each split was answered at (number of geos) ---\n"); print
 cat("\n--- share per target: EU AREA-WEIGHTED vs mean-of-regions ---\n")
 # the area-weighted figure is the one to sanity-check against published EU totals; the mean of
 # regional shares is pulled toward zero by every region where the crop is simply absent
+euw_fine <- rbindlist(lapply(names(SPLITS_FINE), function(g) {
+  sp <- SPLITS_FINE[[g]]
+  tt <- a1[crops == sp$total, sum(area)]; pp_ <- a1[crops %in% unlist(sp$parts), sum(area)]
+  if (!length(tt) || tt <= 0) return(NULL)
+  data.table(group = g, target = c(names(sp$parts), sp$remainder),
+             eu_weighted = c(pp_/tt, (tt-pp_)/tt)) }))
 euw <- rbindlist(c(lapply(names(SPLITS), function(g) {
     tg <- SPLITS[[g]]; ar <- sapply(tg, function(cd) a[crops %in% cd & lev=="NUTS0", sum(area)])
     data.table(group=g, target=names(tg), eu_weighted=as.numeric(ar/sum(ar))) }),
   list({ tg <- RESIDUAL_SPLIT; ar <- sapply(tg, function(cd) a[crops %in% cd & lev=="NUTS0", sum(area)])
     data.table(group="<arable residual>", target=names(tg), eu_weighted=as.numeric(ar/sum(ar))) })))
+euw <- rbind(euw, euw_fine, use.names = TRUE)
 mm <- res[, .(mean_of_regions = round(mean(share),4)), by=.(group,target)]
 print(merge(euw, mm, by=c("group","target"))[order(group, -eu_weighted)][
       , .(group, target, eu_weighted=round(eu_weighted,4), mean_of_regions)])
