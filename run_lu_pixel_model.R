@@ -512,12 +512,17 @@ grid_map_pixel[, `:=`(
   Grouping_Key = as.character(get(RE_GROUP_COL))
 )]
 
+# Keep the UNTRUNCATED region code before the RE grouping collapses it. The RE block groups on
+# country for CAPRI, but a project target classification may need the finer region -- the Eurostat
+# crop shares are keyed on NUTS2, and truncating here would silently reduce every regional split
+# to a national one.
+grid_map_pixel[, geo_region := as.character(get(RE_GROUP_COL))]
 if (RE_GROUP_COL == "CAPRI_NUTS") grid_map_pixel[, Grouping_Key := substr(Grouping_Key, 1, 2)]
 grid_map_pixel[, pixel_weight := if ("GLOB_5arcminID_area_km2" %in% names(grid_map_pixel)) as.numeric(GLOB_5arcminID_area_km2) else 1.0]
 grid_map_pixel[is.na(pixel_weight) | pixel_weight == 0, pixel_weight := 1.0]
 
 # New Observation Unit: ID (Grid Cell) + Grouping Key
-grid_map_pixel <- unique(grid_map_pixel[, .(LAMASUS_1km_bufferID, EEA_1kmID, ID, X, Y, Grouping_Key, pixel_weight)])
+grid_map_pixel <- unique(grid_map_pixel[, .(LAMASUS_1km_bufferID, EEA_1kmID, ID, X, Y, Grouping_Key, geo_region, pixel_weight)])
 
 # =========================================================================
 # 4. STATIC COVARIATES
