@@ -113,7 +113,7 @@ ADAPTIVE_EPSILON_MAX <- 1e-4 # Max 1e-4% mass added to empty classes
 
 # Hierarchical / RE Settings
 use_re <- TRUE
-RE_GROUP_COL <- "GLOB_country" # Flexible grouping: "GLOB_country", "NUTS2", etc.
+RE_GROUP_COL <- Sys.getenv("DRIVER_RE_GROUP_COL", "GLOB_country") # "GLOB_country", "NUTS2", "CAPRI_NUTS", ...
 # Run versioning: bucket ALL outputs (saved-model dir, dat_pixel, fits, plots) into a
 # stable "production" or a throwaway "test" namespace via MODEL_LABEL — replaces the old
 # manual REvNN bumping. A "test" run starts fresh (its saved-model dir is cleared at the
@@ -410,6 +410,47 @@ target_classes <- setdiff(unique(mapping_thematic$model_class), "NODATA")
 # crop classes (none in the data) are still dropped later by the zero-area filter.
 if (DO_CROP_SPLIT) target_classes <- union(target_classes, CROP_LEGEND$crop_class)
 
+# --- Project target classification (optional) --------------------------------------------------
+# A project may need its OWN class list rather than the scheme's: BMLEH_Los1_CAPRI wants the 43
+# CAPRI-style classes in data/BMLEH_Los1_thematic_mapping.csv, which is a finer cut than any
+# CLASS_SCHEME provides. codes/target_class_split.R applies an ordered rename/split cascade to the
+# 1km rows immediately after the crop split -- i.e. still at the resolution where regional crop
+# statistics apply, and before the pixel split. Off unless a rules file is named.
+TARGET_RULES_FILE  <- Sys.getenv("DRIVER_TARGET_RULES", "")
+TARGET_SHARES_FILE <- Sys.getenv("DRIVER_TARGET_SHARES", "")
+DO_TARGET_RULES <- nzchar(TARGET_RULES_FILE)
+TARGET_RULES <- NULL; TARGET_SHARES <- NULL
+if (DO_TARGET_RULES) {
+  if (!file.exists(TARGET_RULES_FILE)) stop(sprintf("DRIVER_TARGET_RULES file not found: %s", TARGET_RULES_FILE))
+  source("codes/target_class_split.R")
+  .re <- new.env(); sys.source(TARGET_RULES_FILE, .re)
+  .is_rules <- function(n) { o <- get(n, .re); is.data.frame(o) && all(c("order","action","from_class","to") %in% names(o)) }
+  .cand <- Filter(.is_rules, ls(.re))
+  if (length(.cand) != 1L) stop(sprintf(
+    "%s must define exactly ONE rules table (order/action/from_class/to); found %d: %s",
+    basename(TARGET_RULES_FILE), length(.cand), paste(.cand, collapse = ", ")))
+  TARGET_RULES <- as.data.table(get(.cand[[1]], .re))
+  if (any(TARGET_RULES$action == "split")) {
+    if (!nzchar(TARGET_SHARES_FILE) || !file.exists(TARGET_SHARES_FILE))
+      stop(sprintf("%s has split rules, so DRIVER_TARGET_SHARES must point at a share table (got '%s').",
+                   .cand[[1]], TARGET_SHARES_FILE))
+    TARGET_SHARES <- fread(TARGET_SHARES_FILE)
+    .missg <- setdiff(TARGET_RULES[action == "split", to], unique(TARGET_SHARES$group))
+    if (length(.missg)) stop(sprintf("share table has no rows for split group(s): %s",
+                                     paste(.missg, collapse = ", ")))
+  }
+  # Register the minted classes so the final_cats_pixel filter keeps them, and retire the classes
+  # the cascade consumes. Order matters: drop the sources FIRST, because a class can be both
+  # consumed and re-minted (Cropland_permanent_other_fruit is split at order 16, then renamed
+  # back into existence at order 20-21 as the permanent catch-all).
+  target_classes <- setdiff(target_classes, TARGET_RULES$from_class)
+  target_classes <- union(target_classes, TARGET_RULES[action == "rename", to])
+  if (!is.null(TARGET_SHARES)) target_classes <- union(target_classes, unique(TARGET_SHARES$target))
+  cat(sprintf("Target classification: %s (%d rules: %d rename, %d split) -> %d target classes\n",
+    basename(TARGET_RULES_FILE), nrow(TARGET_RULES), sum(TARGET_RULES$action == "rename"),
+    sum(TARGET_RULES$action == "split"), length(target_classes)))
+}
+
 # Raw-code -> class lookup for the outcome join (keyed by the source's own join key).
 class_lookup <- unique(mapping_thematic[, c(.src$join_key, "model_class", "focal_class"), with = FALSE])
 
@@ -512,17 +553,28 @@ grid_map_pixel[, `:=`(
   Grouping_Key = as.character(get(RE_GROUP_COL))
 )]
 
-# Keep the UNTRUNCATED region code before the RE grouping collapses it. The RE block groups on
-# country for CAPRI, but a project target classification may need the finer region -- the Eurostat
-# crop shares are keyed on NUTS2, and truncating here would silently reduce every regional split
-# to a national one.
-grid_map_pixel[, geo_region := as.character(get(RE_GROUP_COL))]
+# geo_region: the region code a PROJECT's regional statistics are keyed on, kept independently of
+# the RE grouping key. These are not the same thing and must not be conflated -- the RE block wants
+# few, well-populated groups (country), while a target classification wants the finest region its
+# statistics support (NUTS2 for the Eurostat crop shares). Note CAPRI_NUTS is the 8-char padded form
+# ("NO070000"), so it matches NEITHER a NUTS2 code nor a country code without slicing; DRIVER_GEO_COL
+# defaults to the plain NUTS2 column, whose first 2 chars are also the country fallback the share
+# cascade uses.
+GEO_REGION_COL <- Sys.getenv("DRIVER_GEO_COL", if ("NUTS2" %in% names(grid_map_pixel)) "NUTS2" else RE_GROUP_COL)
+if (!GEO_REGION_COL %in% names(grid_map_pixel))
+  stop(sprintf("DRIVER_GEO_COL '%s' is not a column of the grid mapping (have: %s)",
+               GEO_REGION_COL, paste(grep("NUTS|country", names(grid_map_pixel), value = TRUE), collapse = ", ")))
+grid_map_pixel[, geo_region := as.character(get(GEO_REGION_COL))]
 if (RE_GROUP_COL == "CAPRI_NUTS") grid_map_pixel[, Grouping_Key := substr(Grouping_Key, 1, 2)]
 grid_map_pixel[, pixel_weight := if ("GLOB_5arcminID_area_km2" %in% names(grid_map_pixel)) as.numeric(GLOB_5arcminID_area_km2) else 1.0]
 grid_map_pixel[is.na(pixel_weight) | pixel_weight == 0, pixel_weight := 1.0]
 
 # New Observation Unit: ID (Grid Cell) + Grouping Key
-grid_map_pixel <- unique(grid_map_pixel[, .(LAMASUS_1km_bufferID, EEA_1kmID, ID, X, Y, Grouping_Key, geo_region, pixel_weight)])
+# Hold the region key in its OWN 1km lookup rather than as a column of grid_map_pixel. That table is
+# area-weighted and aggregated in several places (every value column gets multiplied by
+# pixel_weight), so a character key riding along inside it is a bug waiting to happen.
+GEO_LOOKUP_1KM <- unique(grid_map_pixel[, .(LAMASUS_1km_bufferID, EEA_1kmID, geo = geo_region)])
+grid_map_pixel <- unique(grid_map_pixel[, .(LAMASUS_1km_bufferID, EEA_1kmID, ID, X, Y, Grouping_Key, pixel_weight)])
 
 # =========================================================================
 # 4. STATIC COVARIATES
@@ -755,9 +807,32 @@ load_granular_lum <- function(year) {
     }
   }
 
+  # Project target classification: rename/split the model classes onto the project's own target
+  # list (see DO_TARGET_RULES above). Runs AFTER the crop split so the HRL crop classes it mints
+  # (Wheat, Fruits, ...) are available as split sources, and still at 1km so geo_region carries
+  # the untruncated NUTS2 code the shares are keyed on.
+  if (DO_TARGET_RULES) {
+    a_pre <- sum(rawc$area)
+    .geo <- unique(GEO_LOOKUP_1KM[, .(join_id = as.integer(get(reg$id_col)), geo)])
+    .geo <- .geo[!is.na(join_id) & !duplicated(join_id)]
+    rawc <- apply_target_classification(rawc, TARGET_RULES, shares = TARGET_SHARES,
+                                        geo_lookup = .geo, verbose = TRUE)
+    rawc <- rawc[, .(area = sum(area, na.rm = TRUE)), by = .(join_id, model_class, focal_class)]
+    if (abs(a_pre - sum(rawc$area)) > 1) {
+      stop(sprintf("load_granular_lum(%s): target classification changed 1km area by %.1f km2 (should conserve).",
+                   year, a_pre - sum(rawc$area)))
+    }
+  }
+
   # Grid/pixel split: distribute each 1km cell across its grid pixels (pixel_weight), then aggregate.
   gm <- grid_map_pixel[, .(join_id = as.integer(get(reg$id_col)), ID, Grouping_Key, X, Y, pixel_weight)]
-  merged <- merge(rawc, gm, by = "join_id", all.x = FALSE)
+  # The fan-out here is intended and inherently many-to-many: a 1km cell carries several classes and
+  # is split across several grid pixels. With a fine target classification (39 classes) the product
+  # exceeds data.table's default cartesian guard, which is a size heuristic rather than a
+  # correctness check. Unlike the steps above, this one is NOT area-conserving by construction --
+  # all.x = FALSE drops 1km cells outside the grid, and pixel_weight redistributes the rest -- so
+  # there is deliberately no conservation assert here; the panel-level area totals are the check.
+  merged <- merge(rawc, gm, by = "join_id", all.x = FALSE, allow.cartesian = TRUE)
   merged[is.na(pixel_weight), pixel_weight := 1.0]
   merged[, area := area * pixel_weight]
 
@@ -1649,6 +1724,10 @@ if (use_re) {
 # Dump the assembled REAL model inputs so the BART-hybrid validation can iterate standalone
 # (full LUM classes + complete driver set), without re-running the heavy data build each time.
 if (isTRUE(as.logical(Sys.getenv("DRIVER_DUMP_INPUTS", "FALSE")))) {
+  # Project runs need their own dump: a BMLEH design and a GLOBIOM design cannot share one path
+  # without one silently overwriting the other.
+  .dump_path <- Sys.getenv("DRIVER_DUMP_PATH", "output/pixel_model_inputs.rds")
+  dir.create(dirname(.dump_path), recursive = TRUE, showWarnings = FALSE)
   saveRDS(list(X_mat = X_mat, Y_pixel = Y_pixel, weights_pixel = weights_pixel,
                mundlak_def = mundlak_def,   # NULL unless DRIVER_MUNDLAK; needed to rebuild the
                                             # same group-mean columns on new data at predict time
@@ -1679,9 +1758,39 @@ if (isTRUE(as.logical(Sys.getenv("DRIVER_DUMP_INPUTS", "FALSE")))) {
                    NULL
                  }
                })),
-          "output/pixel_model_inputs.rds")
-  cat(sprintf(">>> DRIVER_DUMP_INPUTS: saved pixel inputs (X %dx%d, %d LUM classes, %d groups) -> output/pixel_model_inputs.rds\n",
-              nrow(X_mat), ncol(X_mat), ncol(Y_pixel), length(unique(group_idx_vec))))
+          .dump_path)
+  cat(sprintf(">>> DRIVER_DUMP_INPUTS: saved pixel inputs (X %dx%d, %d LUM classes, %d groups) -> %s\n",
+              nrow(X_mat), ncol(X_mat), ncol(Y_pixel), length(unique(group_idx_vec)), .dump_path))
+
+  # ---- GeoTIFF of the LU layer that actually enters the model ---------------------------------
+  # Not a re-derivation from source: this rasterises Y_pixel_raw, the exact per-pixel class AREAS
+  # the sampler is handed, so what you open in QGIS is what the model sees -- crop splits, target
+  # cascade, coverage filtering and all. Areas in km2, one band per class, plus a `dominant` band
+  # coding the argmax class (band levels written as the raster's categories).
+  if (isTRUE(as.logical(Sys.getenv("DRIVER_DUMP_TIF", "FALSE")))) {
+    if (!requireNamespace("terra", quietly = TRUE)) {
+      warning("DRIVER_DUMP_TIF set but the terra package is not installed -- skipping.", call. = FALSE)
+    } else if (!all(c("X","Y") %in% names(dat_pixel))) {
+      warning("DRIVER_DUMP_TIF set but dat_pixel carries no X/Y -- skipping.", call. = FALSE)
+    } else {
+      .tif_base <- Sys.getenv("DRIVER_DUMP_TIF_PATH", sub("\\.rds$", "", .dump_path))
+      .yr <- if ("out_year" %in% names(dat_pixel)) as.character(dat_pixel$out_year) else rep("all", nrow(dat_pixel))
+      for (.y in unique(.yr)) {
+        .k <- which(.yr == .y)
+        .A <- as.data.frame(Y_pixel_raw[.k, , drop = FALSE])
+        .dom <- max.col(as.matrix(.A), ties.method = "first")
+        .dom[rowSums(as.matrix(.A)) <= 0] <- NA_integer_
+        .xyz <- data.frame(x = dat_pixel$X[.k], y = dat_pixel$Y[.k], .A, dominant = .dom, check.names = FALSE)
+        .r <- terra::rast(.xyz, type = "xyz", crs = "EPSG:3035")   # dat_pixel X/Y are ETRS89-LAEA
+        levels(.r[["dominant"]]) <- data.frame(value = seq_along(final_cats_pixel), class = final_cats_pixel)
+        .out <- sprintf("%s_%s.tif", .tif_base, .y)
+        terra::writeRaster(.r, .out, overwrite = TRUE,
+                           gdal = c("COMPRESS=DEFLATE", "TILED=YES", "PREDICTOR=2"))
+        cat(sprintf(">>> DRIVER_DUMP_TIF: %s  (%d pixels, %dm, %d class bands + dominant)\n",
+                    .out, length(.k), PIXEL_RES * 1000L, length(final_cats_pixel)))
+      }
+    }
+  }
 
   # Early exit after the inputs dump: data-prep only (minutes), no flat fit. The dumped
   # output/pixel_model_inputs.rds feeds run_nested_cut.R (FROM_INPUTS mode) or any standalone model.
