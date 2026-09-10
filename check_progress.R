@@ -101,12 +101,24 @@ report <- function(d) {
       bl <- grep("^built", lin, value = TRUE)
       if (length(bl)) as.POSIXct(trimws(sub("^built\\s+", "", bl[1]))) else min(file.mtime(f))
     }
-    el  <- as.numeric(difftime(Sys.time(), st, units = "mins"))
-    per <- if (el > 0) done / el else NA_real_
-    cat(sprintf("\n  slowest chain at sweep %d of %d  (%.1f%%) after %.0f min\n", done, niter, 100 * done / niter, el))
-    if (is.finite(per) && per > 0)
-      cat(sprintf("  ~%.1f sweeps/min overall -> ETA %.1f h for the slowest chain\n",
-                  per, (niter - done) / per / 60))
+    # `done` is a FLOOR that only advances when a batch lands, every posterior_batch_size*thin sweeps.
+    # So measure the rate as of the batch that reported it, not as of now -- otherwise the elapsed
+    # time keeps growing against a frozen sweep count and the ETA drifts upward between batches,
+    # which reads as the run slowing down when nothing has changed.
+    t_at <- max(file.mtime(f))
+    el   <- as.numeric(difftime(t_at, st, units = "mins"))
+    since<- as.numeric(difftime(Sys.time(), t_at, units = "mins"))
+    per  <- if (el > 0) done / el else NA_real_
+    step <- (if (is.null(meta$posterior_batch_size)) 50L else meta$posterior_batch_size) * (thin %||% 1L)
+    cat(sprintf("\n  slowest chain at sweep >= %d of %d  (>= %.1f%%) as of %.0f min in\n",
+                done, niter, 100 * done / niter, el))
+    if (is.finite(per) && per > 0) {
+      est <- min(niter, done + per * since)
+      cat(sprintf("  ~%.1f sweeps/min -> now approx sweep %.0f (%.1f%%), ETA %.1f h\n",
+                  per, est, 100 * est / niter, max(0, (niter - est) / per / 60)))
+    }
+    cat(sprintf("  the sweep counter advances only every %d sweeps (next update at %d) -- a frozen\n  number between batches is NOT a stall; judge liveness by CPU below\n",
+                step, min(niter, done + step)))
     if (max(r$quiet_min) > 30)
       cat(sprintf("  NOTE: chain %s has not written for %.0f min -- check it is alive (see below)\n",
                   r$chain[which.max(r$quiet_min)], max(r$quiet_min)))
