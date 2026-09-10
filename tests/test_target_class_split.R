@@ -10,18 +10,23 @@ sh <- fread("output/gamble_model/BMLEH_Los1_CAPRI/crop_shares_nuts2.csv")
 # 4 pixels: an Italian region (durum country), an Austrian one, a German one, and an UNKNOWN geo
 geo <- data.table(join_id = 1:4, geo = c("ITF4","AT11","DE21","ZZ99"))
 dt <- rbindlist(lapply(1:4, function(i) data.table(join_id = i, focal_class = NA_character_,
+  # Cropland_arable_energy and Grassland_extensive arrive ALREADY NAMED from the BMLEH_Los1_label
+  # mapping column (the LUM map distinguishes short rotation and grassland intensity per code, so
+  # they never need a crop statistic). They are here to prove the cascade leaves them untouched.
   model_class = c("Wheat","Maize","Other_cereals","Fruits","Fresh_vegetables","Grapes",
-                  "Cropland_arable_other","Barley","Forests_SR","Nuts","Cropland_permanent_other"),
-  area = c(10,10,10,10,10,10,10,10,10,10,10))))
+                  "Cropland_arable_other","Barley","Cropland_arable_energy","Nuts",
+                  "Cropland_permanent_other","Grassland_extensive"),
+  area = rep(10, 12))))
 A0 <- dt[, sum(area)]
 out <- apply_target_classification(dt, BMLEH_TARGET_RULES, sh, geo, verbose = FALSE)
 
 ok(abs(out[, sum(area)] - A0) < 1e-9, sprintf("area conserved (%.1f -> %.1f)", A0, out[, sum(area)]))
-ok(!any(grepl("^(Wheat|Maize|Other_cereals|Fruits|Grapes|Fresh_vegetables|Barley|Forests_SR|Nuts)$",
-              out$model_class)), "no HRL/LUM source class survives the cascade")
-ok(all(grepl("^Cropland_", unique(out$model_class))), "every output class is a BMLEH target class")
-ok(abs(out[model_class == "Cropland_arable_energy", sum(area)] - 40) < 1e-9,   # 4 pixels x 10
-   "Forests_SR -> energy, area intact")
+ok(!any(grepl("^(Wheat|Maize|Other_cereals|Fruits|Grapes|Fresh_vegetables|Barley|Nuts)$",
+              out$model_class)), "no HRL source class survives the cascade")
+ok(all(grepl("^(Cropland_|Grassland_)", unique(out$model_class))), "every output class is a BMLEH target class")
+ok(abs(out[model_class == "Cropland_arable_energy", sum(area)] - 40) < 1e-9 &&   # 4 pixels x 10
+   abs(out[model_class == "Grassland_extensive", sum(area)] - 40) < 1e-9,
+   "mapping-level classes (energy, grassland intensity) pass through the cascade untouched")
 
 w <- out[grepl("wheat", model_class), .(a = sum(area)), by = .(join_id, model_class)]
 it <- w[join_id == 1]; at <- w[join_id == 2]
@@ -41,8 +46,9 @@ ok(out[model_class == "Cropland_arable_tomatoes", sum(area)] > 0, "tomatoes prod
 ok(out[model_class == "Cropland_permanent_wine", sum(area)] > 0, "wine grapes produced")
 
 # unknown geo must still be allocated, not dropped
-u <- out[join_id == 4, sum(area)]
-ok(abs(u - 110) < 1e-9, sprintf("unknown geo ZZ99 falls back rather than dropping (%.1f of 110)", u))
+u   <- out[join_id == 4, sum(area)]
+u_in <- dt[join_id == 4, sum(area)]   # derive, so adding a class to the fixture cannot stale this
+ok(abs(u - u_in) < 1e-9, sprintf("unknown geo ZZ99 falls back rather than dropping (%.1f of %.1f)", u, u_in))
 ok(out[model_class == "Cropland_arable_other_industrial", sum(area)] > 0, "residual split reaches other_industrial")
 
 cat(sprintf("\n%d distinct target classes produced\n", uniqueN(out$model_class)))

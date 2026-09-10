@@ -1,93 +1,93 @@
-LUM_Code,LUM_label,GLOBIOM_UNFCCC,GLOBIOM_mngmt,BIOCLIMA3_LU,BIOCLIMA3_mngmt,ETL2_augmented,ETL2_aug_abbr,BIOCLIMA_DS_intermediate,BIOCLIMA_DS_reporting,AgMIP_label,GLOBIOM_subclass,GLOBIOM_subclass_nest
-1,Primary/unmanaged forest,Forests,primary,Forests,1_unmanaged,Woodland and forest,WOFO,Forests_1_unmanaged,Forests_1_unmanaged,Forests_primary,Forests_primary,Forests
-2,Close to nature forest management,Forests,unmanaged,Forests,2_low,Woodland and forest,WOFO,Forests_2_low,Forests_2_low,Forests_primary,Forests_unmanaged,Forests
-3,Multifunctional protective,Forests,LI,Forests,2_low,Woodland and forest,WOFO,Forests_2_low,Forests_2_low,Forests_managed,Forests_LI,Forests
-4,Multifunctional NWFP,Forests,MI,Forests,3_medium,Woodland and forest,WOFO,Forests_3_medium,Forests_3_medium,Forests_managed,Forests_MI,Forests
-5,Multifunctional recreation/other,Forests,MI,Forests,3_medium,Woodland and forest,WOFO,Forests_3_medium,Forests_3_medium,Forests_managed,Forests_MI,Forests
-6,Long rotation,Forests,HI,Forests,4_high,Woodland and forest,WOFO,Forests_4_high,Forests_4_high,Forests_managed,Forests_HI,Forests
-7,Short rotation,Forests,SR,Forests,4_high,Permanent crops,PCRP,Forests_4_high,Forests_4_high,Forests_managed,Forests_SR,Forests
-14,Agroforestry,Cropland,LI,Cropland_arable,2_low,Heterogeneous agricultural areas,HCRP,Cropland_arable_2_low,Cropland_arable_2_low,Cropland_arable_other,Cropland_LI,Cropland
-15,Very high density managed pasture system,Pasture,HI,Grassland,4_high,Pastures,PAST,Grassland_4_high,Grassland_4_high,Grassland,Pasture_HI,Pasture
-16,High density managed pasture system,Pasture,HI,Grassland,3_medium,Pastures,PAST,Grassland_3_medium,Grassland_3_medium,Grassland,Pasture_HI,Pasture
-17,Moderate density managed pasture system,Pasture,LI,Grassland,3_medium,Pastures,PAST,Grassland_3_medium,Grassland_3_medium,Grassland,Pasture_LI,Pasture
-18,Low density managed pasture system,Pasture,LI,Grassland,4_high,Pastures,PAST,Grassland_4_high,Grassland_4_high,Grassland,Pasture_LI,Pasture
-19,Very high density managed grassland,Pasture,HI,Grassland,4_high,Pastures,PAST,Grassland_4_high,Grassland_4_high,Grassland,Pasture_HI,Pasture
-20,High density managed grassland,Pasture,HI,Grassland,3_medium,Pastures,PAST,Grassland_3_medium,Grassland_3_medium,Grassland,Pasture_HI,Pasture
-21,Moderate density managed grassland,Pasture,LI,Grassland,3_medium,Pastures,PAST,Grassland_3_medium,Grassland_3_medium,Grassland,Pasture_LI,Pasture
-22,Low density managed grassland,Pasture,LI,Grassland,2_low,Pastures,PAST,Grassland_2_low,Grassland_2_low,Grassland,Pasture_LI,Pasture
-23,Rough grazing,Pasture,HI,Grassland,2_low,Pastures,PAST,Grassland_2_low,Grassland_2_low,Grassland,Pasture_HI,Pasture
-24,Silvo-pastoral agroforestry,Pasture,LI,Grassland,2_low,Pastures,PAST,Grassland_2_low,Grassland_2_low,Grassland,Pasture_LI,Pasture
-25,Managed semi-natural and natural grassland,Pasture,LI,Grassland,2_low,Pastures,PAST,Grassland_2_low,Grassland_2_low,Grassland,Pasture_LI,Pasture
-26,Unmanaged semi-natural and natural grassland,Pasture,LI,Grassland,1_unmanaged,Grassland,GRSL,Natural_unmanaged,Grassland_1_unmanaged,Natural_unmanaged,Pasture_LI,Pasture
-27,High intensity urban (buildings),Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_HI,Urban
-28,Medium intensity urban (buildings),Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_MI,Urban
-29,Low intensity urban (buildings),Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_LI,Urban
-30,Infrastructure,Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_TI,Urban
-31,Other urban,Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_other,Urban
-321,Natural grasslands,Natural_unmanaged,"",Natural_unmanaged,"",Grassland,GRSL,Natural_unmanaged,Grassland_1_unmanaged,Natural_unmanaged,Natural_grassland,Natural
-322,Moors and heathland,Natural_unmanaged,"",Natural_unmanaged,"",Heathland and shrub,HEAS,Natural_unmanaged,Natural_1_shrubland,Natural_unmanaged,Natural_shrubland,Natural
-323,Sclerophyllous vegetation,Natural_unmanaged,"",Natural_unmanaged,"",Heathland and shrub,HEAS,Natural_unmanaged,Natural_1_shrubland,Natural_unmanaged,Natural_shrubland,Natural
-324,Transitional woodland-shrub,Natural_unmanaged,"",Natural_unmanaged,"",Woodland and forest,WOFO,Natural_unmanaged,Natural_1_shrubland,Natural_unmanaged,Natural_shrubland,Natural
-3200,Natural protected,Natural_protected,"",Natural_unmanaged,"",Heathland and shrub,HEAS,"","","",Natural_protected,Natural
-331,Beaches - dunes - sands,Natural_other,"",Natural_other,"",Sparsely vegetated areas,SPVA,Natural_other,Natural_other_beaches,Natural_other,Natural_other,Natural
-332,Bare rocks,Natural_other,"",Natural_other,"",Sparsely vegetated areas,SPVA,Natural_other,Natural_other_rocks,Natural_other,Natural_other,Natural
-333,Sparsely vegetated areas,Natural_other,"",Natural_other,"",Sparsely vegetated areas,SPVA,Natural_other,Natural_other_sparse,Natural_other,Natural_other,Natural
-334,Burnt areas,Natural_other,"",Natural_other,"",Sparsely vegetated areas,SPVA,Natural_other,Natural_other_burnt,Natural_other,Natural_other,Natural
-335,Glaciers and perpetual snow,Natural_other,"",Natural_other,"",Sparsely vegetated areas,SPVA,Natural_other,Natural_other_ice,Natural_other,Natural_other,Natural
-411,Inland marshes,Wetlands_natural,"",Wetlands_natural,"",Wetlands,WTLN,Wetlands_natural,Wetlands_natural,Wetlands_natural,Wetlands_natural,Natural
-412,Peat bogs,Wetlands_natural,"",Wetlands_natural,"",Wetlands,WTLN,Wetlands_natural,Wetlands_natural,Wetlands_natural,Wetlands_natural,Natural
-421,Salt marshes,Waterbodies_marine,"",Waterbodies_marine,"",Marine inlets and transitional waters,MITW,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies
-422,Salines,Waterbodies_marine,"",Waterbodies_marine,"",Marine inlets and transitional waters,MITW,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies
-423,Intertidal flats,Waterbodies_marine,"",Waterbodies_marine,"",Marine inlets and transitional waters,MITW,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies
-424,Maximum floodplain extent,Wetlands_potential,"",Wetlands_potential,"",Wetlands,WTLN,Wetlands_potential,Wetlands_potential,Wetlands_potential,Wetlands_potential,Natural
-425,Potential floodplain extent,Wetlands_potential,"",Wetlands_potential,"",Wetlands,WTLN,Wetlands_potential,Wetlands_potential,Wetlands_potential,Wetlands_potential,Natural
-426,Actual floodplain extent,Wetlands_natural,"",Wetlands_natural,"",Wetlands,WTLN,Wetlands_natural,Wetlands_natural,Wetlands_natural,Wetlands_natural,Natural
-427,"Other wetland, most likely mineral wetland",Wetlands_natural,"",Wetlands_natural,"",Wetlands,WTLN,Wetlands_natural,Wetlands_natural,Wetlands_natural,Wetlands_natural,Natural
-511,Water courses,Waterbodies_inland,"",Waterbodies_inland,"",Rivers and lakes,RILA,Waterbodies_inland,Waterbodies_inland,Waterbodies_inland,Waterbodies_inland,Waterbodies
-512,Water bodies,Waterbodies_inland,"",Waterbodies_inland,"",Rivers and lakes,RILA,Waterbodies_inland,Waterbodies_inland,Waterbodies_inland,Waterbodies_inland,Waterbodies
-521,Coastal lagoons,Waterbodies_marine,"",Waterbodies_marine,"",Marine inlets and transitional waters,MITW,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies
-522,Estuaries,Waterbodies_marine,"",Waterbodies_marine,"",Marine inlets and transitional waters,MITW,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies
-523,Sea and ocean,Waterbodies_marine,"",Waterbodies_marine,"",Marine,MARI,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies
-2001,Arable very low intensity,Cropland,LI,Cropland_arable,2_low,Arable cropland,ACRP,Cropland_arable_2_low,Cropland_arable_2_low,Cropland_arable_other,Cropland_LI,Cropland
-2002,Arable low intensity,Cropland,LI,Cropland_arable,2_low,Arable cropland,ACRP,Cropland_arable_2_low,Cropland_arable_2_low,Cropland_arable_other,Cropland_LI,Cropland
-2003,Arable medium intensity,Cropland,LI,Cropland_arable,3_medium,Arable cropland,ACRP,Cropland_arable_3_medium,Cropland_arable_3_medium,Cropland_arable_other,Cropland_LI,Cropland
-2004,Arable high intensity,Cropland,HI,Cropland_arable,4_high,Arable cropland,ACRP,Cropland_arable_4_high,Cropland_arable_4_high,Cropland_arable_other,Cropland_HI,Cropland
-2005,Arable very high intensity,Cropland,HI,Cropland_arable,4_high,Arable cropland,ACRP,Cropland_arable_4_high,Cropland_arable_4_high,Cropland_arable_other,Cropland_HI,Cropland
-2006,Arable irrigated,Cropland,IR,Cropland_arable,4_high,Arable cropland,ACRP,Cropland_arable_4_high,Cropland_arable_4_high,Cropland_arable_other,Cropland_IR,Cropland
-3001,Permanent very low intensity,Cropland_other,"",Cropland_permanent,2_low,Permanent crops,PCRP,Cropland_permanent_2_low,Cropland_permanent_2_low,Cropland_permanent_other,Cropland_other,Cropland
-3002,Permanent low intensity,Cropland_other,"",Cropland_permanent,2_low,Permanent crops,PCRP,Cropland_permanent_2_low,Cropland_permanent_2_low,Cropland_permanent_other,Cropland_other,Cropland
-3003,Permanent medium intensity,Cropland_other,"",Cropland_permanent,3_medium,Permanent crops,PCRP,Cropland_permanent_3_medium,Cropland_permanent_3_medium,Cropland_permanent_other,Cropland_other,Cropland
-3004,Permanent high intensity,Cropland_other,"",Cropland_permanent,4_high,Permanent crops,PCRP,Cropland_permanent_4_high,Cropland_permanent_4_high,Cropland_permanent_other,Cropland_other,Cropland
-3005,Permanent very high intensity,Cropland_other,"",Cropland_permanent,4_high,Permanent crops,PCRP,Cropland_permanent_4_high,Cropland_permanent_4_high,Cropland_permanent_other,Cropland_other,Cropland
-4012,Intensive heterogeneous grassland classes,Pasture,HI,Grassland,3_medium,Pastures,PAST,Grassland_3_medium,Grassland_3_medium,Grassland,Pasture_HI,Pasture
-4013,Extensive heterogeneous grassland classes,Pasture,LI,Grassland,2_low,Pastures,PAST,Grassland_2_low,Grassland_2_low,Grassland,Pasture_LI,Pasture
-10000,Leftover forest,Natural_unmanaged,"",Natural_unmanaged,"",Woodland and forest,WOFO,Natural_unmanaged,Natural_1_shrubland,Natural_unmanaged,Natural_shrubland,Natural
-20000,Leftover cropland,Natural_unmanaged,"",Natural_unmanaged,"",Heterogeneous agricultural areas,HCRP,Natural_unmanaged,Grassland_1_unmanaged,Natural_unmanaged,Natural_grassland,Natural
-40000,Leftover grassland,Natural_unmanaged,"",Natural_unmanaged,"",Heathland and shrub,HEAS,Natural_unmanaged,Grassland_1_unmanaged,Natural_unmanaged,Natural_grassland,Natural
-9999,NODATA,NODATA,"",NODATA,"",NODATA,NODA,NODATA,NODATA,NODATA,NODATA,""
-14999,Agroforestry organic,Cropland,LIO,"","",Heterogeneous agricultural areas organic,HCRP,"","","",Cropland_LIO,Cropland
-15999,Very high density managed pasture system organic,Pasture,HIO,"","",Pastures organic,PAST,"","","",Pasture_HIO,Pasture
-16999,High density managed pasture system organic,Pasture,HIO,"","",Pastures organic,PAST,"","","",Pasture_HIO,Pasture
-17999,Moderate density managed pasture system organic,Pasture,LIO,"","",Pastures organic,PAST,"","","",Pasture_LIO,Pasture
-18999,Low density managed pasture system organic,Pasture,LIO,"","",Pastures organic,PAST,"","","",Pasture_LIO,Pasture
-19999,Very high density managed grassland organic,Pasture,HIO,"","",Pastures organic,PAST,"","","",Pasture_HIO,Pasture
-20999,High density managed grassland organic,Pasture,HIO,"","",Pastures organic,PAST,"","","",Pasture_HIO,Pasture
-21999,Moderate density managed grassland organic,Pasture,LIO,"","",Pastures organic,PAST,"","","",Pasture_LIO,Pasture
-22999,Low density managed grassland organic,Pasture,LIO,"","",Pastures organic,PAST,"","","",Pasture_LIO,Pasture
-23999,Rough grazing organic,Pasture,HIO,"","",Pastures organic,PAST,"","","",Pasture_HIO,Pasture
-24999,Silvo-pastoral agroforestry organic,Pasture,HIO,"","",Pastures organic,PAST,"","","",Pasture_HIO,Pasture
-25999,Managed semi-natural and natural grassland organic,Pasture,LIO,"","",Pastures organic,PAST,"","","",Pasture_LIO,Pasture
-26999,Unmanaged semi-natural and natural grassland organic,Pasture,LIO,"","",Grassland organic,GRSL,"","","",Pasture_LIO,Pasture
-2001999,Arable very low intensity organic,Cropland,LIO,"","",Arable cropland organic,ACRP,"","","",Cropland_LIO,Cropland
-2002999,Arable low intensity organic,Cropland,LIO,"","",Arable cropland organic,ACRP,"","","",Cropland_LIO,Cropland
-2003999,Arable medium intensity organic,Cropland,LIO,"","",Arable cropland organic,ACRP,"","","",Cropland_LIO,Cropland
-2004999,Arable high intensity organic,Cropland,HIO,"","",Arable cropland organic,ACRP,"","","",Cropland_HIO,Cropland
-2005999,Arable very high intensity organic,Cropland,LIO,"","",Arable cropland organic,ACRP,"","","",Cropland_LIO,Cropland
-2006999,Arable irrigated organic,Cropland,IRO,"","",Arable cropland organic,ACRP,"","","",Cropland_IRO,Cropland
-3001999,Permanent very low intensity organic,Cropland_other,O,"","",Permanent crops organic,PCRP,"","","",Cropland_other_O,Cropland
-3002999,Permanent low intensity organic,Cropland_other,O,"","",Permanent crops organic,PCRP,"","","",Cropland_other_O,Cropland
-3003999,Permanent medium intensity organic,Cropland_other,O,"","",Permanent crops organic,PCRP,"","","",Cropland_other_O,Cropland
-3004999,Permanent high intensity organic,Cropland_other,O,"","",Permanent crops organic,PCRP,"","","",Cropland_other_O,Cropland
-3005999,Permanent very high intensity organic,Cropland_other,O,"","",Permanent crops organic,PCRP,"","","",Cropland_other_O,Cropland
-4012999,Intensive heterogeneous grassland classes organic,Pasture,HIO,"","",Pastures organic,PAST,"","","",Pasture_HIO,Pasture
-4013999,Extensive heterogeneous grassland classes organic,Pasture,LIO,"","",Pastures organic,PAST,"","","",Pasture_LIO,Pasture
+LUM_Code,LUM_label,GLOBIOM_UNFCCC,GLOBIOM_mngmt,BIOCLIMA3_LU,BIOCLIMA3_mngmt,ETL2_augmented,ETL2_aug_abbr,BIOCLIMA_DS_intermediate,BIOCLIMA_DS_reporting,AgMIP_label,GLOBIOM_subclass,GLOBIOM_subclass_nest,BMLEH_Los1_label
+1,Primary/unmanaged forest,Forests,primary,Forests,1_unmanaged,Woodland and forest,WOFO,Forests_1_unmanaged,Forests_1_unmanaged,Forests_primary,Forests_primary,Forests,Forests_primary
+2,Close to nature forest management,Forests,unmanaged,Forests,2_low,Woodland and forest,WOFO,Forests_2_low,Forests_2_low,Forests_primary,Forests_unmanaged,Forests,Forests_primary
+3,Multifunctional protective,Forests,LI,Forests,2_low,Woodland and forest,WOFO,Forests_2_low,Forests_2_low,Forests_managed,Forests_LI,Forests,Forests_managed
+4,Multifunctional NWFP,Forests,MI,Forests,3_medium,Woodland and forest,WOFO,Forests_3_medium,Forests_3_medium,Forests_managed,Forests_MI,Forests,Forests_managed
+5,Multifunctional recreation/other,Forests,MI,Forests,3_medium,Woodland and forest,WOFO,Forests_3_medium,Forests_3_medium,Forests_managed,Forests_MI,Forests,Forests_managed
+6,Long rotation,Forests,HI,Forests,4_high,Woodland and forest,WOFO,Forests_4_high,Forests_4_high,Forests_managed,Forests_HI,Forests,Forests_managed
+7,Short rotation,Forests,SR,Forests,4_high,Permanent crops,PCRP,Forests_4_high,Forests_4_high,Forests_managed,Forests_SR,Forests,Cropland_arable_energy
+14,Agroforestry,Cropland,LI,Cropland_arable,2_low,Heterogeneous agricultural areas,HCRP,Cropland_arable_2_low,Cropland_arable_2_low,Cropland_arable_other,Cropland_LI,Cropland,Cropland_arable_other
+15,Very high density managed pasture system,Pasture,HI,Grassland,4_high,Pastures,PAST,Grassland_4_high,Grassland_4_high,Grassland,Pasture_HI,Pasture,Grassland_intensive
+16,High density managed pasture system,Pasture,HI,Grassland,3_medium,Pastures,PAST,Grassland_3_medium,Grassland_3_medium,Grassland,Pasture_HI,Pasture,Grassland_intensive
+17,Moderate density managed pasture system,Pasture,LI,Grassland,3_medium,Pastures,PAST,Grassland_3_medium,Grassland_3_medium,Grassland,Pasture_LI,Pasture,Grassland_extensive
+18,Low density managed pasture system,Pasture,LI,Grassland,4_high,Pastures,PAST,Grassland_4_high,Grassland_4_high,Grassland,Pasture_LI,Pasture,Grassland_extensive
+19,Very high density managed grassland,Pasture,HI,Grassland,4_high,Pastures,PAST,Grassland_4_high,Grassland_4_high,Grassland,Pasture_HI,Pasture,Grassland_intensive
+20,High density managed grassland,Pasture,HI,Grassland,3_medium,Pastures,PAST,Grassland_3_medium,Grassland_3_medium,Grassland,Pasture_HI,Pasture,Grassland_intensive
+21,Moderate density managed grassland,Pasture,LI,Grassland,3_medium,Pastures,PAST,Grassland_3_medium,Grassland_3_medium,Grassland,Pasture_LI,Pasture,Grassland_extensive
+22,Low density managed grassland,Pasture,LI,Grassland,2_low,Pastures,PAST,Grassland_2_low,Grassland_2_low,Grassland,Pasture_LI,Pasture,Grassland_extensive
+23,Rough grazing,Pasture,HI,Grassland,2_low,Pastures,PAST,Grassland_2_low,Grassland_2_low,Grassland,Pasture_HI,Pasture,Grassland_extensive
+24,Silvo-pastoral agroforestry,Pasture,LI,Grassland,2_low,Pastures,PAST,Grassland_2_low,Grassland_2_low,Grassland,Pasture_LI,Pasture,Grassland_extensive
+25,Managed semi-natural and natural grassland,Pasture,LI,Grassland,2_low,Pastures,PAST,Grassland_2_low,Grassland_2_low,Grassland,Pasture_LI,Pasture,Grassland_extensive
+26,Unmanaged semi-natural and natural grassland,Pasture,LI,Grassland,1_unmanaged,Grassland,GRSL,Natural_unmanaged,Grassland_1_unmanaged,Natural_unmanaged,Pasture_LI,Pasture,Natural_unmanaged
+27,High intensity urban (buildings),Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_HI,Urban,Built_up_area
+28,Medium intensity urban (buildings),Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_MI,Urban,Built_up_area
+29,Low intensity urban (buildings),Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_LI,Urban,Built_up_area
+30,Infrastructure,Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_TI,Urban,Built_up_area
+31,Other urban,Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_other,Urban,Built_up_area
+321,Natural grasslands,Natural_unmanaged,"",Natural_unmanaged,"",Grassland,GRSL,Natural_unmanaged,Grassland_1_unmanaged,Natural_unmanaged,Natural_grassland,Natural,Natural_unmanaged
+322,Moors and heathland,Natural_unmanaged,"",Natural_unmanaged,"",Heathland and shrub,HEAS,Natural_unmanaged,Natural_1_shrubland,Natural_unmanaged,Natural_shrubland,Natural,Natural_unmanaged
+323,Sclerophyllous vegetation,Natural_unmanaged,"",Natural_unmanaged,"",Heathland and shrub,HEAS,Natural_unmanaged,Natural_1_shrubland,Natural_unmanaged,Natural_shrubland,Natural,Natural_unmanaged
+324,Transitional woodland-shrub,Natural_unmanaged,"",Natural_unmanaged,"",Woodland and forest,WOFO,Natural_unmanaged,Natural_1_shrubland,Natural_unmanaged,Natural_shrubland,Natural,Natural_unmanaged
+3200,Natural protected,Natural_protected,"",Natural_unmanaged,"",Heathland and shrub,HEAS,"","","",Natural_protected,Natural,""
+331,Beaches - dunes - sands,Natural_other,"",Natural_other,"",Sparsely vegetated areas,SPVA,Natural_other,Natural_other_beaches,Natural_other,Natural_other,Natural,Natural_other
+332,Bare rocks,Natural_other,"",Natural_other,"",Sparsely vegetated areas,SPVA,Natural_other,Natural_other_rocks,Natural_other,Natural_other,Natural,Natural_other
+333,Sparsely vegetated areas,Natural_other,"",Natural_other,"",Sparsely vegetated areas,SPVA,Natural_other,Natural_other_sparse,Natural_other,Natural_other,Natural,Natural_other
+334,Burnt areas,Natural_other,"",Natural_other,"",Sparsely vegetated areas,SPVA,Natural_other,Natural_other_burnt,Natural_other,Natural_other,Natural,Natural_other
+335,Glaciers and perpetual snow,Natural_other,"",Natural_other,"",Sparsely vegetated areas,SPVA,Natural_other,Natural_other_ice,Natural_other,Natural_other,Natural,Natural_other
+411,Inland marshes,Wetlands_natural,"",Wetlands_natural,"",Wetlands,WTLN,Wetlands_natural,Wetlands_natural,Wetlands_natural,Wetlands_natural,Natural,Wetlands_natural
+412,Peat bogs,Wetlands_natural,"",Wetlands_natural,"",Wetlands,WTLN,Wetlands_natural,Wetlands_natural,Wetlands_natural,Wetlands_natural,Natural,Wetlands_natural
+421,Salt marshes,Waterbodies_marine,"",Waterbodies_marine,"",Marine inlets and transitional waters,MITW,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies,Waterbodies_marine
+422,Salines,Waterbodies_marine,"",Waterbodies_marine,"",Marine inlets and transitional waters,MITW,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies,Waterbodies_marine
+423,Intertidal flats,Waterbodies_marine,"",Waterbodies_marine,"",Marine inlets and transitional waters,MITW,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies,Waterbodies_marine
+424,Maximum floodplain extent,Wetlands_potential,"",Wetlands_potential,"",Wetlands,WTLN,Wetlands_potential,Wetlands_potential,Wetlands_potential,Wetlands_potential,Natural,Wetlands_potential
+425,Potential floodplain extent,Wetlands_potential,"",Wetlands_potential,"",Wetlands,WTLN,Wetlands_potential,Wetlands_potential,Wetlands_potential,Wetlands_potential,Natural,Wetlands_potential
+426,Actual floodplain extent,Wetlands_natural,"",Wetlands_natural,"",Wetlands,WTLN,Wetlands_natural,Wetlands_natural,Wetlands_natural,Wetlands_natural,Natural,Wetlands_natural
+427,"Other wetland, most likely mineral wetland",Wetlands_natural,"",Wetlands_natural,"",Wetlands,WTLN,Wetlands_natural,Wetlands_natural,Wetlands_natural,Wetlands_natural,Natural,Wetlands_natural
+511,Water courses,Waterbodies_inland,"",Waterbodies_inland,"",Rivers and lakes,RILA,Waterbodies_inland,Waterbodies_inland,Waterbodies_inland,Waterbodies_inland,Waterbodies,Waterbodies_inland
+512,Water bodies,Waterbodies_inland,"",Waterbodies_inland,"",Rivers and lakes,RILA,Waterbodies_inland,Waterbodies_inland,Waterbodies_inland,Waterbodies_inland,Waterbodies,Waterbodies_inland
+521,Coastal lagoons,Waterbodies_marine,"",Waterbodies_marine,"",Marine inlets and transitional waters,MITW,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies,Waterbodies_marine
+522,Estuaries,Waterbodies_marine,"",Waterbodies_marine,"",Marine inlets and transitional waters,MITW,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies,Waterbodies_marine
+523,Sea and ocean,Waterbodies_marine,"",Waterbodies_marine,"",Marine,MARI,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies_marine,Waterbodies,Waterbodies_marine
+2001,Arable very low intensity,Cropland,LI,Cropland_arable,2_low,Arable cropland,ACRP,Cropland_arable_2_low,Cropland_arable_2_low,Cropland_arable_other,Cropland_LI,Cropland,Cropland_arable_other
+2002,Arable low intensity,Cropland,LI,Cropland_arable,2_low,Arable cropland,ACRP,Cropland_arable_2_low,Cropland_arable_2_low,Cropland_arable_other,Cropland_LI,Cropland,Cropland_arable_other
+2003,Arable medium intensity,Cropland,LI,Cropland_arable,3_medium,Arable cropland,ACRP,Cropland_arable_3_medium,Cropland_arable_3_medium,Cropland_arable_other,Cropland_LI,Cropland,Cropland_arable_other
+2004,Arable high intensity,Cropland,HI,Cropland_arable,4_high,Arable cropland,ACRP,Cropland_arable_4_high,Cropland_arable_4_high,Cropland_arable_other,Cropland_HI,Cropland,Cropland_arable_other
+2005,Arable very high intensity,Cropland,HI,Cropland_arable,4_high,Arable cropland,ACRP,Cropland_arable_4_high,Cropland_arable_4_high,Cropland_arable_other,Cropland_HI,Cropland,Cropland_arable_other
+2006,Arable irrigated,Cropland,IR,Cropland_arable,4_high,Arable cropland,ACRP,Cropland_arable_4_high,Cropland_arable_4_high,Cropland_arable_other,Cropland_IR,Cropland,Cropland_arable_other
+3001,Permanent very low intensity,Cropland_other,"",Cropland_permanent,2_low,Permanent crops,PCRP,Cropland_permanent_2_low,Cropland_permanent_2_low,Cropland_permanent_other,Cropland_other,Cropland,Cropland_permanent_other
+3002,Permanent low intensity,Cropland_other,"",Cropland_permanent,2_low,Permanent crops,PCRP,Cropland_permanent_2_low,Cropland_permanent_2_low,Cropland_permanent_other,Cropland_other,Cropland,Cropland_permanent_other
+3003,Permanent medium intensity,Cropland_other,"",Cropland_permanent,3_medium,Permanent crops,PCRP,Cropland_permanent_3_medium,Cropland_permanent_3_medium,Cropland_permanent_other,Cropland_other,Cropland,Cropland_permanent_other
+3004,Permanent high intensity,Cropland_other,"",Cropland_permanent,4_high,Permanent crops,PCRP,Cropland_permanent_4_high,Cropland_permanent_4_high,Cropland_permanent_other,Cropland_other,Cropland,Cropland_permanent_other
+3005,Permanent very high intensity,Cropland_other,"",Cropland_permanent,4_high,Permanent crops,PCRP,Cropland_permanent_4_high,Cropland_permanent_4_high,Cropland_permanent_other,Cropland_other,Cropland,Cropland_permanent_other
+4012,Intensive heterogeneous grassland classes,Pasture,HI,Grassland,3_medium,Pastures,PAST,Grassland_3_medium,Grassland_3_medium,Grassland,Pasture_HI,Pasture,Grassland_intensive
+4013,Extensive heterogeneous grassland classes,Pasture,LI,Grassland,2_low,Pastures,PAST,Grassland_2_low,Grassland_2_low,Grassland,Pasture_LI,Pasture,Grassland_extensive
+10000,Leftover forest,Natural_unmanaged,"",Natural_unmanaged,"",Woodland and forest,WOFO,Natural_unmanaged,Natural_1_shrubland,Natural_unmanaged,Natural_shrubland,Natural,Natural_unmanaged
+20000,Leftover cropland,Natural_unmanaged,"",Natural_unmanaged,"",Heterogeneous agricultural areas,HCRP,Natural_unmanaged,Grassland_1_unmanaged,Natural_unmanaged,Natural_grassland,Natural,Natural_unmanaged
+40000,Leftover grassland,Natural_unmanaged,"",Natural_unmanaged,"",Heathland and shrub,HEAS,Natural_unmanaged,Grassland_1_unmanaged,Natural_unmanaged,Natural_grassland,Natural,Natural_unmanaged
+9999,NODATA,NODATA,"",NODATA,"",NODATA,NODA,NODATA,NODATA,NODATA,NODATA,"",NODATA
+14999,Agroforestry organic,Cropland,LIO,"","",Heterogeneous agricultural areas organic,HCRP,"","","",Cropland_LIO,Cropland,Cropland_arable_other
+15999,Very high density managed pasture system organic,Pasture,HIO,"","",Pastures organic,PAST,"","","",Pasture_HIO,Pasture,Grassland_intensive
+16999,High density managed pasture system organic,Pasture,HIO,"","",Pastures organic,PAST,"","","",Pasture_HIO,Pasture,Grassland_intensive
+17999,Moderate density managed pasture system organic,Pasture,LIO,"","",Pastures organic,PAST,"","","",Pasture_LIO,Pasture,Grassland_extensive
+18999,Low density managed pasture system organic,Pasture,LIO,"","",Pastures organic,PAST,"","","",Pasture_LIO,Pasture,Grassland_extensive
+19999,Very high density managed grassland organic,Pasture,HIO,"","",Pastures organic,PAST,"","","",Pasture_HIO,Pasture,Grassland_intensive
+20999,High density managed grassland organic,Pasture,HIO,"","",Pastures organic,PAST,"","","",Pasture_HIO,Pasture,Grassland_intensive
+21999,Moderate density managed grassland organic,Pasture,LIO,"","",Pastures organic,PAST,"","","",Pasture_LIO,Pasture,Grassland_extensive
+22999,Low density managed grassland organic,Pasture,LIO,"","",Pastures organic,PAST,"","","",Pasture_LIO,Pasture,Grassland_extensive
+23999,Rough grazing organic,Pasture,HIO,"","",Pastures organic,PAST,"","","",Pasture_HIO,Pasture,Grassland_extensive
+24999,Silvo-pastoral agroforestry organic,Pasture,HIO,"","",Pastures organic,PAST,"","","",Pasture_HIO,Pasture,Grassland_extensive
+25999,Managed semi-natural and natural grassland organic,Pasture,LIO,"","",Pastures organic,PAST,"","","",Pasture_LIO,Pasture,Grassland_extensive
+26999,Unmanaged semi-natural and natural grassland organic,Pasture,LIO,"","",Grassland organic,GRSL,"","","",Pasture_LIO,Pasture,Natural_unmanaged
+2001999,Arable very low intensity organic,Cropland,LIO,"","",Arable cropland organic,ACRP,"","","",Cropland_LIO,Cropland,Cropland_arable_other
+2002999,Arable low intensity organic,Cropland,LIO,"","",Arable cropland organic,ACRP,"","","",Cropland_LIO,Cropland,Cropland_arable_other
+2003999,Arable medium intensity organic,Cropland,LIO,"","",Arable cropland organic,ACRP,"","","",Cropland_LIO,Cropland,Cropland_arable_other
+2004999,Arable high intensity organic,Cropland,HIO,"","",Arable cropland organic,ACRP,"","","",Cropland_HIO,Cropland,Cropland_arable_other
+2005999,Arable very high intensity organic,Cropland,LIO,"","",Arable cropland organic,ACRP,"","","",Cropland_LIO,Cropland,Cropland_arable_other
+2006999,Arable irrigated organic,Cropland,IRO,"","",Arable cropland organic,ACRP,"","","",Cropland_IRO,Cropland,Cropland_arable_other
+3001999,Permanent very low intensity organic,Cropland_other,O,"","",Permanent crops organic,PCRP,"","","",Cropland_other_O,Cropland,Cropland_permanent_other
+3002999,Permanent low intensity organic,Cropland_other,O,"","",Permanent crops organic,PCRP,"","","",Cropland_other_O,Cropland,Cropland_permanent_other
+3003999,Permanent medium intensity organic,Cropland_other,O,"","",Permanent crops organic,PCRP,"","","",Cropland_other_O,Cropland,Cropland_permanent_other
+3004999,Permanent high intensity organic,Cropland_other,O,"","",Permanent crops organic,PCRP,"","","",Cropland_other_O,Cropland,Cropland_permanent_other
+3005999,Permanent very high intensity organic,Cropland_other,O,"","",Permanent crops organic,PCRP,"","","",Cropland_other_O,Cropland,Cropland_permanent_other
+4012999,Intensive heterogeneous grassland classes organic,Pasture,HIO,"","",Pastures organic,PAST,"","","",Pasture_HIO,Pasture,Grassland_intensive
+4013999,Extensive heterogeneous grassland classes organic,Pasture,LIO,"","",Pastures organic,PAST,"","","",Pasture_LIO,Pasture,Grassland_extensive
