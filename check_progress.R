@@ -94,12 +94,18 @@ report <- function(d) {
       r$loglik[i], r$quiet_min[i]))
   if (!is.null(niter) && !all(is.na(r$iter))) {
     done <- min(r$iter, na.rm = TRUE)
-    # rate from the oldest to newest batch across the run
-    span <- as.numeric(difftime(max(file.mtime(f)), min(file.mtime(f)), units = "mins"))
-    per  <- if (span > 0) (done - (nburn %||% 0)) / span else NA_real_
-    cat(sprintf("\n  slowest chain at sweep %d of %d  (%.1f%%)\n", done, niter, 100 * done / niter))
+    # Rate over the WHOLE run, anchored on when it started. Measuring the span between batch mtimes
+    # instead is worthless until several batches exist: with one batch per chain the span is seconds,
+    # which reported ~991 sweeps/min and an ETA of 0.0 h for a run with two hours left.
+    st <- if (!is.null(meta$started_at)) as.POSIXct(meta$started_at) else {
+      bl <- grep("^built", lin, value = TRUE)
+      if (length(bl)) as.POSIXct(trimws(sub("^built\\s+", "", bl[1]))) else min(file.mtime(f))
+    }
+    el  <- as.numeric(difftime(Sys.time(), st, units = "mins"))
+    per <- if (el > 0) done / el else NA_real_
+    cat(sprintf("\n  slowest chain at sweep %d of %d  (%.1f%%) after %.0f min\n", done, niter, 100 * done / niter, el))
     if (is.finite(per) && per > 0)
-      cat(sprintf("  ~%.0f sweeps/min post-burn -> ETA %.1f h for the slowest chain\n",
+      cat(sprintf("  ~%.1f sweeps/min overall -> ETA %.1f h for the slowest chain\n",
                   per, (niter - done) / per / 60))
     if (max(r$quiet_min) > 30)
       cat(sprintf("  NOTE: chain %s has not written for %.0f min -- check it is alive (see below)\n",
