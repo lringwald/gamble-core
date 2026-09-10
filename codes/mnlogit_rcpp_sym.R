@@ -1895,6 +1895,9 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
       if (!is.null(init_state$a_pi_mat)) a_pi_mat <- init_state$a_pi_mat
       if (!is.null(init_state$b_pi_mat)) b_pi_mat <- init_state$b_pi_mat
     }
+    # scalar hyperparameters written by a previous segment's final_state (see final_state_raw)
+    if (isTRUE(estimate_slab_c2) && !is.null(init_state$slab_c2)) collapse_slab_c2 <- init_state$slab_c2
+    if (isTRUE(use_re) && isTRUE(re_hs_global) && !is.null(init_state$re_tau)) re_tau_cur <- init_state$re_tau
     if (car_active && !is.null(init_state$tau_spatial)) {
       tau_spatial <- init_state$tau_spatial
     }
@@ -2144,6 +2147,10 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
   
   # joint FE/RE gate: one kappa per covariate, 1 = no gating (so joint_fe_re_shrink = FALSE is exact)
   kappa_v  <- rep(1, k)
+  # restored HERE, not in the init_state block above: kappa_v is initialised after that block, so a
+  # restore up there would be silently overwritten by this line
+  if (!is.null(init_state) && !is.null(init_state$kappa_v) &&
+      length(init_state$kappa_v) == k) kappa_v <- init_state$kappa_v
   kappa_nu <- rep(1, k)
   .dof_pin <- if (is.null(re_mean_shift_dof)) isTRUE(re_mean_shift) else isTRUE(re_mean_shift_dof)
   joint_shrink_on <- isTRUE(joint_fe_re_shrink) && isTRUE(use_re) && isTRUE(use_horseshoe)
@@ -4127,6 +4134,13 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
   final_state_raw$a_pi_mat <- if (use_spike_slab && use_re) a_pi_mat else NULL
   final_state_raw$b_pi_mat <- if (use_spike_slab && use_re) b_pi_mat else NULL
   final_state_raw$tau_spatial <- if (car_active) tau_spatial else NULL
+  # Estimated scalar hyperparameters. These were streamed per draw (state_sample) but NOT carried in
+  # the resume state, so a hot-started chain silently restarted them at their defaults -- a real
+  # discontinuity for slab_c2 in particular, which sits on an aliasing ridge and takes a long time to
+  # find its level again.
+  final_state_raw$slab_c2 <- if (isTRUE(estimate_slab_c2)) collapse_slab_c2 else NULL
+  final_state_raw$re_tau  <- if (isTRUE(use_re) && isTRUE(re_hs_global)) re_tau_cur else NULL
+  final_state_raw$kappa_v <- if (joint_shrink_on) kappa_v else NULL
 
   if (save_posterior_to_disk) {
     c_label <- if (is.null(chain_id)) "1" else as.character(chain_id)
