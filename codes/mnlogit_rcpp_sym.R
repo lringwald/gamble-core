@@ -1926,6 +1926,12 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
         k = k,
         p = p,
         use_re = use_re,
+        # Sweep plan: without it nothing reading this directory can tell how far a run has got or
+        # how far it has left to go, which for an hours-long streamed fit is the first thing anyone
+        # wants to know.
+        niter = niter, nburn = nburn, thin = thin, nretain = nretain,
+        posterior_batch_size = posterior_batch_size,
+        started_at = as.character(Sys.time()),
         X_rescaling = if (do_cen || do_scl) X_rescaling else NULL,
         do_cen = do_cen,
         do_scl = do_scl,
@@ -4075,6 +4081,14 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
     } else if (iter %% 100 == 0 || iter == niter) {
       phase <- if (iter <= nburn) "[Burn-in]" else "[Sampling]"
       cat(sprintf("Chain %d: Iteration %d / %d %s\n", chain_id, iter, niter, phase))
+      # A heartbeat FILE, because the cat() above is invisible while the run is in flight: chains run
+      # in future workers, whose stdout is captured and only relayed when the future resolves. With
+      # burn-in writing no batches either, an hours-long run had no live progress signal at all.
+      if (save_posterior_to_disk) {
+        try(writeLines(sprintf("%d %d %s %s", iter, niter, phase, format(Sys.time())),
+                       file.path(posterior_disk_path, sprintf("progress_chain_%s.txt", c_label))),
+            silent = TRUE)
+      }
     }
   }
 
