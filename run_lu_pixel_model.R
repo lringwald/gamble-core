@@ -317,6 +317,16 @@ organic_area_weight <- function(yr) {
 PROMOTE_NATURAL_OTHER <- isTRUE(as.logical(Sys.getenv("DRIVER_PROMOTE_NATURAL_OTHER", "FALSE")))
 NO_CHOICE_LU <- c("Waterbodies_marine", "Waterbodies_inland", "Wetlands_natural", "Natural_other", "NODATA")
 if (PROMOTE_NATURAL_OTHER) NO_CHOICE_LU <- setdiff(NO_CHOICE_LU, "Natural_other")
+# DRIVER_NO_CHOICE lets a project set the sink explicitly, because "non-choosable" is a property of
+# the DOWNSTREAM model, not of the land. BMLEH_Los1_CAPRI carries Waterbodies_inland (INLW),
+# Wetlands_natural (TWET) and Natural_other (OLND) as real target classes with CAPRI codes: folded
+# into no_choice the prior emits no transitions for them and the downscaler has nothing to allocate
+# them with. Give the list (comma-separated) to override, or "" to keep only NODATA non-choosable.
+if (nzchar(Sys.getenv("DRIVER_NO_CHOICE", ""))) {
+  .nc <- trimws(strsplit(Sys.getenv("DRIVER_NO_CHOICE"), ",")[[1]])
+  NO_CHOICE_LU <- unique(c(.nc[nzchar(.nc)], "NODATA"))
+  cat(sprintf("DRIVER_NO_CHOICE: non-choosable set to %s\n", paste(NO_CHOICE_LU, collapse = ", ")))
+}
 
 # The baseline must EXIST in the fitted classes. Natural_unmanaged is gone under
 # GLOBIOM_subclass, so default to the largest class overall (Forests_MI, 16.4% of area);
