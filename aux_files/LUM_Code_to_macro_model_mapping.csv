@@ -5,7 +5,7 @@ LUM_Code,LUM_label,GLOBIOM_UNFCCC,GLOBIOM_mngmt,BIOCLIMA3_LU,BIOCLIMA3_mngmt,ETL
 4,Multifunctional NWFP,Forests,MI,Forests,3_medium,Woodland and forest,WOFO,Forests_3_medium,Forests_3_medium,Forests_managed,Forests_MI,Forests,Forests_managed
 5,Multifunctional recreation/other,Forests,MI,Forests,3_medium,Woodland and forest,WOFO,Forests_3_medium,Forests_3_medium,Forests_managed,Forests_MI,Forests,Forests_managed
 6,Long rotation,Forests,HI,Forests,4_high,Woodland and forest,WOFO,Forests_4_high,Forests_4_high,Forests_managed,Forests_HI,Forests,Forests_managed
-7,Short rotation,Forests,SR,Forests,4_high,Permanent crops,PCRP,Forests_4_high,Forests_4_high,Forests_managed,Forests_SR,Forests,Cropland_arable_energy
+7,Short rotation,Forests,SR,Forests,4_high,Permanent crops,PCRP,Forests_4_high,Forests_4_high,Forests_managed,Forests_SR,Forests,Cropland_permanent_energy
 14,Agroforestry,Cropland,LI,Cropland_arable,2_low,Heterogeneous agricultural areas,HCRP,Cropland_arable_2_low,Cropland_arable_2_low,Cropland_arable_other,Cropland_LI,Cropland,Cropland_arable_other
 15,Very high density managed pasture system,Pasture,HI,Grassland,4_high,Pastures,PAST,Grassland_4_high,Grassland_4_high,Grassland,Pasture_HI,Pasture,Grassland_intensive
 16,High density managed pasture system,Pasture,HI,Grassland,3_medium,Pastures,PAST,Grassland_3_medium,Grassland_3_medium,Grassland,Pasture_HI,Pasture,Grassland_intensive
