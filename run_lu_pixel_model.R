@@ -203,9 +203,15 @@ MODEL_LABEL <- paste0(MODEL_LABEL, "_", CLASS_SCHEME, "_", RUN_MODE)
 # 2018, so a t-1 lag focal would carry no crop-type classes; a same-year focal keeps the focal_*
 # neighborhood composition crop-typed and consistent with the outcome. Honoured unless the user set
 # DRIVER_FOCAL_YEARS explicitly (then their choice stands, e.g. a deliberate generic-cropland lag).
-if (CLASS_SCHEME == "AGMIP" && !.focal_years_explicit) {
+# BMLEH is in the same position as AGMIP and for the same reason -- it is crop-typed from the same
+# 2018-only HRL product -- so it must take the same default. Left out, it fell to the 2010 lag and
+# silently lost every crop focal column: focal_softwheat, focal_barley, focal_maize and the rest
+# vanished while the residual-derived ones (focal_tobacco, focal_other_crop) survived, because only
+# the generic cropland reached the cascade. In the AgMIP fit focal_softwheat was among the strongest
+# predictors in the model (RMS 1.84).
+if (CLASS_SCHEME %in% c("AGMIP", "BMLEH") && !.focal_years_explicit) {
   FOCAL_YEARS <- MODEL_YEARS
-  cat(">>> AGMIP: focal defaulted to CONTEMPORANEOUS (focal_year = out_year); set DRIVER_FOCAL_YEARS to override.\n")
+  cat(sprintf(">>> %s: focal defaulted to CONTEMPORANEOUS (focal_year = out_year); set DRIVER_FOCAL_YEARS to override.\n", CLASS_SCHEME))
 }
 # Tag MODEL_LABEL with the focal (X_input) lag when any tier uses an EARLIER composition
 # year than its outcome, so lagged artifacts never collide with contemporaneous ones. Gap
