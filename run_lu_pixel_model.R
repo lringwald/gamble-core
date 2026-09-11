@@ -236,7 +236,10 @@ if (any(.focal_lag_gaps != 0L)) MODEL_LABEL <- paste0(MODEL_LABEL, "_focalLag", 
 LUM_DATA_LINEAGE <- { .lin <- tolower(Sys.getenv("DRIVER_LUM_LINEAGE", ""))
   # GLOBIOM and AGMIP both take their land-use AREA basis from the GLOBIOM downscaling fit
   # (LUM_fit_*, keyed LUM_code_clc); AgMIP only re-labels those codes + splits cropland by crop type.
-  if (!nzchar(.lin)) .lin <- if (CLASS_SCHEME %in% c("GLOBIOM", "AGMIP")) "globiom" else "bioclima"
+  # BMLEH belongs here too: BMLEH_Los1_label is a relabel of the SAME LUM codes AgMIP uses (plus the
+  # short-rotation and grassland-intensity splits), so it takes the same GLOBIOM area basis. Without
+  # it the scheme fell through to bioclima and looked for a file that does not exist.
+  if (!nzchar(.lin)) .lin <- if (CLASS_SCHEME %in% c("GLOBIOM", "AGMIP", "BMLEH")) "globiom" else "bioclima"
   if (!.lin %in% names(.LUM_REGISTRIES)) stop(sprintf("Unknown DRIVER_LUM_LINEAGE '%s' (options: %s).", .lin, paste(names(.LUM_REGISTRIES), collapse = ", ")))
   .lin }
 LUM_SOURCE_REGISTRY <- .LUM_REGISTRIES[[LUM_DATA_LINEAGE]]
