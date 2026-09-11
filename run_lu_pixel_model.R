@@ -257,7 +257,10 @@ cat(sprintf("LUM data lineage: %s  (registered years: %s)\n", LUM_DATA_LINEAGE, 
 # composition), area-conserving to LUM. The LUM cropland area with no HRL crop overlap stays in the
 # residual classes Cropland_arable_other / Cropland_permanent_other (both defined in AgMIP_label).
 # Auto-on for the AGMIP scheme; env-overridable via DRIVER_CROP_SPLIT.
-DO_CROP_SPLIT <- as.logical(Sys.getenv("DRIVER_CROP_SPLIT", if (CLASS_SCHEME == "AGMIP") "TRUE" else "FALSE"))
+# BMLEH is crop-typed from the same HRL product, so it defaults on too. It was relying on the caller
+# passing DRIVER_CROP_SPLIT=TRUE; forgetting that would have produced a design with no crop classes
+# at all and no error -- the same silent-degradation shape as the focal-year default.
+DO_CROP_SPLIT <- as.logical(Sys.getenv("DRIVER_CROP_SPLIT", if (CLASS_SCHEME %in% c("AGMIP", "BMLEH")) "TRUE" else "FALSE"))
 # HRL Crop Types source per year (same 1km key as LUM). HRL is a 2017-2019 average -> maps to 2018.
 # YEAR-MATCHED by default, not the 2017-2019 average. The average is exactly sum/3 with an unmapped
 # year counted as ZERO, and HRL's coverage varies enormously by year: BE/IE/LU/NL/CH appear only in
@@ -295,6 +298,17 @@ INCLUDE_IRRIGATION <- as.logical(Sys.getenv("DRIVER_INCLUDE_IRRIGATION", "FALSE"
 # HIO/LIO/IRO/O, so the carve-out yields e.g. Cropland_HIO), FALSE for BIOCLIMA (BIOCLIMA_DS_intermediate
 # is blank on organic rows -> carve-out would halt). Always env-overridable.
 INCLUDE_ORGANIC <- as.logical(Sys.getenv("DRIVER_INCLUDE_ORGANIC", if (CLASS_SCHEME == "GLOBIOM") "TRUE" else "FALSE"))
+# Every setting whose DEFAULT depends on CLASS_SCHEME, printed together. Adding a scheme means taking
+# a position on each of these, and three of them were missed for BMLEH in a single day -- the LUM
+# lineage (errored loudly), the crop split (caller happened to set it), and the focal year (produced a
+# plausible design with 26 focal columns instead of 44 and no error at all). Latent defaults are the
+# problem; showing them is the cheapest fix.
+.scheme_report <- function() cat(sprintf(
+  "\nSCHEME-SENSITIVE DEFAULTS for CLASS_SCHEME=%s\n  LUM lineage   %s\n  crop split    %s\n  focal years   %s%s\n  organic       %s\n  baseline      %s\n  no_choice     %s\n\n",
+  CLASS_SCHEME, LUM_DATA_LINEAGE, DO_CROP_SPLIT,
+  paste(FOCAL_YEARS, collapse = ","),
+  if (all(FOCAL_YEARS == MODEL_YEARS)) " (contemporaneous)" else " (LAGGED -- crop types exist only for 2018)",
+  INCLUDE_ORGANIC, BASELINE_CLASS, paste(NO_CHOICE_LU, collapse = ", ")))
 # Historical organic-area assumption (ported from run_prior_module_count_model.R): the organic master
 # map is a single ~present-day layer applied to every year, so it overstates historical organic area.
 # Downweight the organic FRACTION by the EU organic-share ratio vs the master's reference year; the
@@ -339,6 +353,8 @@ if (nzchar(Sys.getenv("DRIVER_NO_CHOICE", ""))) {
 # the driver additionally self-heals to the most prevalent class if this is absent.
 BASELINE_CLASS <- Sys.getenv("DRIVER_BASELINE",
                              if (any(grepl("GLOBIOM_subclass", CLASS_COLS))) "Forests_MI" else "Natural_unmanaged")
+
+.scheme_report()
 
 # Where each input's mapping table + join key live.
 SOURCE_REGISTRY <- list(
