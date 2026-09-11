@@ -19,11 +19,11 @@ LUM_Code,LUM_label,GLOBIOM_UNFCCC,GLOBIOM_mngmt,BIOCLIMA3_LU,BIOCLIMA3_mngmt,ETL
 24,Silvo-pastoral agroforestry,Pasture,LI,Grassland,2_low,Pastures,PAST,Grassland_2_low,Grassland_2_low,Grassland,Pasture_LI,Pasture,Grassland_extensive
 25,Managed semi-natural and natural grassland,Pasture,LI,Grassland,2_low,Pastures,PAST,Grassland_2_low,Grassland_2_low,Grassland,Pasture_LI,Pasture,Grassland_extensive
 26,Unmanaged semi-natural and natural grassland,Pasture,LI,Grassland,1_unmanaged,Grassland,GRSL,Natural_unmanaged,Grassland_1_unmanaged,Natural_unmanaged,Pasture_LI,Pasture,Natural_unmanaged
-27,High intensity urban (buildings),Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_HI,Urban,Built_up_area
-28,Medium intensity urban (buildings),Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_MI,Urban,Built_up_area
-29,Low intensity urban (buildings),Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_LI,Urban,Built_up_area
-30,Infrastructure,Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_TI,Urban,Built_up_area
-31,Other urban,Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_other,Urban,Built_up_area
+27,High intensity urban (buildings),Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_HI,Urban,Artificial
+28,Medium intensity urban (buildings),Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_MI,Urban,Artificial
+29,Low intensity urban (buildings),Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_LI,Urban,Artificial
+30,Infrastructure,Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_TI,Urban,Artificial
+31,Other urban,Urban,"",Urban,"",Urban,URBN,Urban,Urban,Built_up_area,Urban_other,Urban,Artificial
 321,Natural grasslands,Natural_unmanaged,"",Natural_unmanaged,"",Grassland,GRSL,Natural_unmanaged,Grassland_1_unmanaged,Natural_unmanaged,Natural_grassland,Natural,Natural_unmanaged
 322,Moors and heathland,Natural_unmanaged,"",Natural_unmanaged,"",Heathland and shrub,HEAS,Natural_unmanaged,Natural_1_shrubland,Natural_unmanaged,Natural_shrubland,Natural,Natural_unmanaged
 323,Sclerophyllous vegetation,Natural_unmanaged,"",Natural_unmanaged,"",Heathland and shrub,HEAS,Natural_unmanaged,Natural_1_shrubland,Natural_unmanaged,Natural_shrubland,Natural,Natural_unmanaged
