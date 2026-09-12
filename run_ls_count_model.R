@@ -124,7 +124,14 @@ NO_CHOICE_LU <- c("Waterbodies_marine", "Waterbodies_inland", "Wetlands_natural"
 
 SOURCE_REGISTRY <- list(
   LUM = list(
-    mapping_file = "../LAMASUS_downscaling/aux_files/LAMASUS_LUM_thematic_mapping.csv",
+    # The maintained copy lives in THIS repo. The count model was reading an external one in
+    # ../LAMASUS_downscaling that is a frozen older export: same 92 LUM codes, and every shared column
+    # byte-identical except GLOBIOM_subclass, where the external file collapses the five urban classes
+    # into a single "Urban". It does NOT carry BMLEH_Los1_label, so pointing the count model at a
+    # project class column failed with "CLASS_COLS missing" -- correct, but for a confusing reason.
+    # Verified before switching: LUM_label, GLOBIOM_UNFCCC, GLOBIOM_mngmt, BIOCLIMA3_*, ETL2_*,
+    # BIOCLIMA_DS_*, AgMIP_label all identical across the two.
+    mapping_file = Sys.getenv("DRIVER_MAPPING_FILE", "aux_files/LUM_Code_to_macro_model_mapping.csv"),
     join_key = "LUM_Code", base_lu = "GLOBIOM_UNFCCC"
   )
 )
