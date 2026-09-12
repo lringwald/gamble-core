@@ -45,7 +45,11 @@ Xraw <- Xraw[, setdiff(colnames(Xraw), EXCL), drop=FALSE]; drivers0 <- colnames(
 
 # --- DECORRELATE: greedy drop of the most-collinear var until max|cor| < thresh ---
 # prefer to KEEP these interpretable drivers (drop their collinear partners instead)
-keep_pref <- c("flat_share","upland_share","Slope_rad_sd","lu_area_Pasture_HI","lu_area_Pasture_LI",
+# grassland columns named by pattern: GLOBIOM calls them Pasture_HI/LI, BMLEH Grassland_intensive/
+# _extensive. A hardcoded name simply drops out of keep_pref under the other classification, which
+# silently changes WHICH driver survives decorrelation rather than erroring.
+keep_pref <- c("flat_share","upland_share","Slope_rad_sd",
+               grep("^lu_area_(Pasture|Grassland)", names(m), value = TRUE),
                "lu_area_Cropland_HI","Growing_Degree_Days_gdd5","Annual_Precipitation_bio12",
                "GHM_HI","GDP","allPA_share")
 decorr <- function(X, thresh, prefer, protect = character(0)) {

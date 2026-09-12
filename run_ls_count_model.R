@@ -173,7 +173,7 @@ class_lookup <- unique(mapping_thematic[, c(.src$join_key, "model_class", "focal
 # Model Settings (env-driven, matching run_prior_module_pixel_level_model.R conventions)
 N_CHAINS <- as.integer(Sys.getenv("DRIVER_NCHAINS", "4"))
 use_re <- TRUE # Random Effects enabled
-RE_GROUP_COL <- "GLOB_country"
+RE_GROUP_COL <- Sys.getenv("DRIVER_RE_GROUP_COL", "GLOB_country")  # "GLOB_country", "CAPRI_NUTS", ...
 # POOLED RE VARIANCE across the outcome columns (one scale per predictor instead of one per
 # (predictor, column)). Ported from the MNL's category-pooled RE block, but UNCENTRED: the count
 # columns are independent rates with no baseline and no zero-sum constraint, so the category-centring

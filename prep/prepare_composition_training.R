@@ -83,8 +83,19 @@ cat(sprintf("drivers (%d): %s\n", length(c(area_cols,meanv)), paste(c(area_cols,
 # n_conv = Pasture_HI+LI (conventional). Drivers = native NUTS3 (log1p areas + intensive means), but the
 # organic LU areas are EXCLUDED from the drivers (same map lineage as the response -> circular). The
 # national LEVEL is later anchored to Eurostat BOV_org/SGT_org in build_subclass_parameters.R.
-org_num  <- intersect(c("lu_area_Pasture_HIO","lu_area_Pasture_LIO"), names(d))
-conv_den <- intersect(c("lu_area_Pasture_HI","lu_area_Pasture_LI"),  names(d))
+# Find the grassland columns by PATTERN, not by GLOBIOM's names. Hardcoding Pasture_HI/LI means the
+# organic split silently disappears under any other classification -- BMLEH calls the same land
+# Grassland_intensive / Grassland_extensive, the intersect() comes back empty, and the run simply
+# reports "organic training skipped" instead of failing.
+.gcols <- grep("^lu_area_(Pasture|Grassland)", names(d), value = TRUE)
+org_num  <- grep("O$", .gcols, value = TRUE)          # organic twins carry the _O / ..O suffix
+conv_den <- setdiff(.gcols, org_num)
+cat(sprintf("ORGANIC proxy: %d organic grassland col(s) [%s] over %d conventional [%s]\n",
+            length(org_num), paste(sub("lu_area_","",org_num), collapse=","),
+            length(conv_den), paste(sub("lu_area_","",conv_den), collapse=",")))
+if (length(.gcols) && !length(org_num))
+  warning("grassland columns found but none organic -- was the run made with INCLUDE_ORGANIC=TRUE?",
+          call. = FALSE, immediate. = TRUE)
 if (length(org_num) && length(conv_den)) {
   org_excl  <- grep("HIO|LIO|other_O", area_cols, value=TRUE)             # every organic LU col (response lineage)
   org_areas <- setdiff(area_cols, org_excl)
