@@ -1783,6 +1783,14 @@ if (isTRUE(as.logical(Sys.getenv("DRIVER_DUMP_INPUTS", "FALSE")))) {
                mundlak_def = mundlak_def,   # NULL unless DRIVER_MUNDLAK; needed to rebuild the
                                             # same group-mean columns on new data at predict time
                group_idx_vec = group_idx_vec, re_group_names = if (use_re) re_group_names else NULL,
+               # WHICH COLUMN produced those labels, and which produced geo_region. Without this a
+               # consumer has to guess the keying from the label shapes, and guessing wrong is silent:
+               # matching a CAPRI-keyed fit against GLOB_country names matches nothing, so every
+               # country falls to the pooled fallback and the artifact looks complete with no country
+               # effects in it at all.
+               re_group_col = RE_GROUP_COL,
+               re_group_sliced = identical(RE_GROUP_COL, "CAPRI_NUTS"),   # sliced to 2 chars for the RE key
+               geo_col = if (exists("GEO_REGION_COL")) GEO_REGION_COL else NA_character_,
                baseline_class = baseline_class, col_names = colnames(X_mat),
                focal_cov_cols = focal_cov_cols, spatial_cont_cols_trans = spatial_cont_cols_trans,
                # coords/ID aligned 1:1 with X_mat rows (dat_pixel row order) -> enables spatial tile-block CV
