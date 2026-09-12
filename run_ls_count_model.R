@@ -36,8 +36,17 @@ get_latest_file <- function(dir_path, pattern) {
 # 1. PATHS & CONFIGURATION
 # =========================================================================
 LS_DIR <- Sys.getenv("GAMBLE_LS_DIR", "../LAND_SUPPLY_ELASTICITY")   # relative (sibling of gamble-core) + env-overridable; was a hardcoded OneDrive path, broke on the Google Drive migration
-DS_DIR <- "../LAMASUS_downscaling/"
-GRIDWORK_DIR <- "../LAMASUS_gridwork/output"
+# Canonical data root -- ../LAMASUS_* paths are superseded frozen exports. This also gives the count
+# model the 2010 LUM map, which LAMASUS_downscaling/input does not have: the year rule below fell back
+# to 2018 for the 2010 tier, so 2010 livestock counts were explained by land use from EIGHT YEARS
+# LATER purely because the file was missing from the directory it was reading.
+CASCADE_DATA <- Sys.getenv("GAMBLE_CASCADE_DATA", "../cascadinggamble-core/data")
+DS_DIR <- Sys.getenv("GAMBLE_DS_DIR", "../LAMASUS_downscaling/")
+# Same split as the pixel driver: bulk rasters/LUM in 02_intermediate, lookup tables in aux_files.
+# DS_DIR survives only for irrigation_binary_EEA_1kmID.rds, which has no canonical copy and is read
+# only when INCLUDE_IRRIGATION=TRUE (off by default in both models).
+GRIDWORK_DIR <- Sys.getenv("GAMBLE_GRIDWORK_DIR", file.path(CASCADE_DATA, "02_intermediate"))
+AUXDATA_DIR  <- Sys.getenv("GAMBLE_AUXDATA_DIR",  file.path(CASCADE_DATA, "aux_files"))
 # Master 1km covariate parquet: the gridwork pipeline MIGRATED to ../cascadinggamble-core (Snakemake),
 # whose data/02_intermediate copy is the LIVE one -- it carries the new GHM v3 threat groups (TI/NS/AG)
 # that the legacy LAMASUS_gridwork copy does not. Pick the NEWEST available; env GAMBLE_MASTER_PARQUET
@@ -201,7 +210,7 @@ FIT_COMPOSITION <- as.logical(Sys.getenv("DRIVER_FIT_COMPOSITION", "TRUE"))
 DOWNSCALE_GRID <- Sys.getenv("DRIVER_DOWNSCALE_GRID", "") # "" = off; "10km" = build the grid
 DOWNSCALE_MAP <- Sys.getenv(
   "DRIVER_DOWNSCALE_MAP",
-  mapping_file <- get_latest_file(GRIDWORK_DIR, "^one_kmID_master_mapping_.*\\.parquet$")
+  mapping_file <- get_latest_file(AUXDATA_DIR, "^one_kmID_master_mapping_.*\\.parquet$")
 )
 
 # --- Count unit (LSU per modeled count) ---
@@ -347,8 +356,8 @@ for (.col in names(prior_1km)[sapply(prior_1km, is.double)]) {
 }
 
 cat("  Loading grid mapping...\n")
-mapping_file <- get_latest_file(GRIDWORK_DIR, "^one_kmID_master_mapping_.*\\.parquet$")
-grid_map_raw <- arrow::read_parquet(file.path(GRIDWORK_DIR, mapping_file)) %>% as.data.table()
+mapping_file <- get_latest_file(AUXDATA_DIR, "^one_kmID_master_mapping_.*\\.parquet$")
+grid_map_raw <- arrow::read_parquet(file.path(AUXDATA_DIR, mapping_file)) %>% as.data.table()
 
 cat("  Loading LSU processed counts...\n")
 lsu_data <- readRDS(file.path(GRIDWORK_DIR, "LSU_data_processed_with_POL_20250701.rds")) %>% as.data.table()
@@ -550,8 +559,14 @@ dat_admin_list <- lapply(T_PAIRS, function(tp) {
   # 3. LU COVARIATES — ABSOLUTE AREAS per LU class (km^2), NOT shares.
   # Admin units are non-uniform in size, so absolute LU areas (with the log_area_offset handling
   # exposure) preserve the size signal that shares would discard. Classes = model_class (pixel-aligned).
-  lum_year <- if (tp$cov_year <= 2000) 2000 else 2018
-  lum_path <- paste0(DS_DIR, "input/LUM_fit_with_energy_levels_and_new_FM_", lum_year, "_EEA_1kmID.rds")
+  # Use the tier's OWN year when a map exists for it, falling back only when it genuinely does not.
+  .lum_dir <- file.path(CASCADE_DATA, "02_intermediate")
+  .lum_for <- function(y) file.path(.lum_dir, sprintf("LUM_fit_with_energy_levels_and_new_FM_%d_EEA_1kmID.rds", y))
+  lum_year <- if (file.exists(.lum_for(tp$cov_year))) tp$cov_year else if (tp$cov_year <= 2000) 2000 else 2018
+  if (lum_year != tp$cov_year)
+    cat(sprintf("  NOTE: no LUM map for %d -> using %d (covariates lead/lag the outcome by %d years)\n",
+                tp$cov_year, lum_year, lum_year - tp$cov_year))
+  lum_path <- .lum_for(lum_year)
   lu_areas <- NULL
 
   if (file.exists(lum_path)) {

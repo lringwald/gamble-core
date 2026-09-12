@@ -39,10 +39,18 @@ get_latest_file <- function(dir_path, pattern) {
 # sit next to this repo in the same parent folder. Set GAMBLE_* to relocate.
 LS_DIR       <- Sys.getenv("GAMBLE_LS_DIR",       "/Users/leopoldringwald/Library/CloudStorage/OneDrive-IIASA/R/LAND_SUPPLY_ELASTICITY")
 DS_DIR       <- Sys.getenv("GAMBLE_DS_DIR",       "../LAMASUS_downscaling/")
-GRIDWORK_DIR <- Sys.getenv("GAMBLE_GRIDWORK_DIR", "../LAMASUS_gridwork/output")
+# CANONICAL DATA ROOT. Everything under ../LAMASUS_* is superseded: those are frozen older exports.
+# The maintained copies live in cascadinggamble-core/data, and the differences are not cosmetic --
+# LAMASUS_downscaling/input has no 2010 LUM map at all (so the count model silently used 2018 for the
+# 2010 tier), and the gridwork grid mapping is the 2026-05-28 build against 2026-08-12 here, which
+# differ on 3.6% of cells in NUTS2 -- the column the Eurostat crop shares join on. CAPRI_NUTS is
+# identical between them, so RE keys are unaffected.
+CASCADE_DATA <- Sys.getenv("GAMBLE_CASCADE_DATA", "../cascadinggamble-core/data")
+GRIDWORK_DIR <- Sys.getenv("GAMBLE_GRIDWORK_DIR", file.path(CASCADE_DATA, "02_intermediate"))
+AUXDATA_DIR  <- Sys.getenv("GAMBLE_AUXDATA_DIR",  file.path(CASCADE_DATA, "aux_files"))
 
 # Dynamically pick the latest mapping file
-mapping_file <- get_latest_file(GRIDWORK_DIR, "^one_kmID_master_mapping_.*\\.parquet$")
+mapping_file <- get_latest_file(AUXDATA_DIR, "^one_kmID_master_mapping_.*\\.parquet$")
 if (is.null(mapping_file)) stop("No mapping file found in ", GRIDWORK_DIR)
 cat(sprintf("Using latest mapping file: %s\n", mapping_file))
 
@@ -234,9 +242,11 @@ if (any(.focal_lag_gaps != 0L)) MODEL_LABEL <- paste0(MODEL_LABEL, "_focalLag", 
     `2010` = list(file = file.path(GRIDWORK_DIR, "LUM_2010_wetlands_enhanced.rds"), id_col = "LAMASUS_1km_bufferID", code_col = "LUM_code_clc")
   ),
   globiom = list(
-    `2000` = list(file = file.path(GRIDWORK_DIR, "LUM_fit_with_energy_levels_and_new_FM_2000.rds"), id_col = "LAMASUS_1km_bufferID", code_col = "LUM_code_clc"),
-    `2010` = list(file = file.path(GRIDWORK_DIR, "LUM_fit_with_energy_levels_and_new_FM_2010.rds"), id_col = "LAMASUS_1km_bufferID", code_col = "LUM_code_clc"),
-    `2018` = list(file = file.path(GRIDWORK_DIR, "LUM_fit_with_energy_levels_and_new_FM_2018.rds"), id_col = "LAMASUS_1km_bufferID", code_col = "LUM_code_clc")
+    # keyed EEA_1kmID with a per-year code column, which is how the canonical export is shaped. The
+    # two 1km keys are exactly 1:1 (6,387,084 each way, max cardinality 1), so the swap moves no area.
+    `2000` = list(file = file.path(GRIDWORK_DIR, "LUM_fit_with_energy_levels_and_new_FM_2000_EEA_1kmID.rds"), id_col = "EEA_1kmID", code_col = "LUM_fit_with_energy_levels_and_new_FM_2000"),
+    `2010` = list(file = file.path(GRIDWORK_DIR, "LUM_fit_with_energy_levels_and_new_FM_2010_EEA_1kmID.rds"), id_col = "EEA_1kmID", code_col = "LUM_fit_with_energy_levels_and_new_FM_2010"),
+    `2018` = list(file = file.path(GRIDWORK_DIR, "LUM_fit_with_energy_levels_and_new_FM_2018_EEA_1kmID.rds"), id_col = "EEA_1kmID", code_col = "LUM_fit_with_energy_levels_and_new_FM_2018")
   )
 )
 LUM_DATA_LINEAGE <- { .lin <- tolower(Sys.getenv("DRIVER_LUM_LINEAGE", ""))
