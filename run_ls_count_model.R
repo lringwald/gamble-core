@@ -784,12 +784,26 @@ saveRDS(dat_admin, dat_admin_file)
 cat(sprintf("\n>>> Saved FULL dat_admin to %s\n", dat_admin_file))
 
 # Transform skewed and calculate offset
-# Calculate the Pasture-specific offset
-pasture_cols <- grep("^lu_area_Pasture", lu_area_cols, value = TRUE)
+# The GRAZING-LAND offset. Matched by pattern, not by GLOBIOM's name: the same land is "Pasture_*"
+# under GLOBIOM_UNFCCC+mngmt and "Grassland_*" under BMLEH_Los1_label. Hardcoding "Pasture" made the
+# grep return NOTHING under BMLEH, so total_pasture_area became 0 and the offset collapsed to a
+# CONSTANT log(1e-4) for every region. That is not a degraded model, it is a different one -- the
+# log-area offset is what makes these absolute counts comparable across admin units of wildly
+# different size, and losing it silently is the exact failure the count-offset bug already cost us
+# once. Fail loudly instead.
+GRAZE_PAT <- Sys.getenv("DRIVER_GRAZE_PATTERN", "^lu_area_(Pasture|Grassland)")
+pasture_cols <- grep(GRAZE_PAT, lu_area_cols, value = TRUE)
+if (!length(pasture_cols))
+  stop(sprintf("no grazing-land columns match '%s' among: %s\n  The count model's offset IS grazing area; without it every region would get a constant offset.",
+               GRAZE_PAT, paste(sub("lu_area_", "", lu_area_cols), collapse = ", ")))
+cat(sprintf(">>> grazing-land offset built from %d column(s): %s\n",
+            length(pasture_cols), paste(sub("lu_area_", "", pasture_cols), collapse = ", ")))
 non_pasture_cols <- setdiff(lu_area_cols, pasture_cols)
 
 dat_admin[, total_pasture_area := rowSums(.SD, na.rm = TRUE), .SDcols = pasture_cols]
 dat_admin[, log_area_offset := log(pmax(total_pasture_area, 1e-4))]
+if (dat_admin[, sd(log_area_offset, na.rm = TRUE)] < 1e-8)
+  stop("the grazing-area offset is constant across regions -- it carries no information. Check the grazing columns above.")
 
 for (.v in skewed_vars) {
   dat_admin[[.v]] <- log1p(dat_admin[[.v]])
@@ -804,8 +818,14 @@ for (.v in pasture_cols) {
   prop_pasture_cols <- c(prop_pasture_cols, prop_name)
 }
 
-# Drop the reference category (Pasture_HI)
-ref_cat <- "prop_Pasture_HI"
+# Drop a reference category. Named by env or, failing that, the LARGEST grazing class by area --
+# rather than a hardcoded "prop_Pasture_HI" that simply does not exist under another classification,
+# in which case nothing was dropped and the proportions stayed collinear with the intercept.
+ref_cat <- Sys.getenv("DRIVER_GRAZE_REF", "")
+if (!nzchar(ref_cat) || !ref_cat %in% prop_pasture_cols) {
+  .tot <- vapply(pasture_cols, function(v) sum(dat_admin[[v]], na.rm = TRUE), 0)
+  ref_cat <- sub("lu_area_", "prop_", names(which.max(.tot)))
+}
 if (ref_cat %in% prop_pasture_cols) {
   prop_pasture_cols <- setdiff(prop_pasture_cols, ref_cat)
   cat(sprintf("\n>>> Proportion Method: Dropped %s to serve as the reference baseline.\n", ref_cat))
@@ -905,7 +925,9 @@ year_idx <- which(colnames(X_mat) %in% year_dummy_cols) # integer(0) for a singl
 # Subset of random slopes based on country-level heterogeneity (e.g. GDP, Population).
 # DRIVER_RE_VARS overrides; "all" restores full slopes across all covariates.
 .re_spec_count <- Sys.getenv("DRIVER_RE_VARS",
-  "log1p_GDP,log1p_Pop,GHM_HI,GHM_TI,log1p_allPA_area,flat_share,Slope_rad_sd,Growing_Degree_Days_gdd5,log1p_lu_area_Pasture_HI")
+  paste0("log1p_GDP,log1p_Pop,GHM_HI,GHM_TI,log1p_allPA_area,flat_share,Slope_rad_sd,Growing_Degree_Days_gdd5,",
+         # the largest grazing class, by name under whichever classification is in use
+         "log1p_", names(which.max(vapply(pasture_cols, function(v) sum(dat_admin[[v]], na.rm = TRUE), 0)))))
 if (identical(tolower(trimws(.re_spec_count)), "all")) {
   re_col_idx <- setdiff(seq_len(ncol(X_mat)), year_idx)      # legacy: every cov except year FE
 } else {
