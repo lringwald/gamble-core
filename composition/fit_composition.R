@@ -11,12 +11,21 @@
 Sys.setenv(OMP_NUM_THREADS = 1, VECLIB_MAXIMUM_THREADS = 1, OPENBLAS_NUM_THREADS = 1)
 suppressMessages({ library(data.table); library(future); library(future.apply); source("codes/mnlogit_rcpp_sym.R") })
 SP <- Sys.getenv("D_SPECIES", "bov")
-m  <- fread(file.path("output/composition", paste0(SP, "_training_nuts2.csv")))
+# D_TRAINING overrides the default file, so an alternative CLASSIFICATION (e.g. the 8-category
+# CAPRI-aligned cattle table) can be fitted by the same code.
+m  <- fread(Sys.getenv("D_TRAINING", file.path("output/composition", paste0(SP, "_training_nuts2.csv"))))
+# Categories are DETECTED, not hardcoded: any column named n<UPPERCASE> is an outcome count. This is
+# what lets the same fit serve D/O/F (nD, nO, nF) and the CAPRI cattle set (nDCOW, nSCOW, nHEIR,
+# nHEIF, nBULL, nCAMR, nCAFR, nCAFF) without a second copy of the model.
+CATCOLS <- grep("^n[A-Z]+$", names(m), value = TRUE)
+if (length(CATCOLS) < 2) stop("no outcome columns found (expected n<UPPERCASE>): ", paste(names(m), collapse=", "))
+CATS <- sub("^n", "", CATCOLS)
+cat(sprintf(">>> composition target: %d categories (%s)\n", length(CATS), paste(CATS, collapse=", ")))
 NITER <- as.integer(Sys.getenv("D_NITER","20000")); NBURN <- as.integer(Sys.getenv("D_NBURN","10000"))
 NCHAINS <- as.integer(Sys.getenv("D_NCHAINS","4"))
 CORTHRESH <- as.numeric(Sys.getenv("D_CORTHRESH","0.7"))
 
-drivers0 <- setdiff(names(m), c("nuts2","nD","nO","nF","country"))
+drivers0 <- setdiff(names(m), c("nuts2", CATCOLS, "country"))
 Xraw <- as.matrix(m[, drivers0, with=FALSE]); Xraw[!is.finite(Xraw)] <- 0
 # NB: areas/GDP/Pop are ALREADY log1p(sum) from prepare_composition_training (same construction as
 # the totals X + grid X), so do NOT transform again here -- that keeps gamma = beta_total + delta valid.
@@ -71,7 +80,7 @@ if (length(.wl)) {
 }
 
 X <- cbind(intercept = 1, Xraw[, sel, drop=FALSE]); k <- ncol(X)
-Yr <- as.matrix(m[, .(D=nD, O=nO, F=nF)]); Yr[Yr<0] <- 0
+Yr <- as.matrix(m[, ..CATCOLS]); colnames(Yr) <- CATS; Yr[Yr<0] <- 0
 Yr <- Yr * (1000 / median(rowSums(Yr))); keep <- rowSums(round(Yr)) > 0
 X <- X[keep, ]; Yr <- Yr[keep, ]; grp <- as.integer(factor(m$country[keep])); Y <- round(Yr)
 
