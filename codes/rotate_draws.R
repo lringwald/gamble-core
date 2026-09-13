@@ -31,8 +31,18 @@ rotate_draws <- function(dirs, groups = NULL, groups_all = NULL, max_draws = 100
       f <- tryCatch(recover_mnlogit_posterior(d, chain_id = ci), error = function(e) NULL)
       if (is.null(f) || is.null(f$postb_total)) next
       if (is.null(cn)) { cn <- f$cat_names; vn <- f$var_names; grp <- dimnames(f$postb_total)[[3]] }
-      acc_re <- c(acc_re, list(f$postb_total)); acc_mu <- c(acc_mu, list(f$postb_pooled))
-      if (verbose) cat(sprintf("  loaded %s chain %d: %s draws\n", basename(dirname(d)), ci, dim(f$postb_total)[4]))
+      # THIN PER CHAIN, on load. Accumulating every chain at full length first needs
+      # k x p x G x draws x 8 bytes EACH -- at 84 x 43 x 25 x 2500 that is ~1.8 GB a chain, ~7 GB for
+      # four, and the process simply dies. Thinning here bounds peak memory by max_draws regardless of
+      # how many segments are pooled, which is the whole point of being able to extend a run.
+      nd_i <- dim(f$postb_total)[4]
+      per <- max(1L, ceiling(nd_i / max(1L, ceiling(max_draws / max(1L, length(chs) * length(dirs))))))
+      idx <- seq(1L, nd_i, by = per)
+      acc_re <- c(acc_re, list(f$postb_total[, , , idx, drop = FALSE]))
+      acc_mu <- c(acc_mu, list(f$postb_pooled[, , idx, drop = FALSE]))
+      if (verbose) cat(sprintf("  loaded %s chain %d: %d draws -> kept %d\n",
+                               basename(dirname(d)), ci, nd_i, length(idx)))
+      rm(f); gc(FALSE)
     }
   }
   if (!length(acc_re)) stop("no recoverable draws under: ", paste(dirs, collapse = ", "))
