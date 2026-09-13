@@ -51,7 +51,7 @@ AUXDATA_DIR  <- Sys.getenv("GAMBLE_AUXDATA_DIR",  file.path(CASCADE_DATA, "aux_f
 
 # Dynamically pick the latest mapping file
 mapping_file <- get_latest_file(AUXDATA_DIR, "^one_kmID_master_mapping_.*\\.parquet$")
-if (is.null(mapping_file)) stop("No mapping file found in ", GRIDWORK_DIR)
+if (is.null(mapping_file)) stop("No mapping file found in ", AUXDATA_DIR)
 cat(sprintf("Using latest mapping file: %s\n", mapping_file))
 
 PIXEL_RES <- as.integer(Sys.getenv("DRIVER_PIXEL_RES", "10"))  # grid resolution in km (5 or 10); EU 10km ~ 48-64k pixels, 5km ~ 180k. CANONICAL default 10.
@@ -604,7 +604,7 @@ climate_cols <- sub("_2000$", "", setdiff(climate_cols_raw_2000,
   c(paste0(c("GHM_HI", "GHM_TI", "GHM_Ovr"), "_2000"), "GDP_2000", "Pop_2000")))
 
 cat(paste0("  Loading 1km -> ", PIXEL_RES, "km grid mapping...\n"))
-grid_map_pixel <- arrow::read_parquet(file.path(GRIDWORK_DIR, mapping_file)) %>% as.data.table()
+grid_map_pixel <- arrow::read_parquet(file.path(AUXDATA_DIR, mapping_file)) %>% as.data.table()
 grid_map_pixel[, `:=`(
   LAMASUS_1km_bufferID = as.integer(LAMASUS_1km_bufferID),
   EEA_1kmID = as.integer(EEA_1kmID),
@@ -635,6 +635,8 @@ grid_map_pixel[is.na(pixel_weight) | pixel_weight == 0, pixel_weight := 1.0]
 # area-weighted and aggregated in several places (every value column gets multiplied by
 # pixel_weight), so a character key riding along inside it is a bug waiting to happen.
 GEO_LOOKUP_1KM <- unique(grid_map_pixel[, .(LAMASUS_1km_bufferID, EEA_1kmID, geo = geo_region)])
+# id crosswalk for sources keyed differently from the LUM export (see .load_crop_source)
+grid_map_pixel_raw_ids <- unique(grid_map_pixel[, .(LAMASUS_1km_bufferID, EEA_1kmID)])
 grid_map_pixel <- unique(grid_map_pixel[, .(LAMASUS_1km_bufferID, EEA_1kmID, ID, X, Y, Grouping_Key, pixel_weight)])
 
 # =========================================================================
@@ -765,20 +767,36 @@ apply_lum_carveouts <- function(wide, year) {
 # the non-overlap remainder max(A - H, 0) stays in the residual class (H = HRL crop area of that
 # group in the cell, A = LUM cropland area of that group). HRL file cached (read once per year).
 .crop_cache <- new.env(parent = emptyenv())
-.load_crop_source <- function(year) {
-  key <- as.character(year)
+.load_crop_source <- function(year, lum_id_col = NULL) {
+  key <- paste0(as.character(year), "|", if (is.null(lum_id_col)) "" else lum_id_col)
   if (is.null(.crop_cache[[key]])) {
-    reg <- CROP_SOURCE_REGISTRY[[key]]
+    reg <- CROP_SOURCE_REGISTRY[[key0 <- as.character(year)]]
     cr <- as.data.table(readRDS(reg$file))[, .SD, .SDcols = c(reg$id_col, reg$code_col, reg$area_col)]
     setnames(cr, c(reg$id_col, reg$code_col, reg$area_col), c("join_id", "Crop_Type_Code", "carea"))
     cr[, join_id := as.integer(join_id)]
+    # TRANSLATE the crop ids into the LUM's id space when the two sources are keyed differently.
+    # HRL Crop Types are keyed LAMASUS_1km_bufferID; the canonical LUM export is keyed EEA_1kmID.
+    # Joining one against the other is not an error -- both are integers and 14.2% of the values
+    # coincide by chance -- so it silently dropped 86% of the crop data and the area assert still
+    # passed, because unattributed cropland simply stays in the residual. Durum wheat disappeared
+    # from the design entirely before this was caught.
+    if (!is.null(lum_id_col) && !identical(lum_id_col, reg$id_col)) {
+      xw <- unique(grid_map_pixel_raw_ids[, .(from = as.integer(get(reg$id_col)),
+                                              to   = as.integer(get(lum_id_col)))])
+      xw <- xw[!is.na(from) & !is.na(to) & !duplicated(from)]
+      n0 <- uniqueN(cr$join_id)
+      cr <- merge(cr, xw, by.x = "join_id", by.y = "from")
+      cr[, join_id := to][, to := NULL]
+      cat(sprintf("    crop ids translated %s -> %s (%s of %s kept)\n", reg$id_col, lum_id_col,
+                  format(uniqueN(cr$join_id), big.mark = ","), format(n0, big.mark = ",")))
+    }
     cr <- merge(cr, CROP_LEGEND, by = "Crop_Type_Code")  # keep only legend crops (drops 65535/3100/3200)
     .crop_cache[[key]] <- cr[carea > 0]
   }
   .crop_cache[[key]]
 }
-apply_crop_split <- function(dt, year) {
-  cr <- .load_crop_source(year)
+apply_crop_split <- function(dt, year, lum_id_col = NULL) {
+  cr <- .load_crop_source(year, lum_id_col)
   new_rows <- list()
   for (grp in c("arable", "permanent")) {
     resid_class <- if (grp == "arable") "Cropland_arable_other" else "Cropland_permanent_other"
@@ -859,7 +877,7 @@ load_granular_lum <- function(year) {
   if (DO_CROP_SPLIT) {
     if (!is.null(CROP_SOURCE_REGISTRY[[as.character(year)]])) {
       a_pre <- sum(rawc$area)
-      rawc <- apply_crop_split(rawc, year)
+      rawc <- apply_crop_split(rawc, year, reg$id_col)
       if (abs(a_pre - sum(rawc$area)) > 1) {
         stop(sprintf("load_granular_lum(%s): crop split changed 1km area by %.1f km2 (should conserve).", year, a_pre - sum(rawc$area)))
       }

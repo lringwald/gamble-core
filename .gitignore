@@ -20,3 +20,13 @@ _local/
 scratch/
 experiments/
 .tmp*
+
+# --- fitted results: posterior batches, artifacts, reports --------------------
+# Same status as output/ -- multi-GB and fully regenerable from the design dump plus
+# the run settings recorded in each run's lineage.txt. 626 MB and 230 files at the time
+# this was added, which is not a git problem to have.
+results/*
+!results/.gitkeep
+
+# --- stray run logs ----------------------------------------------------------
+*.log
