@@ -95,7 +95,10 @@ res_list <- future_lapply(1:NCHAINS, function(cid) {
   source("codes/mnlogit_rcpp_sym.R")
   set.seed(cid)
   mnlogit_rcpp_sym(
-    X = X, Y = Y, intercept = FALSE, baseline = 3, niter = NITER, nburn = NBURN,
+    # baseline = the LAST category. Was hardcoded 3, which is the F of D/O/F but an arbitrary
+    # middle category (HEIR) once the target has 8 -- the fit still runs, so it would not have
+    # announced itself.
+    X = X, Y = Y, intercept = FALSE, baseline = length(CATS), niter = NITER, nburn = NBURN,
     use_horseshoe = TRUE, horseshoe_idx = 2:k, symmetric_hs = TRUE, equation_specific_hs = FALSE,
     use_re = TRUE, group_idx = grp, re_idx = 1L,   # INTERCEPT ONLY -- see note below
     # re_idx = 1:k was tried and reverted 2026-08-21. This table is 189 rows / 26 countries
@@ -114,9 +117,15 @@ res_list <- future_lapply(1:NCHAINS, function(cid) {
 }, future.seed = TRUE)
 
 pb <- do.call(abind::abind, c(lapply(res_list, function(f) f$postb_pooled), list(along = 3)))
-nd <- dim(pb)[3]                          # [k,3,draws]
-mu <- (pb[,1,] + pb[,2,]) / 3
-dD <- pb[,1,] - mu; dO <- pb[,2,] - mu; dF <- -mu                 # sum-to-zero δ per draw
+nd <- dim(pb)[3]                          # [k, K, draws]
+# SUM-TO-ZERO δ, for K categories. The baseline category's coefficients are fixed at 0 by the
+# sampler, so the category mean is simply the sum over all K divided by K -- which is what the
+# previous three-category form (pb[,1,]+pb[,2,])/3 with dF = -mu was computing. Written generally so
+# the same code serves D/O/F and the 8-category CAPRI cattle target; the old form silently used two
+# of eight categories and divided by three.
+KC <- length(CATS)
+mu <- apply(pb[, seq_len(KC), , drop = FALSE], c(1, 3), sum) / KC
+DELTA <- setNames(lapply(seq_len(KC), function(j) pb[, j, ] - mu), CATS)
 ci <- function(M) t(apply(M, 1, function(z) c(mean=mean(z), lo=quantile(z,.05), hi=quantile(z,.95))))
 sl <- setdiff(colnames(X), "intercept")
 rep_sub <- function(M, lab) {
@@ -128,15 +137,20 @@ rep_sub <- function(M, lab) {
     ifelse(vis[r],"✓","·"), rownames(cc)[r], cc[r,1], cc[r,2], cc[r,3]))
   cat(sprintf("  visible drivers: %d / %d\n", sum(vis), nrow(cc)))
 }
-rep_sub(dD, "DAIRY"); rep_sub(dO, "MEAT")
+for (.j in seq_len(KC)) rep_sub(DELTA[[.j]], CATS[.j])
 
 # RE-aware fit
 fit <- res_list[[1]]
 tt <- fit$postb_total; S <- Y/rowSums(Y)
-if (length(dim(tt))==4) { tm <- apply(tt,c(1,2,3),mean); eta <- t(sapply(1:nrow(X), function(i) X[i,] %*% tm[,,grp[i]])) } else eta <- X %*% rbind(rowMeans(dD),rowMeans(dO),rowMeans(dF))
+if (length(dim(tt))==4) { tm <- apply(tt,c(1,2,3),mean); eta <- t(sapply(1:nrow(X), function(i) X[i,] %*% tm[,,grp[i]])) } else
+  eta <- X %*% do.call(rbind, lapply(DELTA, rowMeans))
 P <- exp(eta)/rowSums(exp(eta))
-cat(sprintf("\nfit (RE-aware): cor(pred,obs) D=%.2f O=%.2f F=%.2f | country RE-var=%.3f\n",
-            cor(P[,1],S[,1]),cor(P[,2],S[,2]),cor(P[,3],S[,3]), if(!is.null(fit$post_sigma_re)) mean(fit$post_sigma_re) else NA))
-saveRDS(list(sel=sel, dD=dD, dO=dO, dF=dF, drivers=colnames(X)),
-        file.path("output/composition", paste0(SP, "_composition_fit.rds")))
+cat(sprintf("\nfit (RE-aware), cor(pred,obs) per category | country RE-var=%.3f\n",
+            if(!is.null(fit$post_sigma_re)) mean(fit$post_sigma_re) else NA))
+for (.j in seq_len(KC)) cat(sprintf("    %-8s %.2f\n", CATS[.j], suppressWarnings(cor(P[,.j], S[,.j]))))
+# `delta` + `cats` are the general form. dD/dO/dF are ALSO written when the target really is D/O/F,
+# so existing consumers of the three-category fits keep working unchanged.
+.out <- list(sel = sel, drivers = colnames(X), cats = CATS, delta = DELTA)
+if (identical(CATS, c("D","O","F"))) { .out$dD <- DELTA[["D"]]; .out$dO <- DELTA[["O"]]; .out$dF <- DELTA[["F"]] }
+saveRDS(.out, file.path("output/composition", paste0(SP, "_composition_fit.rds")))
 cat(sprintf("saved -> output/composition/%s_composition_fit.rds\n", SP))

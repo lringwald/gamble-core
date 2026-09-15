@@ -13,11 +13,35 @@ suppressMessages(library(data.table))
 OUT <- "output/composition/subclass_country_parameters.csv"
 ORG_YEAR <- as.integer(Sys.getenv("ORG_ANCHOR_YEAR", "2010"))   # Eurostat organic-share year to anchor to
 
-# country order = droplevels(GLOB_country) levels, as the count model used for the REs
+# WHICH COLUMN KEYED THE RANDOM EFFECTS? Not necessarily GLOB_country: a CAPRI-based project fits on
+# CAPRI_country (2-char CAPRI codes), and the totals posterior's group axis is then in THAT vocabulary.
+# Resolve it from the fit itself -- fit_config.rds records `re_group`, and the fit directory name ends
+# in _RE_<col> -- rather than assuming. Getting this wrong is silent: the group count stops matching,
+# the labels below fall back to "1","2","3"..., and every country in the exported gamma table becomes
+# an integer while the file still looks complete.
+.fitdirs <- list.dirs("output/saved_model_outputs", recursive = FALSE)
+.fitdirs <- .fitdirs[file.exists(file.path(.fitdirs, "fit.rds")) & grepl("_RE_", basename(.fitdirs))]
+if (!length(.fitdirs)) stop("no saved totals fit under output/saved_model_outputs/ -- run the count model first")
+.newest <- .fitdirs[which.max(file.mtime(file.path(.fitdirs, "fit.rds")))]
+GRPCOL <- local({
+  cf <- file.path(.newest, "fit_config.rds")
+  g  <- if (file.exists(cf)) tryCatch(readRDS(cf)$re_group, error = function(e) NULL) else NULL
+  if (is.null(g) || !nzchar(g)) g <- sub(".*_RE_", "", basename(.newest))     # from the dir name
+  g
+})
+
 daf <- list.files("output","^dat_admin_FULL_.*rds$",full.names=TRUE)
 d <- as.data.table(readRDS(daf[which.max(file.mtime(daf))]))
-countries <- levels(droplevels(as.factor(d[["GLOB_country"]])))
-iso2name  <- unique(d[, .(NUTS0 = as.character(NUTS0), name = as.character(GLOB_country))])   # NUTS0 -> country name
+if (!GRPCOL %in% names(d)) {
+  warning(sprintf("the fit was keyed on '%s' but the admin panel has no such column -- falling back to GLOB_country. The gamma table's country labels will NOT match the fit.", GRPCOL), call. = FALSE, immediate. = TRUE)
+  GRPCOL <- "GLOB_country"
+}
+cat(sprintf(">>> RE grouping resolved from %s: %s\n", basename(.newest), GRPCOL))
+countries <- levels(droplevels(as.factor(d[[GRPCOL]])))
+# NUTS0 -> the SAME vocabulary the fit used, so the organic anchor below looks up the labels that
+# actually appear in `cn`. Mixing a CAPRI-keyed fit with GLOB country NAMES here silently yields NA
+# anchors for every country.
+iso2name  <- unique(d[, .(NUTS0 = as.character(NUTS0), name = as.character(get(GRPCOL)))])
 name_by_iso <- setNames(iso2name$name, iso2name$NUTS0)
 
 # map composition/organic driver name -> totals (X_mat) name: lu_area_X -> log1p_lu_area_X; GDP/Pop/allPA_area -> log1p_*
@@ -65,12 +89,34 @@ for (sp in c("BOV","SGT")) {
   r <- readRDS(tf); pt <- r$postb_total; dn <- dimnames(pt)[[1]]
   bt <- if (length(dim(pt))==5) apply(pt[,1,,,], c(1,2), mean) else apply(pt[,1,,], c(1,2), mean)  # [driver x country]
   rownames(bt) <- dn; ng <- ncol(bt)
-  cn <- if (ng == length(countries)) countries else as.character(seq_len(ng))
+  # No silent fallback. If the group count disagrees the labels are unknowable, and emitting
+  # "1","2","3"... produces a gamma table that joins to nothing downstream while looking complete.
+  if (ng != length(countries))
+    stop(sprintf("%s: the fit has %d RE groups but `%s` yields %d levels (%s...). The totals posterior and the admin panel disagree about the grouping -- re-check DRIVER_RE_GROUP_COL.",
+                 sp, ng, GRPCOL, length(countries), paste(head(countries, 4), collapse = ", ")))
+  cn <- countries
 
-  # --- D/O/F composition delta (fixed slopes), mapped to totals names ---
+  # --- composition delta (fixed slopes), mapped to totals names ---
+  # Categories come from the FIT (cf$cats), so a species fitted on the 8-category CAPRI cattle target
+  # assembles 8 x |systems| cells rather than the 3 x |systems| of D/O/F. Legacy fits without $cats
+  # fall back to dD/dO/dF.
   cf <- readRDS(sprintf("output/composition/%s_composition_fit.rds", tolower(sp)))
-  delta <- list(D = rowMeans(cf$dD), O = rowMeans(cf$dO), F = rowMeans(cf$dF))
+  CATS_SP <- if (!is.null(cf$cats)) cf$cats else c("D","O","F")
+  delta <- if (!is.null(cf$delta)) lapply(cf$delta[CATS_SP], rowMeans)
+           else setNames(lapply(CATS_SP, function(cl) rowMeans(cf[[paste0("d", cl)]])), CATS_SP)
   for (lv in names(delta)) names(delta[[lv]]) <- to_tot(cf$drivers)
+
+  # HOW MANY composition drivers actually land on a totals driver? Both sides must speak the same LU
+  # vocabulary: the composition training tables are built from the driver's class column, so a
+  # GLOBIOM-vintage table (lu_area_Pasture_HI) against a BMLEH totals fit
+  # (log1p_lu_area_Grassland_extensive) matches on the shared socioeconomic/terrain drivers ONLY and
+  # silently contributes no land-use signal at all.
+  .ov <- length(intersect(names(delta[[1]]), dn))
+  cat(sprintf(">>> %s: %d categories (%s) | %d of %d composition drivers match the totals design\n",
+              sp, length(CATS_SP), paste(CATS_SP, collapse = ", "), .ov, length(delta[[1]])))
+  if (.ov < 0.5 * length(delta[[1]]))
+    warning(sprintf("%s: only %d of %d composition drivers join the totals beta. The composition training table and the totals fit look like DIFFERENT land-use classifications -- gamma would carry no land-use signal.",
+                    sp, .ov, length(delta[[1]])), call. = FALSE, immediate. = TRUE)
 
   # --- organic delta mapped to totals names (0-vec if no organic) ---
   dorg_vec <- setNames(numeric(length(dn)), dn)
@@ -78,8 +124,8 @@ for (sp in c("BOV","SGT")) {
 
   for (ci in seq_len(ng)) {
     cc <- anchor <- NULL
-    for (lv in c("D","O","F")) {
-      dvec <- setNames(numeric(length(dn)), dn)                            # D/O/F delta aligned to totals drivers
+    for (lv in CATS_SP) {
+      dvec <- setNames(numeric(length(dn)), dn)                            # category delta aligned to totals drivers
       dvec[intersect(names(delta[[lv]]), dn)] <- delta[[lv]][intersect(names(delta[[lv]]), dn)]
       for (sys in systems) {
         dorg_signed <- setNames(numeric(length(dn)), dn)
@@ -103,8 +149,9 @@ for (sp in c("BOV","SGT")) {
 tab <- rbindlist(rows)
 fwrite(tab, OUT)
 cat(sprintf("Wrote %d rows -> %s\n", nrow(tab), OUT))
-cat(sprintf("  %d countries x %d subclasses (%d D/O/F x %d system) x %d drivers\n",
-            uniqueN(tab$country), uniqueN(tab[, .(subclass, system)]), 3L, length(systems), uniqueN(tab$driver)))
+cat(sprintf("  %d countries x %d subclass-system cells (%d subclasses x %d system) x %d drivers\n",
+            uniqueN(tab$country), uniqueN(tab[, .(subclass, system)]),
+            uniqueN(tab$subclass), length(systems), uniqueN(tab$driver)))
 if (HAVE_ORG) {
   cat("\norganic level check — modelled vs Eurostat national share (should match after anchor):\n")
   chk <- rbindlist(lapply(c("BOV","SGT"), function(sp) rbindlist(lapply(unique(esh$name), function(nm) {
