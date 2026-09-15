@@ -34,3 +34,7 @@ results/*
 # Bulk inputs live with the data in cascadinggamble (data/input/), not here.
 # gamble-core is the MODEL CODE; point GAMBLE_INPUT_DIR at wherever the data is.
 input/
+
+# Project-specific code lives in cascadinggamble (GitLab), not in the public model repo.
+# See cascadinggamble-core/scripts/<PROJECT>/gamble_model/.
+projects/
