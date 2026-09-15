@@ -661,6 +661,22 @@ x_pixel_soil_list <- lapply(spatial_cat_vars, function(v) {
   cls_cols <- setdiff(colnames(res), c("ID", "Grouping_Key"))
   res[, (cls_cols) := .SD / pmax(1e-9, rowSums(.SD)), .SDcols = cls_cols]
   setnames(res, cls_cols, paste0(v, "_s", cls_cols))
+
+  # DROP share classes that no modelled pixel occupies. dcast creates a column for every value
+  # present in the 1km source, but the inner join to grid_map_pixel keeps only pixels in the model
+  # grid -- so a class living entirely outside it survives as an ALL-ZERO column. That column
+  # carries no information and cannot be identified (X %*% beta is unchanged by its coefficient),
+  # and it does real damage downstream: the sampler's rank guard drops it, and until 2026-09-14 a
+  # zero-variance column was then mistaken for an intercept and handed the un-centring shift,
+  # putting a phantom country-varying coefficient into beta_rotated and on to the downscaler.
+  # ROO_s6 was exactly this, in the BMLEH and both GLOBIOM designs.
+  .sh <- paste0(v, "_s", cls_cols)
+  .dead <- .sh[vapply(.sh, function(cc) { z <- res[[cc]]; all(!is.finite(z) | z == 0) }, TRUE)]
+  if (length(.dead)) {
+    res[, (.dead) := NULL]
+    cat(sprintf("    %s: dropped %d empty share class(es) -- no modelled pixel occupies them: %s\n",
+                v, length(.dead), paste(.dead, collapse = ", ")))
+  }
   return(res)
 })
 x_pixel_soil_list <- lapply(x_pixel_soil_list, function(dt) setkey(as.data.table(dt), ID, Grouping_Key))
@@ -787,8 +803,12 @@ apply_lum_carveouts <- function(wide, year) {
       n0 <- uniqueN(cr$join_id)
       cr <- merge(cr, xw, by.x = "join_id", by.y = "from")
       cr[, join_id := to][, to := NULL]
-      cat(sprintf("    crop ids translated %s -> %s (%s of %s kept)\n", reg$id_col, lum_id_col,
-                  format(uniqueN(cr$join_id), big.mark = ","), format(n0, big.mark = ",")))
+      .keep_frac <- uniqueN(cr$join_id) / max(n0, 1L)
+      cat(sprintf("    crop ids translated %s -> %s (%s of %s kept, %.1f%%)\n", reg$id_col, lum_id_col,
+                  format(uniqueN(cr$join_id), big.mark = ","), format(n0, big.mark = ","), 100 * .keep_frac))
+      if (.keep_frac < as.numeric(Sys.getenv("DRIVER_CROP_ID_MIN_KEEP", "0.95")))
+        stop(sprintf("crop-id translation kept only %.1f%% of ids (%s -> %s). The crosswalk is not covering this source; a partial join here silently drops crop area and the run still looks healthy.",
+                     100 * .keep_frac, reg$id_col, lum_id_col))
     }
     cr <- merge(cr, CROP_LEGEND, by = "Crop_Type_Code")  # keep only legend crops (drops 65535/3100/3200)
     .crop_cache[[key]] <- cr[carea > 0]
@@ -814,7 +834,24 @@ apply_crop_split <- function(dt, year, lum_id_col = NULL) {
   }
   # Replace the residual-class rows with the crop-split rows; keep everything else untouched.
   dt_keep <- dt[!model_class %in% c("Cropland_arable_other", "Cropland_permanent_other")]
-  rbind(dt_keep, rbindlist(new_rows), fill = TRUE)
+  out <- rbind(dt_keep, rbindlist(new_rows), fill = TRUE)
+
+  # HOW MUCH CROPLAND ACTUALLY GOT TYPED. This is the check that matters, and it is deliberately
+  # independent of the id mechanism: area conservation cannot see this failure at all, because
+  # cropland HRL fails to match simply stays in the residual and the totals still balance. When the
+  # crop ids were joined against the wrong key, 86% of the crop data vanished, the assert passed, and
+  # the only symptom was one class quietly missing from the design.
+  .crop_cls <- CROP_LEGEND$crop_class
+  .typed <- out[model_class %in% .crop_cls, sum(area)]
+  .resid <- out[model_class %in% c("Cropland_arable_other", "Cropland_permanent_other"), sum(area)]
+  .frac  <- .typed / max(.typed + .resid, 1e-9)
+  cat(sprintf("    crop split: %.1f%% of cropland typed (%.0f of %.0f km2)\n",
+              100 * .frac, .typed, .typed + .resid))
+  .minf <- as.numeric(Sys.getenv("DRIVER_CROP_MIN_TYPED", "0.25"))
+  if (.frac < .minf)
+    stop(sprintf("the crop split typed only %.1f%% of cropland (expected well above %.0f%%). Area is still conserved -- untyped cropland stays in the residual -- so this will NOT show up as lost area. Check that the crop source and the LUM export share an id space.",
+                 100 * .frac, 100 * .minf))
+  out
 }
 
 load_granular_lum <- function(year) {
