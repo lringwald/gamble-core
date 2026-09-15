@@ -189,7 +189,17 @@ class_lookup <- unique(mapping_thematic[, c(.src$join_key, "model_class", "focal
 # Model Settings (env-driven, matching run_prior_module_pixel_level_model.R conventions)
 N_CHAINS <- as.integer(Sys.getenv("DRIVER_NCHAINS", "4"))
 use_re <- TRUE # Random Effects enabled
-RE_GROUP_COL <- Sys.getenv("DRIVER_RE_GROUP_COL", "GLOB_country")  # "GLOB_country", "CAPRI_NUTS", ...
+RE_GROUP_REQUEST <- Sys.getenv("DRIVER_RE_GROUP_COL", "GLOB_country")  # "GLOB_country", "CAPRI_NUTS", ...
+# CAPRI_NUTS is a REGION code ("DE11", ~246 of them), but the RE group here has to be a COUNTRY: the
+# downstream parameter table (build_livestock_capri.R) is keyed by country, and an RE over ~246
+# regions is a different model, not a re-keying of this one. So asking for CAPRI_NUTS means "group on
+# the CAPRI country", i.e. its 2-char prefix -- the same slice the pixel driver applies and records as
+# re_group_sliced. Resolve it to the real column name here so every artifact, path and diagnostic
+# records the key that was ACTUALLY used rather than the one that was asked for.
+RE_GROUP_COL <- if (identical(RE_GROUP_REQUEST, "CAPRI_NUTS")) "CAPRI_country" else RE_GROUP_REQUEST
+if (!identical(RE_GROUP_COL, RE_GROUP_REQUEST))
+  cat(sprintf(">>> RE group: %s requested -> using %s (CAPRI_NUTS sliced to its 2-char country)\n",
+              RE_GROUP_REQUEST, RE_GROUP_COL))
 # POOLED RE VARIANCE across the outcome columns (one scale per predictor instead of one per
 # (predictor, column)). Ported from the MNL's category-pooled RE block, but UNCENTRED: the count
 # columns are independent rates with no baseline and no zero-sum constraint, so the category-centring
@@ -375,6 +385,24 @@ nuts3_lookup <- grid_map_raw[!is.na(NUTS3), .N, by = .(NUTS3, NUTS0, GLOB_countr
   by = NUTS3
 ]
 
+# CAPRI keys by the SAME dominant rule -- but computed SEPARATELY and merged, NOT by adding
+# CAPRI_NUTS to the `by` above. Adding it there would split the pixel counts finer and could flip
+# which country a border NUTS3 is assigned to, silently changing the existing GLOB_country grouping.
+# This is a real assignment rather than a lookup: 411 of 1432 NUTS3 units touch more than one CAPRI
+# country at 1km, because the two geometries disagree at borders.
+if ("CAPRI_NUTS" %in% names(grid_map_raw)) {
+  .capri_lookup <- grid_map_raw[!is.na(NUTS3) & !is.na(CAPRI_NUTS) & nzchar(as.character(CAPRI_NUTS)),
+                                .N, by = .(NUTS3, CAPRI_NUTS)][
+    order(-N), .(CAPRI_NUTS = as.character(CAPRI_NUTS)[1]), by = NUTS3]
+  nuts3_lookup <- merge(nuts3_lookup, .capri_lookup, by = "NUTS3", all.x = TRUE)
+  nuts3_lookup[, CAPRI_country := substr(CAPRI_NUTS, 1, 2)]
+  cat(sprintf(">>> CAPRI keys: %d NUTS3 -> %d CAPRI regions -> %d CAPRI countries (%d NUTS3 with no CAPRI match)\n",
+              nrow(nuts3_lookup), uniqueN(nuts3_lookup$CAPRI_NUTS), uniqueN(nuts3_lookup$CAPRI_country),
+              sum(is.na(nuts3_lookup$CAPRI_NUTS))))
+} else if (identical(RE_GROUP_COL, "CAPRI_country")) {
+  stop("DRIVER_RE_GROUP_COL=CAPRI_NUTS, but the grid mapping carries no CAPRI_NUTS column: ", mapping_file)
+}
+
 lsu_data <- merge(lsu_data, grid_map_raw[, .(
   LAMASUS_1km_bufferID = as.integer(LAMASUS_1km_bufferID), 
   EEA_1kmID = as.integer(EEA_1kmID),
@@ -401,10 +429,18 @@ if (nzchar(DOWNSCALE_GRID)) {
 }
 
 # Observation Unit mapping (1km pixel -> Admin Boundary)
-grid_map_pixel <- unique(lsu_data[, .(LAMASUS_1km_bufferID, EEA_1kmID, RESOLUTION, NUTS0, GLOB_country, NUTS3, pixel_weight)])
+# CAPRI_country rides along so it can serve as the RE key; it is nested under NUTS3 by construction
+# (assigned from it above), so carrying it changes neither frame's row count.
+.capri_cols <- intersect(c("CAPRI_NUTS", "CAPRI_country"), names(lsu_data))
+grid_map_pixel <- unique(lsu_data[, c("LAMASUS_1km_bufferID", "EEA_1kmID", "RESOLUTION", "NUTS0",
+                                      "GLOB_country", "NUTS3", "pixel_weight", .capri_cols), with = FALSE])
 
 # Base Admin unit frame (for joining later)
-admin_frame <- unique(lsu_data[, .(RESOLUTION, NUTS0, GLOB_country, NUTS3)])
+.af_before <- uniqueN(lsu_data$RESOLUTION)
+admin_frame <- unique(lsu_data[, c("RESOLUTION", "NUTS0", "GLOB_country", "NUTS3", .capri_cols), with = FALSE])
+if (nrow(admin_frame) != .af_before)
+  stop(sprintf("admin_frame is no longer one row per RESOLUTION (%d rows for %d units) -- the CAPRI keys are not nested under NUTS3 as assumed.",
+               nrow(admin_frame), .af_before))
 
 # =========================================================================
 # 3. STATIC COVARIATES

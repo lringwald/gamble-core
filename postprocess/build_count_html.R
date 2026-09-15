@@ -14,6 +14,26 @@ esc <- function(s) { s <- gsub("&", "&amp;", s); s <- gsub("<", "&lt;", s); gsub
 fnum <- function(x, d = 4) formatC(x, format = "f", digits = d, big.mark = ",")
 
 # ---------------------------------------------------------------------------
+# WHICH COLUMN HOLDS THE RE GROUP?
+# ---------------------------------------------------------------------------
+# The count model names this column after whatever DRIVER_RE_GROUP_COL resolved to, so it is
+# GLOB_country for a GLOBIOM fit and CAPRI_country for a CAPRI-keyed one. This report used to
+# hardcode GLOB_country in seven places, which meant a CAPRI fit died here with
+# "object 'GLOB_country' not found" AFTER the sampling had already succeeded -- the expensive part
+# done, the report unreachable.
+#
+# Resolve it from the table itself rather than from an env var: the CSVs are the ground truth about
+# how the fit was keyed, and they outlive the shell that produced them.
+GROUP_CANDIDATES <- c("CAPRI_country", "GLOB_country", "Ns_reg", "NUTS0", "country")
+.gcol <- function(dt, what = "table") {
+  hit <- intersect(GROUP_CANDIDATES, names(dt))
+  if (!length(hit))
+    stop(sprintf("no RE-group column in the %s (looked for %s; it has: %s). If this fit used a new grouping, add its column name to GROUP_CANDIDATES.",
+                 what, paste(GROUP_CANDIDATES, collapse = ", "), paste(head(names(dt), 12), collapse = ", ")))
+  hit[1]
+}
+
+# ---------------------------------------------------------------------------
 # 1.  Discover species from parameter_summary CSVs — keep only latest per species
 # ---------------------------------------------------------------------------
 par_files <- Sys.glob("output/parameter_summary_NUTS3_count_rcpp_*_2026-*.csv")
@@ -84,7 +104,7 @@ load_admin_data <- function() {
       X_mat = X_mat,
       offset_vec = offset_vec,
       Y = list(BOV = dat$BOV, SGT = dat$SGT),
-      group_names = as.character(dat$GLOB_country),
+      group_names = as.character(dat[[.gcol(dat, "admin training data")]]),
       nuts_ids = dat$NUTS3,
       year = dat$out_year,
       dat = dat
@@ -228,7 +248,7 @@ build_species_section <- function(sp, is_first) {
     max_rhat   <- max(rh)
     pct_lt_101 <- 100 * mean(rh < 1.01)
     pct_lt_11  <- 100 * mean(rh < 1.1)
-    n_regions  <- length(unique(cv$GLOB_country))
+    n_regions  <- length(unique(cv[[.gcol(cv, "convergence table")]]))
     n_params   <- length(unique(cv$ks))
   } else {
     max_rhat <- pct_lt_101 <- pct_lt_11 <- n_regions <- n_params <- NA
@@ -323,7 +343,8 @@ build_species_section <- function(sp, is_first) {
   re_heat <- ""
   if (sp %in% names(betas) && has_conv) {
     bt <- betas[[sp]]
-    wide_val <- dcast(bt, GLOB_country ~ ks, value.var = "value")
+    .g <- .gcol(bt, "beta table")
+    wide_val <- dcast(bt, as.formula(paste(.g, "~ ks")), value.var = "value")
 
     vals <- as.matrix(wide_val[, -1, with = FALSE])
     cov_sd <- apply(vals, 2, sd, na.rm = TRUE)
@@ -334,7 +355,7 @@ build_species_section <- function(sp, is_first) {
     vlim <- as.numeric(quantile(abs(vals), 0.95, na.rm = TRUE))
     if (is.na(vlim) || vlim == 0) vlim <- 1
 
-    countries <- as.character(wide_val$GLOB_country)
+    countries <- as.character(wide_val[[.g]])
     hh <- paste0('<th>driver</th>',
       paste(sprintf('<th class="rot"><span>%s</span></th>', esc(countries)), collapse = ""))
 
@@ -429,9 +450,10 @@ build_species_section <- function(sp, is_first) {
   
   if (!is.null(admin_data) && sp %in% names(betas)) {
     b_table <- betas[[sp]]
-    b_wide <- dcast(b_table, GLOB_country ~ ks, value.var = "value", fill = 0)
+    .gb <- .gcol(b_table, "beta table")
+    b_wide <- dcast(b_table, as.formula(paste(.gb, "~ ks")), value.var = "value", fill = 0)
     b_mat <- as.matrix(b_wide[, -1, with=FALSE])
-    rownames(b_mat) <- b_wide$GLOB_country
+    rownames(b_mat) <- b_wide[[.gb]]
     
     X <- admin_data$X_mat
     missing_cols <- setdiff(colnames(X), colnames(b_mat))
@@ -856,13 +878,13 @@ model_desc <- '
 </div>
 <table class="dt desc-table">
 <tr><td class="cl">Outcome Y</td><td>LSU-equivalent livestock counts per NUTS3 region &times; year</td></tr>
-<tr><td class="cl">Offset</td><td>log(total pasture area) &mdash; pasture-only exposure (Pasture_HI + HIO + LI + LIO)</td></tr>
-<tr><td class="cl">Pasture covariates</td><td><strong>Proportion method</strong>: prop_Pasture_HIO, prop_Pasture_LI, prop_Pasture_LIO (reference = Pasture_HI)</td></tr>
+<tr><td class="cl">Offset</td><td>log(total grazing area) &mdash; grazing-only exposure, summed over the Pasture/Grassland classes of whichever classification was fitted (the run log names them)</td></tr>
+<tr><td class="cl">Grazing covariates</td><td><strong>Proportion method</strong>: the grazing-class shares, with the largest grazing class by area dropped as the reference</td></tr>
 <tr><td class="cl">Non-pasture LU</td><td>log1p(area) for Cropland (6 classes), Forests (6), Natural_unmanaged, Urban</td></tr>
 <tr><td class="cl">Biophysical</td><td>GDD5, Precipitation, Slope/Elevation SD, terrain shares (flat/steep/lowland/upland)</td></tr>
 <tr><td class="cl">Socioeconomic</td><td>GHM_HI, GHM_TI, log1p(GDP), log1p(Pop), log1p(allPA_area)</td></tr>
 <tr><td class="cl">Panel structure</td><td>3 years (2000, 2010, 2020) with year fixed effects (ref = 2000)</td></tr>
-<tr><td class="cl">Random effects</td><td>Country-level (GLOB_country) on intercept + key socioeconomic &amp; terrain drivers</td></tr>
+<tr><td class="cl">Random effects</td><td>Country-level on intercept + key socioeconomic &amp; terrain drivers &mdash; the grouping key is the column heading the heatmaps below</td></tr>
 <tr><td class="cl">Input data</td><td><code>prior_model_1km_master_inputs.parquet</code> &rarr; aggregated to NUTS3</td></tr>
 <tr><td class="cl">Script</td><td><code>run/count.R</code> &rarr; <code>run_prior_module_count_model.R</code></td></tr>
 </table>
