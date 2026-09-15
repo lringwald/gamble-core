@@ -383,7 +383,7 @@ SOURCE_REGISTRY <- list(
     join_key = "LUM_Code", base_lu = "GLOBIOM_UNFCCC"
   ),
   CLC = list(
-    mapping_file = "input/CLC_Code1_LEVEL123_ETL2_mapping.csv",
+    mapping_file = file.path(Sys.getenv("GAMBLE_INPUT_DIR", "input"), "CLC_Code1_LEVEL123_ETL2_mapping.csv"),
     join_key = "Code1", base_lu = "GLOBIOM_UNFCCC"
   )
 )

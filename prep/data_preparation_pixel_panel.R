@@ -52,7 +52,11 @@ gridwork_dir <- "../LAMASUS_gridwork/output"
 
 path_prior_inputs    <- file.path(gridwork_dir, "prior_model_1km_master_inputs.parquet")
 path_grid_mapping    <- file.path(gridwork_dir, "one_kmID_master_mapping_2026-03-30.parquet")
-path_clc_class_map   <- "input/CLC_Code1_LEVEL123_ETL2_mapping.csv"
+# DATA ROOT. gamble-core holds the MODEL CODE; the bulk inputs live in cascadinggamble. GAMBLE_INPUT_DIR
+# points at wherever they are, defaulting to the in-repo `input/` so an existing self-contained
+# checkout keeps working unchanged.
+INPUT_DIR            <- Sys.getenv("GAMBLE_INPUT_DIR", "input")
+path_clc_class_map   <- file.path(INPUT_DIR, "CLC_Code1_LEVEL123_ETL2_mapping.csv")
 
 # CLC Annual TS paths (one per year)
 path_clc_ts <- setNames(

@@ -487,8 +487,11 @@ build_species_section <- function(sp, is_first) {
       log_ratio = log_ratio
     )
     
-    shp_file <- "input/geodata/NUTS_RG_2016/NUTS_RG_01M_2016_3035.geojson"
-    if (!file.exists(shp_file)) shp_file <- "input/geodata/NUTS_RG_2024/NUTS_RG_01M_2024_3035.geojson"
+    # Geometry is a BULK input: it lives wherever GAMBLE_INPUT_DIR points, not necessarily in this
+    # repo. Absent geometry is not an error -- the maps are skipped and the rest of the report stands.
+    .gd <- file.path(Sys.getenv("GAMBLE_INPUT_DIR", "input"), "geodata")
+    shp_file <- file.path(.gd, "NUTS_RG_2016/NUTS_RG_01M_2016_3035.geojson")
+    if (!file.exists(shp_file)) shp_file <- file.path(.gd, "NUTS_RG_2024/NUTS_RG_01M_2024_3035.geojson")
     if (file.exists(shp_file)) {
       cat(sprintf("Rendering maps for %s...\n", sp))
       nuts_sf <- sf::st_read(shp_file, quiet = TRUE)

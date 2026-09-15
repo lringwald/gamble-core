@@ -8,7 +8,12 @@ suppressMessages(library(data.table))
 OUT <- "output/composition"; dir.create(OUT, recursive = TRUE, showWarnings = FALSE)
 YR <- 2010
 
-read_estat <- function(name){ raw<-fread(file.path("input/eurostat",paste0(name,".tsv")),sep="\t",header=TRUE,colClasses="character")
+# DATA ROOT. gamble-core holds the MODEL CODE; the bulk inputs live in cascadinggamble. GAMBLE_INPUT_DIR
+# points at wherever they are, defaulting to the in-repo `input/` so an existing self-contained
+# checkout keeps working unchanged.
+INPUT_DIR <- Sys.getenv("GAMBLE_INPUT_DIR", "input")
+EUROSTAT_DIR <- Sys.getenv("EUROSTAT_DIR", file.path(INPUT_DIR, "eurostat"))
+read_estat <- function(name){ raw<-fread(file.path(EUROSTAT_DIR,paste0(name,".tsv")),sep="\t",header=TRUE,colClasses="character")
  key<-names(raw)[1]; dims<-strsplit(sub("\\\\.*","",key),",")[[1]]; parts<-tstrsplit(raw[[1]],",",fixed=TRUE)
  for(i in seq_along(dims)) raw[[dims[i]]]<-trimws(parts[[i]]); raw[[key]]<-NULL
  yrs<-grep("^[12][0-9]{3}$",names(raw),value=TRUE); long<-melt(raw,id.vars=dims,measure.vars=yrs,variable.name="year",value.name="v")

@@ -13,7 +13,11 @@
 # =============================================================================
 suppressMessages(library(data.table))
 
-EUROSTAT_DIR <- "input/eurostat"
+# DATA ROOT. gamble-core holds the MODEL CODE; the bulk inputs live in cascadinggamble. GAMBLE_INPUT_DIR
+# points at wherever they are, defaulting to the in-repo `input/` so an existing self-contained
+# checkout keeps working unchanged.
+INPUT_DIR    <- Sys.getenv("GAMBLE_INPUT_DIR", "input")
+EUROSTAT_DIR <- Sys.getenv("EUROSTAT_DIR", file.path(INPUT_DIR, "eurostat"))
 OUT_DIR      <- "output/eurostat"; dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 MODEL_YEARS  <- c(2000, 2010, 2020)             # outcome timesteps (2018/2020 -> 2020 for population)
 ORG_BACKCAST_2010 <- 0.85                       # 2010 organic = 0.85 * 2012 share (≈2yr @ ~8%/yr)
