@@ -20,7 +20,7 @@
 # =============================================================================
 suppressMessages({library(data.table)})
 
-rotate_draws <- function(dirs, groups = NULL, groups_all = NULL, max_draws = 1000L,
+rotate_draws <- function(dirs, groups = NULL, groups_all = NULL, max_draws = 1000L, zero_cols = NULL,
                          probs = c(0.025, 0.975), chains = NULL, verbose = TRUE) {
   stopifnot(length(dirs) >= 1)
   acc_re <- NULL; acc_mu <- NULL; cn <- NULL; vn <- NULL; grp <- NULL
@@ -92,6 +92,24 @@ rotate_draws <- function(dirs, groups = NULL, groups_all = NULL, max_draws = 100
   }
   res <- rbindlist(out[seq_len(z - 1L)])
   setnames(res, c("q1", "q2"), qn)
+
+  # INERT COVARIATES -> exactly zero. A covariate that is identically zero in the design cannot enter
+  # any utility, so its contrast is zero by construction whatever the posterior happens to hold for
+  # it. Forced rather than trusted: such a column is dropped by the sampler's rank guard and was, up
+  # to 2026-09-14, handed the un-centring shift because a zero-variance column was mistaken for an
+  # intercept -- which put a country-varying coefficient on a covariate that carries no information,
+  # straight into this artifact and on to the downscaler. Posteriors written before that fix are
+  # repaired by this step, exactly: the corruption was additive on those rows alone and never
+  # re-entered the chain (verified -- 83 of 84 rows and the log-likelihood bit-identical).
+  if (length(zero_cols)) {
+    .hit <- unique(res$ks[res$ks %in% zero_cols])
+    if (length(.hit)) {
+      .vcols <- intersect(names(res), c("value_median", qn, "value"))
+      for (.v in .vcols) res[ks %in% .hit, (.v) := 0]
+      message(sprintf(">>> rotate_draws: zeroed %d inert covariate(s) (identically zero in the design): %s",
+                      length(.hit), paste(.hit, collapse = ", ")))
+    }
+  }
   res[]
 }
 

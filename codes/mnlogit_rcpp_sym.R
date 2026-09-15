@@ -856,6 +856,14 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
     #      the sampler ran the constrained TMVN branch: a few Gibbs sweeps instead of an exact
     #      Cholesky draw -> slower mixing. Measured (Forests n=4000, 600 iter, horseshoe OFF):
     #      held-out -744.7 -> -714.4 (+30.3 LL), 1.11x faster once fixed.
+    if (nzchar(Sys.getenv("MNL_DEBUG_DROP", ""))) {
+      .dbg <- as.integer(strsplit(Sys.getenv("MNL_DEBUG_DROP"), ",")[[1]])
+      cat(sprintf("[DEBUG_DROP] k=%d k_active=%d | drop_all=%s\n", k, k_active,
+                  paste(sort(drop_all), collapse = ",")))
+      for (.i in .dbg) cat(sprintf("[DEBUG_DROP]   col %d: in drop_all=%s | keep_mask=%s | full_to_active=%s\n",
+        .i, .i %in% drop_all, keep_mask[.i],
+        if (is.na(full_to_active[.i])) "NA" else as.character(full_to_active[.i])))
+    }
     .remap <- function(idx) if (is.null(idx)) NULL else
                             as.integer(unname(na.omit(full_to_active[idx])))
     re_idx <- .remap(re_idx)
@@ -2004,12 +2012,25 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
   postb_total_std <- NULL
   postb_pooled_std <- NULL
 
+  # WHICH COLUMNS ARE INTERCEPTS? By NAME, else by value == 1 -- never by var == 0.
+  # `var == 0` is true of ANY constant column, including an all-zero covariate (a share class no
+  # pixel occupies). Such a column is dropped by the rank guard and correctly reconstructed as 0,
+  # and is then handed the un-centring shift here because it was mistaken for an intercept -- giving
+  # a never-estimated covariate a country-varying, intercept-magnitude coefficient in the saved
+  # posterior. Observed on ROO_s6 (all zeros, present in the BMLEH and both GLOBIOM designs), which
+  # reached beta_rotated and the downscaler as a phantom driver.
+  .intercept_cols <- function(nms, Xo) {
+    hit <- if (!is.null(nms)) which(tolower(nms) == "intercept") else integer(0)
+    if (!length(hit)) hit <- which(apply(Xo, 2, function(col) all(is.finite(col) & col == 1)))
+    hit
+  }
+
   # Fix #2: Precompute back-transformation indices for disk path.
   # These use dedicated names (bt_*) to avoid shadowing the BART intercept
   # int_idx set on line 312, which is still needed inside Section E.
   if (save_posterior_to_disk && (do_cen || do_scl) && sum(cont_idx) > 0) {
     bt_is_cont <- which(cont_idx)
-    bt_int_idx <- which(apply(X_orig, 2, var) == 0)
+    bt_int_idx <- .intercept_cols(cov_names_save, X_orig)
   }
 
   # Convert pp to integer vector for C++ (already 1-based, which C++ code expects)
@@ -3732,6 +3753,14 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
            }
         }
         
+        if (nzchar(Sys.getenv("MNL_DEBUG_DROP", "")) && !exists(".dbg_once", inherits = FALSE)) {
+          .dbg_once <- TRUE
+          .dbg <- as.integer(strsplit(Sys.getenv("MNL_DEBUG_DROP"), ",")[[1]])
+          for (.i in .dbg) cat(sprintf("[DEBUG_DROP] after phase1: col %d | max|mu_full| %.4g | max|beta_full| %.4g | max|beta_c_full| %.4g | n_blocks=%d\n",
+            .i, max(abs(mu_pooled_full[.i, ])), max(abs(curr_beta_full[.i, ])),
+            if (use_re) max(abs(curr_beta_c_full[.i, , ])) else NA_real_, length(block_info)))
+        }
+
         for (b in seq_along(block_info)) {
            blk <- block_info[[b]]
            drop_col <- blk$all_idx[blk$current_drop]
@@ -4051,6 +4080,30 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
           }
         }
 
+        # CONTRACT CHECK, once per chain. A rank-guard/const-sum dropped column is reconstructed as
+        # zero (or as its block's reference value); it must never leave here carrying an estimate,
+        # because nothing downstream can tell a real coefficient from a phantom one. This was stated
+        # in the comments above and never verified, which is how a zero-variance column mistaken for
+        # an intercept shipped a country-varying coefficient into beta_rotated and the downscaler.
+        # Warn rather than stop: the draw itself is sound, and killing a long fit at the write step
+        # would cost more than it saves -- but say it loudly and name the columns.
+        if (do_block_rotation && !exists(".drop_contract_checked", inherits = FALSE)) {
+          .drop_contract_checked <- TRUE
+          .rd <- if (length(block_info)) setdiff(drop_all, vapply(block_info, function(b) b$all_idx[b$current_drop], integer(1))) else drop_all
+          if (length(.rd)) {
+            .nz <- .rd[vapply(.rd, function(i) {
+              .b <- if (use_re) max(abs(state_sample$beta[i, , ])) else max(abs(state_sample$beta[i, ]))
+              .m <- if (!is.null(state_sample$mu)) max(abs(state_sample$mu[i, ])) else 0
+              max(.b, .m) > 1e-10 }, TRUE)]
+            if (length(.nz))
+              warning(sprintf(paste0("dropped column(s) %s left the sampler with a NON-ZERO coefficient. ",
+                      "They were removed from the design and cannot have been estimated, so any value ",
+                      "here is an artifact and will propagate to the rotated artifact."),
+                      paste(if (!is.null(cov_names_save)) cov_names_save[.nz] else .nz, collapse = ", ")),
+                      call. = FALSE, immediate. = TRUE)
+          }
+        }
+
         # Add to buffer
         posterior_batch_buffer[[length(posterior_batch_buffer) + 1]] <- state_sample
         if (length(posterior_batch_buffer) >= posterior_batch_size || s == nretain) {
@@ -4195,7 +4248,7 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
     # 2. Reverse Standardization LATER
     if ((do_cen || do_scl) && sum(cont_idx) > 0) {
       is_cont <- which(cont_idx)
-      int_idx <- which(apply(X_orig, 2, var) == 0) # Find constant columns (usually intercept)
+      int_idx <- .intercept_cols(cov_names_save, X_orig)   # by name / value==1, NOT var==0 (see .intercept_cols)
 
       if (use_re) {
         if (do_scl) {
