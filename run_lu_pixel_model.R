@@ -2037,8 +2037,13 @@ sampler_extra <- switch(SAMPLER,
     # `support_prior_strength = 2`, which nobody chose: it drove BOTH the FE horseshoe multiplier and
     # the RE sparse-group gate. On the FE side under symmetric_hs that factor IS live (it scales c_v,
     # mnlogit_rcpp_sym.R ~3638), and nested_cut measures (n/PR)^2 there as a median 106x / max 2.8e5x
-    # precision inflation costing ~125 nats. BMLEH_Los1 and nested_cut both set it to 0; only this
-    # caller inherited 2. The RE side is the part that is wanted and well-conditioned -> 1.
+    # precision inflation costing ~125 nats. BMLEH_Los1 and nested_cut both set FE to 0; only this
+    # caller inherited 2.
+    # The RE side is a SEPARATE decision: 1 is nested_cut's reasoned value ("re: 1 always" --
+    # deterministic, identified, stops a country with no within-country variation in a covariate
+    # contributing a free RE for it). BMLEH does NOT pass re_support_strength at all, so it runs at
+    # the sampler default 0 with the gate OFF -- an inheritance, not a choice, and the same accident
+    # being fixed here. Keeping 1; see docs/sampler_model_specification.md sec. 8.1b.
     fe_support_strength = 0, re_support_strength = 1,
     # RE-scale ASIS ON: see codes/nested_cut.R for the controlled comparison and the counter-
     # measurement. Standard as of 2026-09-16.

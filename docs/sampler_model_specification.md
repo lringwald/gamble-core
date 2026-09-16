@@ -152,7 +152,10 @@ place** — and on the hardest design here (66,861 pixels, 43 classes, 84 covari
 
     symmetric = TRUE, symmetric_hs = TRUE
     use_horseshoe = TRUE, horseshoe_idx = setdiff(seq_len(ncol(X)), icpt)   # intercept NOT shrunk
-    fe_support_strength = 0, re_support_strength = 1
+    fe_support_strength = 0                  # passed explicitly
+    re_support_strength = 0                  # NOT passed -> inherits support_prior_strength = 0,
+                                             # i.e. the RE sparse-group gate is OFF here. See 8.1b:
+                                             # this is an inheritance, not a choice
     re_regularize = TRUE, re_asis = TRUE
     estimate_slab_c2 = FALSE, collapse_slab_c2 = 14.69                      # design-dependent, see 8.1b
     use_bart = FALSE                                                        # baseline is linear
@@ -166,14 +169,15 @@ in print.
 
 ### 8.1 What the other two callers now do
 
-Aligned to the standard on 2026-09-16 (`symmetric_hs`, `fe_/re_support_strength`, intercept excluded
-from the horseshoe, `re_asis`):
+Aligned to the standard on 2026-09-16 (`symmetric_hs`, `fe_support_strength`, intercept excluded
+from the horseshoe, `re_asis`). **`re_support_strength` is deliberately NOT aligned** — BMLEH runs it
+at 0 by inheritance; see 8.1b:
 
 | | flat (`run_lu_pixel_model.R`) | nested (`codes/nested_cut.R`) |
 |---|---|---|
 | `symmetric_hs` | TRUE | TRUE (`NCUT_SYM_HS`, default flipped) |
 | `fe_support_strength` | **0**, explicit | 0, forced |
-| `re_support_strength` | **1**, explicit | 1 (`NCUT_RE_SUPPORT`) |
+| `re_support_strength` | **1**, explicit | 1 (`NCUT_RE_SUPPORT`) — NOT the BMLEH value, which is 0; see 8.1b |
 | `horseshoe_idx` | excludes the intercept **by name** | excludes `IV_*` and the intercept (`NCUT_HS_NO_INTERCEPT`) |
 | `re_asis` | **TRUE** | **TRUE** |
 | `const_sum_blocks` | `"auto"` | `"auto"` |
@@ -186,6 +190,7 @@ from the horseshoe, `re_asis`):
 | `re_asis` | TRUE everywhere | BMLEH: sigma_re Rhat 1.618 -> 1.007, ESS 7 -> 470, chain spread 0.0220 -> 0.0031. **Counter-measurement kept on the record:** an earlier GLOBIOM-node arm found ASIS hurting RE-variance ESS (73 -> 27). Standard is ON; re-measure before assuming it transfers to a small-class design |
 | `estimate_slab_c2` | BMLEH FALSE (c2 = 14.69); flat & nested TRUE | BMLEH: the slab never binds (cap sigma <= 3.8 vs sigma_re 0.108) and sampling it adds the worst-mixing scalar for free. Flat/nested: full Bayes beats the best fixed value held-out, and c2 is identified (starts 4 and 100 both converge to 4.12). Genuinely design-dependent |
 | `use_horseshoe` | BMLEH & flat TRUE; nested FALSE | Nested measured it POST-kernel-fix on the real root design at `fe_support_strength = 0`: ridge -2306.1 vs ridge+horseshoe -2369.3, i.e. -63.2 nats. That measurement stands under the new standard, so nested keeps the ridge by choice |
+| `re_support_strength` | BMLEH **0**, flat & nested **1** | BMLEH never passes it, so it inherits `support_prior_strength = 0` and runs with the RE sparse-group gate OFF. That is an INHERITANCE, not a decision — the same accident that left the flat driver at 2. The value 1 is `nested_cut`'s reasoned choice ("re: 1 always": deterministic, identified, stops a country with no within-country variation contributing a free RE). Flat and nested therefore keep 1, and the BMLEH evidence in 8.0 was produced at 0. Reconcile by measurement, not by decree |
 | `re_idx` | BMLEH 5, flat 8, nested `NCUT_RE_COLS` | not yet reconciled; intercept-only measured at parity on skill with better convergence, but only on one node |
 
 **BART (flat only), the validated block:** `bart_symmetric = TRUE`, `bart_base = 0.90`,
@@ -209,7 +214,7 @@ silently reload draws from the old configuration.
 |---|---|
 | `symmetric_hs` | **the "costs ~23/120/129 nats" gate is VOID.** Those arms ran the pre-2026-08-19 bug (`Mb` applied within-equation instead of `kron(Msym, Mb)`; complement redraw conditioned on post-ASIS `mu_R`), one of them at Rhat 1.91. Post-fix: McFadden -0.018 -> +0.216 on the real root node, and the only head-to-head is IN-SAMPLE at one node (+0.216 sym vs +0.260 diag). Flat ships TRUE, nested ships FALSE, and **no held-out comparison has been run on either** |
 | `hs_kernel_live` | **the frozen-kernel bug is FIXED (2026-08-30).** `use_horseshoe = TRUE` used to deliver a plain A0=2 ridge silently; it now reaches the draw. `hs_kernel_live = "frozen"` is retained only to reproduce a pre-fix fit. Measured on the real root design: ridge -2306.1 vs ridge+horseshoe -2369.3 (-63.2 nats) at `fe_support_strength = 0`, and -1273.9 at 2. Nested therefore turns the FE horseshoe OFF by choice |
-| `fe_support_strength` | **OPEN DISCREPANCY.** Nested forces 0 and documents `(n/PR)^2` on the symmetric kernel as a median 106x / max 2.8e5x precision inflation costing ~125 nats. The flat driver passes `support_prior_strength = 2` and no override, so it inherits 2 — and with `symmetric_hs = TRUE` that factor IS live, via `c_v` (`mnlogit_rcpp_sym.R:3638`, "feeds the symmetric kernel"). The -125 nats was measured on the nested root, not on the flat design; it has never been measured on the flat path. Do not assume either caller is right |
+| `fe_support_strength` | **RESOLVED 2026-09-16: 0 everywhere, set explicitly.** Nested forces 0 and documents `(n/PR)^2` on the symmetric kernel as a median 106x / max 2.8e5x precision inflation costing ~125 nats; BMLEH passes 0; the flat driver used to inherit 2 from `support_prior_strength` — and with `symmetric_hs = TRUE` that factor IS live, via `c_v` (`mnlogit_rcpp_sym.R:3638`, "feeds the symmetric kernel"), so it was never inert. Caveat retained: the -125 nats was measured on the nested root and has never been measured on the flat design, so the SIZE of the gain there is unverified — only its sign and mechanism are |
 | `use_country_shrinkage` | gates correctly (tau 0.68 rich vs 0.185 sparse) but `sigma_v x tau_g` is NON-IDENTIFIED and absorbs the fixed effects |
 | `alt_spec_Z` | delta recovers (1/1.5/2/3 -> 1.006/1.525/2.021/2.976). Nested exposes it as `NCUT_ALT_BLOCKS`; works flat and at leaves, **fails at a root nest** (`.ncut_node_iv` rebuilds child utilities from the full X and without delta). No equivalent env knob on the flat path — there, a spatial/temporal lag is an ordinary design column (`DRIVER_FOCAL_YEARS`, `DRIVER_PREV_STATE`) |
 | `collapse_re_var` | rejected for the pixel model (ESS 20x worse) |
