@@ -336,7 +336,7 @@ GHM_CODES <- trimws(strsplit(Sys.getenv("DRIVER_GHM_CODES", "HI,TI"), ",")[[1]])
   clean = paste0("GHM_", cd, "_", COV_YEARS), stringsAsFactors = FALSE)))
 .ghm_map <- .ghm_map[!is.na(.ghm_map$phys), , drop = FALSE]
 
-.needed_1km <- unique(c("LAMASUS_1km_bufferID",
+.needed_1km <- unique(c("INSPIRE_Europe_buffer_1kmID",
   "Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "allPA_share", "CISI",
   "OC_TOP", "ROO", "AWC_TOP", "VS",
   "Growing_Degree_Days_gdd5", "Precipitation_Seasonality_bio15", "Annual_Precipitation_bio12",
@@ -360,7 +360,7 @@ cat(sprintf(">>> GHM threat groups available for all COV_YEARS: %s%s\n",
   if (length(.ghm_missing)) sprintf("   [MISSING: %s -> not modelled; run gridwork download_ghm.R for it]",
                                     paste(.ghm_missing, collapse = ", ")) else ""))
 if (!length(GHM_VARS)) stop("No GHM threat group has full year coverage -- check the master parquet.")
-prior_1km[, LAMASUS_1km_bufferID := as.integer(LAMASUS_1km_bufferID)]
+prior_1km[, INSPIRE_Europe_buffer_1kmID := as.integer(INSPIRE_Europe_buffer_1kmID)]
 for (.col in names(prior_1km)[sapply(prior_1km, is.double)]) {
   set(prior_1km, j = .col, value = fifelse(is.nan(prior_1km[[.col]]), NA_real_, prior_1km[[.col]]))
 }
@@ -371,7 +371,7 @@ grid_map_raw <- arrow::read_parquet(file.path(AUXDATA_DIR, mapping_file)) %>% as
 
 cat("  Loading LSU processed counts...\n")
 lsu_data <- readRDS(file.path(GRIDWORK_DIR, "LSU_data_processed_with_POL_20250701.rds")) %>% as.data.table()
-lsu_data[, LAMASUS_1km_bufferID := as.integer(LAMASUS_1km_bufferID)]
+lsu_data[, INSPIRE_Europe_buffer_1kmID := as.integer(INSPIRE_Europe_buffer_1kmID)]
 
 # Merge LSU with mapping to get NUTS3 and NUTS0
 # Enforce a strictly nested unique mapping from NUTS3 to NUTS0 and GLOB_country
@@ -404,12 +404,12 @@ if ("CAPRI_NUTS" %in% names(grid_map_raw)) {
 }
 
 lsu_data <- merge(lsu_data, grid_map_raw[, .(
-  LAMASUS_1km_bufferID = as.integer(LAMASUS_1km_bufferID), 
+  INSPIRE_Europe_buffer_1kmID = as.integer(INSPIRE_Europe_buffer_1kmID), 
   EEA_1kmID = as.integer(EEA_1kmID),
   EEA_10kmID,
   NUTS3,
   pixel_weight = if ("GLOB_5arcminID_area_km2" %in% names(grid_map_raw)) as.numeric(GLOB_5arcminID_area_km2) else 1.0
-)], by = "LAMASUS_1km_bufferID", all.x = TRUE)
+)], by = "INSPIRE_Europe_buffer_1kmID", all.x = TRUE)
 
 # Drop missing mappings if any
 lsu_data <- lsu_data[!is.na(NUTS3)]
@@ -432,7 +432,7 @@ if (nzchar(DOWNSCALE_GRID)) {
 # CAPRI_country rides along so it can serve as the RE key; it is nested under NUTS3 by construction
 # (assigned from it above), so carrying it changes neither frame's row count.
 .capri_cols <- intersect(c("CAPRI_NUTS", "CAPRI_country"), names(lsu_data))
-grid_map_pixel <- unique(lsu_data[, c("LAMASUS_1km_bufferID", "EEA_1kmID", "RESOLUTION", "NUTS0",
+grid_map_pixel <- unique(lsu_data[, c("INSPIRE_Europe_buffer_1kmID", "EEA_1kmID", "RESOLUTION", "NUTS0",
                                       "GLOB_country", "NUTS3", "pixel_weight", .capri_cols), with = FALSE])
 
 # Base Admin unit frame (for joining later)
@@ -449,13 +449,13 @@ cat("\nAggregating static covariates...\n")
 # Soil
 spatial_cat_vars <- intersect(c("OC_TOP", "ROO", "AWC_TOP", "VS"), colnames(prior_1km))
 x_pixel_soil_list <- lapply(spatial_cat_vars, function(v) {
-  res <- dcast(prior_1km[!is.na(get(v)), .N, by = .(LAMASUS_1km_bufferID, Val = get(v))],
-    LAMASUS_1km_bufferID ~ Val,
+  res <- dcast(prior_1km[!is.na(get(v)), .N, by = .(INSPIRE_Europe_buffer_1kmID, Val = get(v))],
+    INSPIRE_Europe_buffer_1kmID ~ Val,
     value.var = "N", fill = 0
   )
   setDT(res)
-  dcast_cols <- setdiff(colnames(res), "LAMASUS_1km_bufferID")
-  res <- res[grid_map_pixel, on = "LAMASUS_1km_bufferID", nomatch = 0L]
+  dcast_cols <- setdiff(colnames(res), "INSPIRE_Europe_buffer_1kmID")
+  res <- res[grid_map_pixel, on = "INSPIRE_Europe_buffer_1kmID", nomatch = 0L]
 
   # Weight by pixel_weight for area-accurate aggregation
   res[, (dcast_cols) := lapply(.SD, function(x) x * pixel_weight), .SDcols = dcast_cols]
@@ -523,7 +523,7 @@ dat_admin_list <- lapply(T_PAIRS, function(tp) {
   gdp_col <- paste0("GDP_", tp$cov_year)
   pop_col <- paste0("Pop_", tp$cov_year)
 
-  x_1km_yr <- prior_1km[, .(LAMASUS_1km_bufferID, Slope_rad, Elevation, Aspect_cos_mean, Aspect_sin_mean, allPA_share, CISI,
+  x_1km_yr <- prior_1km[, .(INSPIRE_Europe_buffer_1kmID, Slope_rad, Elevation, Aspect_cos_mean, Aspect_sin_mean, allPA_share, CISI,
     Pop = get(pop_col), GDP = get(gdp_col)
   )]
   # year-varying GHM threat groups (GHM_HI always, GHM_TI once the gridwork pull lands)
@@ -533,20 +533,20 @@ dat_admin_list <- lapply(T_PAIRS, function(tp) {
   static_extra <- intersect(climate_yield_cols, names(prior_1km))
   if (length(static_extra)) x_1km_yr <- cbind(x_1km_yr, prior_1km[, ..static_extra])
 
-  cont_vars <- setdiff(colnames(x_1km_yr), "LAMASUS_1km_bufferID")
+  cont_vars <- setdiff(colnames(x_1km_yr), "INSPIRE_Europe_buffer_1kmID")
   # allPA_share is a per-pixel protected fraction -> SUM it (x pixel_weight) to the total protected
   # AREA (km2) of the unit, like the LU areas, rather than the unit-mean share.
   mean_vars <- setdiff(cont_vars, c("Pop", "GDP", "allPA_share")) # intensive -> weighted mean
   sum_vars <- intersect(cont_vars, c("Pop", "GDP", "allPA_share")) # extensive (areas/counts) -> weighted sum
 
   # Intensive variables -> Weighted Mean
-  x_mean <- x_1km_yr[grid_map_pixel, on = "LAMASUS_1km_bufferID", nomatch = 0L][
+  x_mean <- x_1km_yr[grid_map_pixel, on = "INSPIRE_Europe_buffer_1kmID", nomatch = 0L][
     , lapply(.SD, weighted.mean, w = pixel_weight, na.rm = TRUE),
     by = .(RESOLUTION), .SDcols = mean_vars
   ]
 
   # Extensive variables -> Weighted Sum (adjusting for split pixels)
-  x_sum <- x_1km_yr[grid_map_pixel, on = "LAMASUS_1km_bufferID", nomatch = 0L][
+  x_sum <- x_1km_yr[grid_map_pixel, on = "INSPIRE_Europe_buffer_1kmID", nomatch = 0L][
     , lapply(.SD, function(x) sum(x * pixel_weight, na.rm = TRUE)),
     by = .(RESOLUTION), .SDcols = sum_vars
   ]
@@ -566,7 +566,7 @@ dat_admin_list <- lapply(T_PAIRS, function(tp) {
     }
     sd_src <- intersect(SD_VARS, mean_vars)
     if (length(sd_src)) {
-      x_sd <- x_1km_yr[grid_map_pixel, on = "LAMASUS_1km_bufferID", nomatch = 0L][
+      x_sd <- x_1km_yr[grid_map_pixel, on = "INSPIRE_Europe_buffer_1kmID", nomatch = 0L][
         , lapply(.SD, .wsd, w = pixel_weight),
         by = .(RESOLUTION), .SDcols = sd_src
       ]
@@ -577,7 +577,7 @@ dat_admin_list <- lapply(T_PAIRS, function(tp) {
 
   # Derived terrain SHARE features (flat / steep / lowland / upland fraction of the unit)
   if (INCLUDE_TERRAIN_FEATURES && all(c("Slope_rad", "Elevation") %in% names(x_1km_yr))) {
-    .tf <- x_1km_yr[grid_map_pixel, on = "LAMASUS_1km_bufferID", nomatch = 0L][
+    .tf <- x_1km_yr[grid_map_pixel, on = "INSPIRE_Europe_buffer_1kmID", nomatch = 0L][
       , .(
         flat_share = weighted.mean(Slope_rad < SLOPE_FLAT_RAD, pixel_weight, na.rm = TRUE),
         steep_share = weighted.mean(Slope_rad > SLOPE_STEEP_RAD, pixel_weight, na.rm = TRUE),

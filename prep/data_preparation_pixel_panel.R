@@ -84,8 +84,8 @@ all_classes <- c("ACRP", "GRSL", "HCRP", "HEAS", "PAST",
 message("Loading 1km → 5km grid mapping...")
 grid_mapping <- read_parquet(path_grid_mapping) |>
   mutate(across(contains("km"), as.integer)) |>
-  select(LAMASUS_1km_bufferID, EEA_1kmID, all_of(cell_id_cols)) |>
-  distinct(LAMASUS_1km_bufferID, .keep_all = TRUE) |>
+  select(INSPIRE_Europe_buffer_1kmID, EEA_1kmID, all_of(cell_id_cols)) |>
+  distinct(INSPIRE_Europe_buffer_1kmID, .keep_all = TRUE) |>
   # Enforce one consistent (x, y) centroid per 5km cell
   group_by(.data[[cell_id_col]]) |>
   mutate(
@@ -226,7 +226,7 @@ clc_class_map <- read.csv(path_clc_class_map)
 clc_to_lu     <- clc_class_map |> select(Code1, ETL2_aug_abbr)
 
 # Mapping from LAMASUS buffer ID → pixel cell
-grid_map_clc <- grid_mapping |> select(LAMASUS_1km_bufferID, all_of(cell_id_cols))
+grid_map_clc <- grid_mapping |> select(INSPIRE_Europe_buffer_1kmID, all_of(cell_id_cols))
 
 # Process each CLC year
 lu_levels_list <- list()
@@ -236,7 +236,7 @@ for (yr in years) {
   message("Processing CLC Annual TS for ", yr, "...")
   
   clc_raw <- readRDS(path_clc_ts[yr_chr]) |>
-    mutate(LAMASUS_1km_bufferID = as.integer(LAMASUS_1km_bufferID)) |>
+    mutate(INSPIRE_Europe_buffer_1kmID = as.integer(INSPIRE_Europe_buffer_1kmID)) |>
     setDT()
   
   # Map Code1 → broad LU class
@@ -245,7 +245,7 @@ for (yr in years) {
     rename(lu_class = ETL2_aug_abbr) |>
     filter(!is.na(lu_class), lu_class %in% all_classes) |>
     # Map to 5km cell
-    inner_join(grid_map_clc, by = "LAMASUS_1km_bufferID") |>
+    inner_join(grid_map_clc, by = "INSPIRE_Europe_buffer_1kmID") |>
     # Aggregate to 5km
     group_by(across(all_of(c(cell_id_cols, "lu_class")))) |>
     summarise(area_km2 = sum(area_km2, na.rm = TRUE), .groups = "drop")

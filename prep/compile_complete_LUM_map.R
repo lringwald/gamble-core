@@ -49,11 +49,11 @@ temp_binary_irrigation_map <- temp_binary_irrigation_map[EEA_1kmID %in% unique(m
 # --- Load and Pre-process Calibrated Organic Areas ---
 message(">>> Loading calibrated organic certificate areas...")
 temp_organic_map <- readRDS(paste0(GRIDWORK_DIR,"/organic_certificaties_final_calibrated_master.rds"))
-# Columns: LAMASUS_1km_bufferID, Cropland_organic, Livestock_organic, Mixed_organic, All_organic
+# Columns: INSPIRE_Europe_buffer_1kmID, Cropland_organic, Livestock_organic, Mixed_organic, All_organic
 # These are in km2 per 1km grid cell.
 
 # Join with mapping_grid to get EEA_1kmID
-temp_organic_map <- temp_organic_map[unique(mapping_grid[,.(EEA_1kmID,LAMASUS_1km_bufferID)]), on="LAMASUS_1km_bufferID"]
+temp_organic_map <- temp_organic_map[unique(mapping_grid[,.(EEA_1kmID,INSPIRE_Europe_buffer_1kmID)]), on="INSPIRE_Europe_buffer_1kmID"]
 org_cols <- c("Cropland_organic", "Livestock_organic", "Mixed_organic", "All_organic")
 temp_organic_map <- temp_organic_map[, .SD, .SDcols = c("EEA_1kmID", org_cols)]
 
