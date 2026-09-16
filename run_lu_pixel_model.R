@@ -233,13 +233,13 @@ if (any(.focal_lag_gaps != 0L)) MODEL_LABEL <- paste0(MODEL_LABEL, "_focalLag", 
 # loader and the (possibly lagged) focal loader. Two data lineages exist for the SAME years:
 #   bioclima : the BIOCLIMA/EWM product (ibiom_* / *_wetlands_enhanced)  -> for BIOCLIMA targets
 #   globiom  : the GLOBIOM downscaling fit (LUM_fit_with_energy_levels_*) -> for GLOBIOM targets
-# All files share the layout LAMASUS_1km_bufferID + LUM_code_clc (== mapping LUM_Code, verified;
+# All files share the layout INSPIRE_Europe_buffer_1kmID + LUM_code_clc (== mapping LUM_Code, verified;
 # 100% grid linkage). The lineage is auto-selected from CLASS_SCHEME but can be forced via
 # DRIVER_LUM_LINEAGE. Add a year here to make it available as an outcome or a focal-lag source.
 .LUM_REGISTRIES <- list(
   bioclima = list(
-    `2018` = list(file = file.path(GRIDWORK_DIR, "ibiom_LUM_EWM_2018.rds"),       id_col = "LAMASUS_1km_bufferID", code_col = "LUM_code_clc"),
-    `2010` = list(file = file.path(GRIDWORK_DIR, "LUM_2010_wetlands_enhanced.rds"), id_col = "LAMASUS_1km_bufferID", code_col = "LUM_code_clc")
+    `2018` = list(file = file.path(GRIDWORK_DIR, "ibiom_LUM_EWM_2018.rds"),       id_col = "INSPIRE_Europe_buffer_1kmID", code_col = "LUM_code_clc"),
+    `2010` = list(file = file.path(GRIDWORK_DIR, "LUM_2010_wetlands_enhanced.rds"), id_col = "INSPIRE_Europe_buffer_1kmID", code_col = "LUM_code_clc")
   ),
   globiom = list(
     # keyed EEA_1kmID with a per-year code column, which is how the canonical export is shaped. The
@@ -283,14 +283,14 @@ DO_CROP_SPLIT <- as.logical(Sys.getenv("DRIVER_CROP_SPLIT", if (CLASS_SCHEME %in
 # Set DRIVER_CROP_AVG=TRUE to restore the old averaged source.
 CROP_SOURCE_REGISTRY <- if (isTRUE(as.logical(Sys.getenv("DRIVER_CROP_AVG", "FALSE")))) list(
   `2018` = list(file = file.path(GRIDWORK_DIR, "Crop_Types/Crop_Types_Avg_2017_2019_1km.rds"),
-                id_col = "LAMASUS_1km_bufferID", code_col = "Crop_Type_Code", area_col = "avg_area_km2")
+                id_col = "INSPIRE_Europe_buffer_1kmID", code_col = "Crop_Type_Code", area_col = "avg_area_km2")
 ) else list(
   `2017` = list(file = file.path(GRIDWORK_DIR, "Crop_Types/Crop_Types_2017_1km.rds"),
-                id_col = "LAMASUS_1km_bufferID", code_col = "Crop_Type_Code", area_col = "area_km2"),
+                id_col = "INSPIRE_Europe_buffer_1kmID", code_col = "Crop_Type_Code", area_col = "area_km2"),
   `2018` = list(file = file.path(GRIDWORK_DIR, "Crop_Types/Crop_Types_2018_1km.rds"),
-                id_col = "LAMASUS_1km_bufferID", code_col = "Crop_Type_Code", area_col = "area_km2"),
+                id_col = "INSPIRE_Europe_buffer_1kmID", code_col = "Crop_Type_Code", area_col = "area_km2"),
   `2019` = list(file = file.path(GRIDWORK_DIR, "Crop_Types/Crop_Types_2019_1km.rds"),
-                id_col = "LAMASUS_1km_bufferID", code_col = "Crop_Type_Code", area_col = "area_km2")
+                id_col = "INSPIRE_Europe_buffer_1kmID", code_col = "Crop_Type_Code", area_col = "area_km2")
 )
 # HRL Crop_Type_Code -> AgMIP crop class name + cropland group (arable|permanent). 3100/3200
 # ("Unclassified arable/permanent") and 65535 ("Outside area") are NOT listed -> they fold into the
@@ -563,7 +563,7 @@ if (!nzchar(PRIOR_1KM_PARQUET)) {
 cat(sprintf(">>> master 1km parquet: %s  (modified %s)\n", PRIOR_1KM_PARQUET,
             format(file.mtime(PRIOR_1KM_PARQUET), "%Y-%m-%d %H:%M")))
 .pq_nm <- names(arrow::open_dataset(PRIOR_1KM_PARQUET))
-.keep_1km <- unique(c("LAMASUS_1km_bufferID",
+.keep_1km <- unique(c("INSPIRE_Europe_buffer_1kmID",
   # RAI removed 2026-08-04 (see the count driver): accessibility/human-footprint is carried by the
   # GHM v3 threat groups GHM_HI + GHM_TI instead. GHM_TI is optional until the gridwork pull lands.
   "Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "allPA_share", "CISI",
@@ -576,7 +576,7 @@ prior_1km <- as.data.table(dplyr::collect(dplyr::select(
   dplyr::any_of(intersect(.keep_1km, .pq_nm)))))
 cat(sprintf("  prior_1km: column-projected read %d of %d cols x %d rows\n", ncol(prior_1km), length(.pq_nm), nrow(prior_1km)))
 setnames(prior_1km, "spei48_2018", "spei48_2020")
-prior_1km[, LAMASUS_1km_bufferID := as.integer(LAMASUS_1km_bufferID)]
+prior_1km[, INSPIRE_Europe_buffer_1kmID := as.integer(INSPIRE_Europe_buffer_1kmID)]
 for (.col in names(prior_1km)[sapply(prior_1km, is.double)]) {
   set(prior_1km, j = .col, value = fifelse(is.nan(prior_1km[[.col]]), NA_real_, prior_1km[[.col]]))
 }
@@ -606,7 +606,7 @@ climate_cols <- sub("_2000$", "", setdiff(climate_cols_raw_2000,
 cat(paste0("  Loading 1km -> ", PIXEL_RES, "km grid mapping...\n"))
 grid_map_pixel <- arrow::read_parquet(file.path(AUXDATA_DIR, mapping_file)) %>% as.data.table()
 grid_map_pixel[, `:=`(
-  LAMASUS_1km_bufferID = as.integer(LAMASUS_1km_bufferID),
+  INSPIRE_Europe_buffer_1kmID = as.integer(INSPIRE_Europe_buffer_1kmID),
   EEA_1kmID = as.integer(EEA_1kmID),
   ID = if (!is.null(PIXEL_INTERSECT_COL)) paste0(get(COL_ID), "_", get(PIXEL_INTERSECT_COL)) else as.integer(get(COL_ID)),
   X = as.numeric(get(COL_X)),
@@ -634,10 +634,10 @@ grid_map_pixel[is.na(pixel_weight) | pixel_weight == 0, pixel_weight := 1.0]
 # Hold the region key in its OWN 1km lookup rather than as a column of grid_map_pixel. That table is
 # area-weighted and aggregated in several places (every value column gets multiplied by
 # pixel_weight), so a character key riding along inside it is a bug waiting to happen.
-GEO_LOOKUP_1KM <- unique(grid_map_pixel[, .(LAMASUS_1km_bufferID, EEA_1kmID, geo = geo_region)])
+GEO_LOOKUP_1KM <- unique(grid_map_pixel[, .(INSPIRE_Europe_buffer_1kmID, EEA_1kmID, geo = geo_region)])
 # id crosswalk for sources keyed differently from the LUM export (see .load_crop_source)
-grid_map_pixel_raw_ids <- unique(grid_map_pixel[, .(LAMASUS_1km_bufferID, EEA_1kmID)])
-grid_map_pixel <- unique(grid_map_pixel[, .(LAMASUS_1km_bufferID, EEA_1kmID, ID, X, Y, Grouping_Key, pixel_weight)])
+grid_map_pixel_raw_ids <- unique(grid_map_pixel[, .(INSPIRE_Europe_buffer_1kmID, EEA_1kmID)])
+grid_map_pixel <- unique(grid_map_pixel[, .(INSPIRE_Europe_buffer_1kmID, EEA_1kmID, ID, X, Y, Grouping_Key, pixel_weight)])
 
 # =========================================================================
 # 4. STATIC COVARIATES
@@ -646,15 +646,15 @@ cat("\nAggregating static covariates...\n")
 # Soil
 spatial_cat_vars <- intersect(c("OC_TOP", "ROO", "AWC_TOP", "VS"), colnames(prior_1km))
 x_pixel_soil_list <- lapply(spatial_cat_vars, function(v) {
-  res <- dcast(prior_1km[!is.na(get(v)), .N, by = .(LAMASUS_1km_bufferID, Val = get(v))],
-    LAMASUS_1km_bufferID ~ Val,
+  res <- dcast(prior_1km[!is.na(get(v)), .N, by = .(INSPIRE_Europe_buffer_1kmID, Val = get(v))],
+    INSPIRE_Europe_buffer_1kmID ~ Val,
     value.var = "N", fill = 0
   )
   setDT(res)
-  res <- res[grid_map_pixel, on = "LAMASUS_1km_bufferID", nomatch = 0L]
+  res <- res[grid_map_pixel, on = "INSPIRE_Europe_buffer_1kmID", nomatch = 0L]
 
   # Weight by pixel_weight for area-accurate aggregation
-  val_cols <- setdiff(colnames(res), c("LAMASUS_1km_bufferID", "EEA_1kmID", "ID", "X", "Y", "Grouping_Key", "pixel_weight"))
+  val_cols <- setdiff(colnames(res), c("INSPIRE_Europe_buffer_1kmID", "EEA_1kmID", "ID", "X", "Y", "Grouping_Key", "pixel_weight"))
   res[, (val_cols) := lapply(.SD, function(x) x * pixel_weight), .SDcols = val_cols]
 
   res <- res[, lapply(.SD, sum), by = .(ID, Grouping_Key), .SDcols = val_cols]
@@ -791,7 +791,7 @@ apply_lum_carveouts <- function(wide, year) {
     setnames(cr, c(reg$id_col, reg$code_col, reg$area_col), c("join_id", "Crop_Type_Code", "carea"))
     cr[, join_id := as.integer(join_id)]
     # TRANSLATE the crop ids into the LUM's id space when the two sources are keyed differently.
-    # HRL Crop Types are keyed LAMASUS_1km_bufferID; the canonical LUM export is keyed EEA_1kmID.
+    # HRL Crop Types are keyed INSPIRE_Europe_buffer_1kmID; the canonical LUM export is keyed EEA_1kmID.
     # Joining one against the other is not an error -- both are integers and 14.2% of the values
     # coincide by chance -- so it silently dropped 86% of the crop data and the area assert still
     # passed, because unattributed cropland simply stays in the residual. Durum wheat disappeared
@@ -1176,11 +1176,11 @@ dat_pixel_list <- lapply(T_PAIRS, function(tp) {
       }
 
       if (nrow(temp_clc_yr_raw) > 0) {
-        temp_clc_yr_raw[, LAMASUS_1km_bufferID := as.integer(LAMASUS_1km_bufferID)]
+        temp_clc_yr_raw[, INSPIRE_Europe_buffer_1kmID := as.integer(INSPIRE_Europe_buffer_1kmID)]
         temp_y_1km_yr <- temp_clc_yr_raw[thematic_dt, on = "Code1", nomatch = 0L]
 
         # Create temp_compiled_long for CLC so focal_df can use the model_class scheme
-        temp_compiled_long <- temp_y_1km_yr[grid_map_pixel, on = "LAMASUS_1km_bufferID", nomatch = 0L][
+        temp_compiled_long <- temp_y_1km_yr[grid_map_pixel, on = "INSPIRE_Europe_buffer_1kmID", nomatch = 0L][
           , .(area_km2 = sum(area_km2, na.rm = TRUE)),
           by = .(ID, Grouping_Key, X, Y, model_class)
         ]
@@ -1233,7 +1233,7 @@ dat_pixel_list <- lapply(T_PAIRS, function(tp) {
 
   static_chelsa_cols <- intersect(c("Growing_Degree_Days_gdd5", "Precipitation_Seasonality_bio15", "Annual_Precipitation_bio12"), names(prior_1km))
 
-  temp_x_1km_yr <- prior_1km[, .SD, .SDcols = c("LAMASUS_1km_bufferID", "Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "allPA_share", "CISI", yield_cols, static_chelsa_cols, climate_cols_raw)]
+  temp_x_1km_yr <- prior_1km[, .SD, .SDcols = c("INSPIRE_Europe_buffer_1kmID", "Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "allPA_share", "CISI", yield_cols, static_chelsa_cols, climate_cols_raw)]
 
   # Rename climate columns to drop the year suffix so they are panel-consistent
   if (length(climate_cols_raw) > 0) {
@@ -1243,20 +1243,20 @@ dat_pixel_list <- lapply(T_PAIRS, function(tp) {
   temp_x_1km_yr[, Pop := prior_1km[[pop_col]]]
   temp_x_1km_yr[, GDP := prior_1km[[gdp_col]]]
   for (.g in GHM_VARS) temp_x_1km_yr[[.g]] <- prior_1km[[paste0(.g, "_", tp$cov_year)]]
-  cont_vars <- setdiff(colnames(temp_x_1km_yr), "LAMASUS_1km_bufferID")
+  cont_vars <- setdiff(colnames(temp_x_1km_yr), "INSPIRE_Europe_buffer_1kmID")
   # Distinguish aggregation type per variable to handle intensive vs extensive quantities
   mean_vars <- setdiff(cont_vars, c("Pop", "GDP"))
   sum_vars <- intersect(cont_vars, c("Pop", "GDP"))
 
   # Intensive variables (Slope, Elevation, etc.) -> Weighted Mean
-  temp_x_mean <- temp_x_1km_yr[grid_map_pixel, on = "LAMASUS_1km_bufferID", nomatch = 0L][
+  temp_x_mean <- temp_x_1km_yr[grid_map_pixel, on = "INSPIRE_Europe_buffer_1kmID", nomatch = 0L][
     , lapply(.SD, weighted.mean, w = pixel_weight, na.rm = TRUE),
     by = .(ID, Grouping_Key), .SDcols = mean_vars
   ]
 
   # Extensive variables (Pop, GDP totals) -> Weighted Sum
   # We multiply by pixel_weight to account for 1km cells split across grid units
-  temp_x_sum <- temp_x_1km_yr[grid_map_pixel, on = "LAMASUS_1km_bufferID", nomatch = 0L][
+  temp_x_sum <- temp_x_1km_yr[grid_map_pixel, on = "INSPIRE_Europe_buffer_1kmID", nomatch = 0L][
     , lapply(.SD, function(x) sum(x * pixel_weight, na.rm = TRUE)),
     by = .(ID, Grouping_Key), .SDcols = sum_vars
   ]
@@ -1769,7 +1769,11 @@ if (length(baseline_idx) != 1L) {
 }
 
 linear_cols <- 1:ncol(X_mat)
-horseshoe_idx_pixel <- linear_cols[-1]
+# Exclude the intercept BY NAME, not by position (2026-09-16). `linear_cols[-1]` assumed the
+# intercept is column 1; when it is not, the horseshoe shrinks a class's baseline level and leaves
+# some other covariate unshrunk, silently. The BART path below already did this by name. Matches the
+# BMLEH_Los1 standard: horseshoe_idx = setdiff(seq_len(ncol(X)), icpt).
+horseshoe_idx_pixel <- setdiff(linear_cols, which(colnames(X_mat) == "intercept"))
 
 # --- BART covariate partition + AUTOMATIC support screen (gated; validated non-focal design) ---
 # When use_bart: the non-focal continuous/share drivers (topo/climate/soil/socioecon/accessibility/
@@ -2029,7 +2033,16 @@ sampler_extra <- switch(SAMPLER,
                                  # const-sum treatment at all -- the sampler default is NULL, so the
                                  # redundant columns fell through to the rank guard instead. Matches
                                  # .ncut_fit_block.
-    support_prior_strength = 2, re_asis = FALSE, re_regularize = TRUE, init_jitter = 0.1, # const-sum blocks now handled BY THE SAMPLER (see above) -> not passed to any sampler. participation-ratio RE prior + per-chain overdispersed init. re_regularize=TRUE: RE variance = PROPER regularised horseshoe via a 1-D SLICE on log tau_raw (NOT the old post-draw cap), effective precision tau_eff = tau_raw + 1/collapse_slab_c2 (default c2=100 -> SD<=10) used consistently in the C++ standard (update_re_precision_hc_sym) so the heavy half-Cauchy tail can't run off; stable + exact (exp9 + the oracle gate at c2=100). Also support-CONSISTENT variance (C++ weights ss by 1/rs^2, matching the support-scaled RE draw - fixes a pre-existing inconsistency). RE-scale ASIS OFF: measured to HURT MNL RE-var ESS (73->27). collapse_re_var OFF but REWORKED + validated standalone (per-covariate zero-sum-POOLED slice collapse, exp7/8/9) -> enable (collapse_re_var=TRUE + collapse_re_var_validated=TRUE) only AFTER experiments/mixing/gate_collapse_production.R PASSES on the real design. TUNE collapse_slab_c2 to the largest plausible group-slope SD (raise if sigma~10-12 cells are real; lower to regularise them harder). Retained draws now default to 12000 (niter 16000 - nburn 4000).
+    # SUPPORT STRENGTHS SET EXPLICITLY (2026-09-16). These used to be inherited from the single
+    # `support_prior_strength = 2`, which nobody chose: it drove BOTH the FE horseshoe multiplier and
+    # the RE sparse-group gate. On the FE side under symmetric_hs that factor IS live (it scales c_v,
+    # mnlogit_rcpp_sym.R ~3638), and nested_cut measures (n/PR)^2 there as a median 106x / max 2.8e5x
+    # precision inflation costing ~125 nats. BMLEH_Los1 and nested_cut both set it to 0; only this
+    # caller inherited 2. The RE side is the part that is wanted and well-conditioned -> 1.
+    fe_support_strength = 0, re_support_strength = 1,
+    # RE-scale ASIS ON: see codes/nested_cut.R for the controlled comparison and the counter-
+    # measurement. Standard as of 2026-09-16.
+    re_asis = TRUE, re_regularize = TRUE, init_jitter = 0.1, # const-sum blocks now handled BY THE SAMPLER (see above) -> not passed to any sampler. participation-ratio RE prior + per-chain overdispersed init. re_regularize=TRUE: RE variance = PROPER regularised horseshoe via a 1-D SLICE on log tau_raw (NOT the old post-draw cap), effective precision tau_eff = tau_raw + 1/collapse_slab_c2 (default c2=100 -> SD<=10) used consistently in the C++ standard (update_re_precision_hc_sym) so the heavy half-Cauchy tail can't run off; stable + exact (exp9 + the oracle gate at c2=100). Also support-CONSISTENT variance (C++ weights ss by 1/rs^2, matching the support-scaled RE draw - fixes a pre-existing inconsistency). RE-scale ASIS OFF: measured to HURT MNL RE-var ESS (73->27). collapse_re_var OFF but REWORKED + validated standalone (per-covariate zero-sum-POOLED slice collapse, exp7/8/9) -> enable (collapse_re_var=TRUE + collapse_re_var_validated=TRUE) only AFTER experiments/mixing/gate_collapse_production.R PASSES on the real design. TUNE collapse_slab_c2 to the largest plausible group-slope SD (raise if sigma~10-12 cells are real; lower to regularise them harder). Retained draws now default to 12000 (niter 16000 - nburn 4000).
     separation_as_prior = adaptive_separation_as_prior, separation_soft = adaptive_separation_soft,
     sep_overlap_hard = adaptive_sep_overlap_hard, sep_overlap_neutral = adaptive_sep_overlap_neutral
   ),

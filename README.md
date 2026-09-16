@@ -17,7 +17,7 @@ run/              ENTRY POINTS — start here
   nested.R          fit the NESTED model (factorized | iv, RE block, symmetric HS)
   count.R           fit the livestock count model (BOV + SGT in one pass)
   score.R           score fitted models side by side
-  fit_nested.sh     non-interactive form of nested.R:  run/fit_nested.sh prod factorized intercept diag
+  fit_nested.sh     non-interactive form of nested.R:  run/fit_nested.sh prod factorized intercept symhs
 codes/            core samplers + Rcpp cores + shared helpers
   mnlogit_rcpp_sym.R + mnlogit_gibbs_core_sym.cpp   pixel MNL (symmetric zero-sum)
   mnlogit_rcpp.R     + mnlogit_gibbs_core.cpp        base MNL (dependency)
@@ -68,8 +68,8 @@ source("run/score.R")
 Non-interactive equivalents:
 
 ```bash
-run/fit_nested.sh smoke factorized intercept diag     # ~10-15 min sanity run
-run/fit_nested.sh prod  factorized intercept diag     # full run (~24 h), backgrounded + resumable
+run/fit_nested.sh smoke factorized intercept symhs    # ~10-15 min sanity run
+run/fit_nested.sh prod  factorized intercept symhs    # full run (~24 h), backgrounded + resumable
 Rscript codes/master_test_suite_sym.R                 # sampler gate (35 checks)
 Rscript tests/test_nested_cut.R                       # nested-framework validation
 ```

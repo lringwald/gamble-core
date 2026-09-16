@@ -358,6 +358,17 @@
     # and c2 is identified -- starts of 4 and 100 both converge to 4.12. collapse_slab_c2 is now just
     # the STARTING value; 4 is near the posterior so burn-in is short.
     re_regularize = TRUE, estimate_slab_c2 = TRUE, collapse_slab_c2 = 4, slab_df_re = 10,
+    # RE-SCALE ASIS ON (2026-09-16), matching the BMLEH_Los1 standard. Controlled comparison there
+    # (identical config, identical hot-start states, only re_asis differed): sigma_re Rhat 1.618 ->
+    # 1.007 and ESS 7 -> 470; joint log_lik Rhat 1.878 -> 1.037, ESS 6 -> 89; per-chain sigma_re
+    # spread 0.0220 -> 0.0031. Cost: ~14% median ESS on mu/b_g, and on equal draws the UNCONVERGED
+    # control scored marginally better held-out (0.2455 vs 0.2391) because stuck chains were
+    # over-pooled -- converged is worth that for a prior consumed with intervals.
+    # COUNTER-MEASUREMENT, recorded rather than dropped: an earlier GLOBIOM-node arm measured ASIS
+    # HURTING MNL RE-variance ESS (73 -> 27). The two disagree, plausibly by design -- BMLEH is 43
+    # classes / 84 covariates / 25 groups with many rare classes. Standard is ON; re-measure before
+    # assuming it transfers to a small-class design.
+    re_asis = TRUE,
     # FE horseshoe ON, slab FIXED (2026-08-13). Replicated on two nodes with the RE slab estimated:
     # held-out +14.2 (Forests) and +15.5 (Pasture) vs use_horseshoe = FALSE. NOTE an earlier reading
     # put this at only +2 -- that was measured in the OLD RE configuration; the two interact.
@@ -387,16 +398,19 @@
     # a STRUCTURAL parameter, not a candidate for sparsity. This only became live when the null-index
     # fix made the horseshoe actually reach the draw -- before that hs_idx was empty and nothing was
     # shrunk, which is why it was never visible in earlier measurements.
-    # SCOPE: `IV_*` ONLY. Leaf nodes carry no IV columns, so their fits stay BIT-IDENTICAL and the
-    # measured FE-horseshoe gains (+14.2 Forests / +15.5 Pasture) still stand. The intercept is also
-    # in hs_idx by the same NULL default and is arguably as wrong, but excluding it would move every
-    # leaf fit, so it is opt-in: NCUT_HS_NO_INTERCEPT=TRUE. NCUT_HS_ALL=TRUE restores the historical
-    # shrink-everything behaviour for a measurement arm.
+    # SCOPE: `IV_*` ALWAYS, and the INTERCEPT by default since 2026-09-16. Shrinking a class's
+    # baseline level toward zero is the same category error as shrinking lambda: it is a structural
+    # location, not a candidate for sparsity. The BMLEH_Los1 standard excludes it
+    # (`horseshoe_idx = setdiff(seq_len(ncol(X)), icpt)`) and is the configuration with the
+    # convergence + held-out evidence, so this now matches it. This DOES move every leaf fit --
+    # which is why the store's prior signature had to start hashing effective values, not env
+    # strings. NCUT_HS_NO_INTERCEPT=FALSE restores the old shrink-the-intercept behaviour;
+    # NCUT_HS_ALL=TRUE restores the historical shrink-everything behaviour for a measurement arm.
     horseshoe_idx = local({
       cn <- colnames(X)
       if (is.null(cn) || isTRUE(as.logical(Sys.getenv("NCUT_HS_ALL", "FALSE")))) return(NULL)
       excl <- grep("^IV_", cn)
-      if (isTRUE(as.logical(Sys.getenv("NCUT_HS_NO_INTERCEPT", "FALSE"))))
+      if (isTRUE(as.logical(Sys.getenv("NCUT_HS_NO_INTERCEPT", "TRUE"))))
         excl <- union(excl, which(cn == "intercept"))
       keep <- setdiff(seq_along(cn), excl)
       # No exclusions -> return NULL, which is what the sampler already assumed: keeps leaf fits
@@ -417,10 +431,14 @@
     # columns -- now kron(Msym, Mb), invariant to 7 s.f.; (2) the complement redraw conditioned on
     # the post-ASIS mu_R while Pb_lik encoded the pre-draw one. Symmetric+RE on the real root node:
     # McFadden -0.018 -> +0.216, worst nest ratio 0.23 -> 0.78, suite 35/35 with C7 at 0.94x.
-    # STILL DEFAULTS FALSE: the only head-to-head vs diagonal (+0.216 vs +0.260) is IN-SAMPLE at
-    # one node. The old 129/133-nat 'symmetric loses' gate is VOID -- those arms had REs, so they
-    # measured the bug. A proper held-out comparison has not been run.
-    symmetric_hs = isTRUE(as.logical(Sys.getenv("NCUT_SYM_HS", "FALSE"))),
+    # NOW DEFAULTS TRUE (2026-09-16), to match the BMLEH_Los1 standard -- the one configuration in
+    # this repo with convergence, calibration AND held-out evidence in one place (43 classes, 84
+    # covariates, 25 CAPRI groups: log_lik Rhat 1.036, sigma_re Rhat 1.005, held-out McFadden
+    # 0.2454, calibration gap 0.0019). The old 129/133-nat 'symmetric loses' gate is VOID -- those
+    # arms had REs, so they measured the pre-2026-08-19 bug. The only post-fix head-to-head here is
+    # IN-SAMPLE at one node (+0.216 sym vs +0.260 diag); NCUT_SYM_HS=FALSE restores the diagonal
+    # penalty for a measurement arm. See docs/sampler_model_specification.md sec. 8.0.
+    symmetric_hs = isTRUE(as.logical(Sys.getenv("NCUT_SYM_HS", "TRUE"))),
     # NATIVE ALTERNATIVE-SPECIFIC BLOCKS (spatial Y-lag / temporal t-1 state). NULL unless
     # NCUT_ALT_BLOCKS is set; the source columns are already removed from X by the caller.
     alt_spec_Z = alt_spec, alt_spec_allow_unvalidated = !is.null(alt_spec),
@@ -716,8 +734,15 @@
               # makes every prior A/B run through run_nested_cut.R invalid unless the store was
               # cleared by hand -- exactly how a symmetric-vs-diagonal arm can come back identical.
               # These are the env knobs .ncut_fit_block reads at fit time.
-              prior = paste(Sys.getenv("NCUT_SYM_HS", ""), Sys.getenv("NCUT_HS_GROUPS", ""),
-                            Sys.getenv("NCUT_HS_ALL", ""), Sys.getenv("NCUT_HS_NO_INTERCEPT", ""),
+              # EFFECTIVE VALUES, not the raw env strings (2026-09-16). Hashing the raw string meant
+              # an UNSET knob always hashed as "" -- so changing a CODE DEFAULT reproduced the very
+              # collision this signature exists to stop: a pre-change run and a post-change run
+              # differ in behaviour but hash identically, and the second silently reloads the first's
+              # cached draws. Resolve each knob through the same default the fit block uses.
+              prior = paste(Sys.getenv("NCUT_SYM_HS", "TRUE"), Sys.getenv("NCUT_HS_GROUPS", ""),
+                            Sys.getenv("NCUT_HS_ALL", "FALSE"),
+                            Sys.getenv("NCUT_HS_NO_INTERCEPT", "TRUE"),
+                            Sys.getenv("NCUT_FE_HS", "FALSE"), Sys.getenv("NCUT_RE_SUPPORT", "1"),
                             sep = "|"))
   if (requireNamespace("digest", quietly = TRUE)) digest::digest(key)
   else paste0("h", format(sum(utf8ToInt(paste(unlist(lapply(key, paste, collapse = ",")), collapse = "||"))),

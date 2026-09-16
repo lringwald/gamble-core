@@ -197,8 +197,12 @@ saveRDS(list(fit = fit, tree = tree, cats = cats, re_idx = re_idx, branch = BR, 
              # PRIOR SWITCHES that change the fit but are set by ENV, so nothing else records them.
              # Without this, two fits differing only in symmetric_hs are indistinguishable once the
              # shell history is gone (exactly what happened to the 2026-08-18 B/C pair).
-             symmetric_hs = isTRUE(as.logical(Sys.getenv("NCUT_SYM_HS", "FALSE"))),
-             hs_no_intercept = isTRUE(as.logical(Sys.getenv("NCUT_HS_NO_INTERCEPT", "FALSE"))),
+             # DEFAULTS MUST TRACK .ncut_fit_block (both flipped to TRUE on 2026-09-16). This is a
+             # RECORD of what was fitted: if the default here disagrees with the one the sampler
+             # actually used, an unset run is recorded as diagonal while being fitted symmetric --
+             # a provenance field that lies, which is worse than no field at all.
+             symmetric_hs = isTRUE(as.logical(Sys.getenv("NCUT_SYM_HS", "TRUE"))),
+             hs_no_intercept = isTRUE(as.logical(Sys.getenv("NCUT_HS_NO_INTERCEPT", "TRUE"))),
              # PROVENANCE: which design and which tree this fit actually used. A silently reused/stale
              # design dump has cost a full multi-hour run before -- record it so the fit can be audited.
              inputs = FROM_INPUTS %||% NA_character_,

@@ -3,6 +3,9 @@
 What `mnlogit_rcpp_sym` fits when every switch is enabled, and which switches you should
 actually enable. Written 2026-08-26 against 106 formals across eight subsystems.
 
+**§8 reconciled against the code on 2026-09-16.** Defaults live in the two production callers, not
+here; §1-7 describe the model, §8 tells you where the current settings actually are.
+
 Companion to `nested_cut_model.md` (the nesting layer above this sampler) and
 `livestock_subtype_methodology.md` (the count/composition side).
 
@@ -123,31 +126,107 @@ the log-sum-exp from child nodes and CUT/multiple-imputation propagating their u
 
 ## 8. What to actually switch on
 
-**With all switches on this is not a model you should run.** Several are individually measured as
-costly or not yet identified:
+**This section is not the authority on defaults — the callers are.** Two production callers ship
+DIFFERENT configurations, both newer than the table below was:
+
+- **flat / pixel** — `run_lu_pixel_model.R:2001-2034` (`sampler_extra$mnlogit_rcpp_sym`)
+- **nested** — `codes/nested_cut.R:325-425` (`.ncut_fit_block`)
+
+Read those two blocks before quoting anything here. Where this document and the code disagree, the
+code is right and this document is stale.
+
+### 8.0 THE STANDARD CONFIGURATION — BMLEH_Los1 (adopted 2026-09-16)
+
+`projects/BMLEH_Los1_CAPRI/gamble_model/estimate_prior.R` is the reference configuration, because it
+is the only fit in this repo with **convergence, calibration and held-out skill evidenced in one
+place** — and on the hardest design here (66,861 pixels, 43 classes, 84 covariates, 25 CAPRI groups):
+
+| block | evidence |
+|---|---|
+| `log_lik` | Rhat 1.036, ESS 379 |
+| `mu` (3,612 FE) | Rhat med 1.001 / max 1.525, 2% above tolerance, ESS med 1,623 |
+| `sigma_re` | Rhat 1.005, ESS 422 |
+| held-out | McFadden 0.2454 on 13,372 pixels (20% random split) |
+| calibration | mean absolute gap 0.0019 over 12 predicted-share bins |
+| country RE | +8,438 nats (pooled McFadden -0.0009 -> 0.2454) |
+
+    symmetric = TRUE, symmetric_hs = TRUE
+    use_horseshoe = TRUE, horseshoe_idx = setdiff(seq_len(ncol(X)), icpt)   # intercept NOT shrunk
+    fe_support_strength = 0, re_support_strength = 1
+    re_regularize = TRUE, re_asis = TRUE
+    estimate_slab_c2 = FALSE, collapse_slab_c2 = 14.69                      # design-dependent, see 8.1b
+    use_bart = FALSE                                                        # baseline is linear
+    re_idx = intercept + log1p_GDP + log1p_Pop + GHM_HI + CISI
+    thin = 1, 4 chains, 2000 burn + 500 kept, extended by resumable segments
+
+**Provenance caveat.** The 2026-09-12 segment predates `run_config.rds` (2026-09-14), so its report
+states the switches were not recorded. They are the `run.sh` defaults and almost certainly what ran,
+but one further `run.sh more` segment would pin this properly. Do that before quoting these numbers
+in print.
+
+### 8.1 What the other two callers now do
+
+Aligned to the standard on 2026-09-16 (`symmetric_hs`, `fe_/re_support_strength`, intercept excluded
+from the horseshoe, `re_asis`):
+
+| | flat (`run_lu_pixel_model.R`) | nested (`codes/nested_cut.R`) |
+|---|---|---|
+| `symmetric_hs` | TRUE | TRUE (`NCUT_SYM_HS`, default flipped) |
+| `fe_support_strength` | **0**, explicit | 0, forced |
+| `re_support_strength` | **1**, explicit | 1 (`NCUT_RE_SUPPORT`) |
+| `horseshoe_idx` | excludes the intercept **by name** | excludes `IV_*` and the intercept (`NCUT_HS_NO_INTERCEPT`) |
+| `re_asis` | **TRUE** | **TRUE** |
+| `const_sum_blocks` | `"auto"` | `"auto"` |
+| BART | full validated block, opt-in | **absent — the nested path has no BART at all** |
+
+**b) Deliberate, documented divergences — set explicitly, not by accident:**
+
+| knob | value | why it differs |
+|---|---|---|
+| `re_asis` | TRUE everywhere | BMLEH: sigma_re Rhat 1.618 -> 1.007, ESS 7 -> 470, chain spread 0.0220 -> 0.0031. **Counter-measurement kept on the record:** an earlier GLOBIOM-node arm found ASIS hurting RE-variance ESS (73 -> 27). Standard is ON; re-measure before assuming it transfers to a small-class design |
+| `estimate_slab_c2` | BMLEH FALSE (c2 = 14.69); flat & nested TRUE | BMLEH: the slab never binds (cap sigma <= 3.8 vs sigma_re 0.108) and sampling it adds the worst-mixing scalar for free. Flat/nested: full Bayes beats the best fixed value held-out, and c2 is identified (starts 4 and 100 both converge to 4.12). Genuinely design-dependent |
+| `use_horseshoe` | BMLEH & flat TRUE; nested FALSE | Nested measured it POST-kernel-fix on the real root design at `fe_support_strength = 0`: ridge -2306.1 vs ridge+horseshoe -2369.3, i.e. -63.2 nats. That measurement stands under the new standard, so nested keeps the ridge by choice |
+| `re_idx` | BMLEH 5, flat 8, nested `NCUT_RE_COLS` | not yet reconciled; intercept-only measured at parity on skill with better convergence, but only on one node |
+
+**BART (flat only), the validated block:** `bart_symmetric = TRUE`, `bart_base = 0.90`,
+`bart_power = 3.0`, `bart_k = 2.0`, `bart_k_prevalence = TRUE` (cap 10),
+`store_bart_trees = TRUE`, `do_slim_trees = TRUE`. `use_bart` itself is opt-in
+(`DRIVER_USE_BART`, default FALSE, 25 trees) — but when it IS on, that is the configuration.
+Symmetric and prevalence-scaled `k` are complementary and super-additive: held-out total
++38.4 -> +75.4, rare classes -51.6 -> -9.0. It stays OUT of the standard deliberately: the GLOBIOM
+gate found BART worth +249 nats held-out at ~1.7x fit time, concentrated in abundant terrain-driven
+classes — not the right first cut for a target with many rare classes. BART is a treatment arm, not
+part of the baseline.
+
+**Store-hash warning.** Flipping a nested default changes behaviour while an unset env var still
+hashes the same. The store's `prior` signature therefore records **effective** values, not raw env
+strings (2026-09-16). Any future default change must keep that property, or resumed runs will
+silently reload draws from the old configuration.
+
+### 8.2 Revised switch status
 
 | switch | status |
 |---|---|
-| `symmetric_hs` | works; costs ~23 nats vs diagonal (RE-engaged, one node). Use if baseline invariance is the goal, not for skill |
-| `hs_kernel_live` | correct, but -41 nats; **catastrophic (-1274) unless `fe_support_strength = 0`** |
+| `symmetric_hs` | **the "costs ~23/120/129 nats" gate is VOID.** Those arms ran the pre-2026-08-19 bug (`Mb` applied within-equation instead of `kron(Msym, Mb)`; complement redraw conditioned on post-ASIS `mu_R`), one of them at Rhat 1.91. Post-fix: McFadden -0.018 -> +0.216 on the real root node, and the only head-to-head is IN-SAMPLE at one node (+0.216 sym vs +0.260 diag). Flat ships TRUE, nested ships FALSE, and **no held-out comparison has been run on either** |
+| `hs_kernel_live` | **the frozen-kernel bug is FIXED (2026-08-30).** `use_horseshoe = TRUE` used to deliver a plain A0=2 ridge silently; it now reaches the draw. `hs_kernel_live = "frozen"` is retained only to reproduce a pre-fix fit. Measured on the real root design: ridge -2306.1 vs ridge+horseshoe -2369.3 (-63.2 nats) at `fe_support_strength = 0`, and -1273.9 at 2. Nested therefore turns the FE horseshoe OFF by choice |
+| `fe_support_strength` | **OPEN DISCREPANCY.** Nested forces 0 and documents `(n/PR)^2` on the symmetric kernel as a median 106x / max 2.8e5x precision inflation costing ~125 nats. The flat driver passes `support_prior_strength = 2` and no override, so it inherits 2 — and with `symmetric_hs = TRUE` that factor IS live, via `c_v` (`mnlogit_rcpp_sym.R:3638`, "feeds the symmetric kernel"). The -125 nats was measured on the nested root, not on the flat design; it has never been measured on the flat path. Do not assume either caller is right |
 | `use_country_shrinkage` | gates correctly (tau 0.68 rich vs 0.185 sparse) but `sigma_v x tau_g` is NON-IDENTIFIED and absorbs the fixed effects |
-| `alt_spec_Z` | delta now recovers (1/1.5/2/3 -> 1.006/1.525/2.021/2.976); still behind `allow_unvalidated`, never run on a real design |
+| `alt_spec_Z` | delta recovers (1/1.5/2/3 -> 1.006/1.525/2.021/2.976). Nested exposes it as `NCUT_ALT_BLOCKS`; works flat and at leaves, **fails at a root nest** (`.ncut_node_iv` rebuilds child utilities from the full X and without delta). No equivalent env knob on the flat path — there, a spatial/temporal lag is an ordinary design column (`DRIVER_FOCAL_YEARS`, `DRIVER_PREV_STATE`) |
 | `collapse_re_var` | rejected for the pixel model (ESS 20x worse) |
 | `re_idx = 1:k` | over-parameterised on every design tested (189 rows / 26 countries gives 6-8 RE parameters per observation) |
+| `estimate_c2` (FE slab) | TRUE in both callers, at explicit request. Costs ~1.3 held-out LL vs FIXED on Pasture; kept for consistency with the RE slab, **not** because it improves fit. The inline comment at `run_lu_pixel_model.R:2015` still says it "stays FALSE" — that comment is stale, the code below it sets TRUE |
 
-**A coherent "everything sensible on" configuration:**
+### 8.3 Where the skill actually is
 
-    use_horseshoe    = TRUE
-    hs_groups        = <per-family / per-block tau>
-    symmetric_hs     = only if baseline invariance is the goal
-    fe_support_strength = 0        # never pair a live FE horseshoe with this
-    re_support_strength = 1        # the sparse-group gate; keep it
-    use_re           = TRUE, re_idx = intercept (+ a few measured slopes)
-    re_regularize    = TRUE, estimate_slab_c2 = TRUE
-    use_spike_slab   = TRUE
-    alt_spec_Z       = <spatial and/or temporal lag blocks>
-    use_bart         = FALSE
-    use_car          = FALSE
+`use_re = TRUE` with an intercept-carrying RE block is the single largest term: the country RE
+carries essentially all of the held-out log-score skill, and the intercept carries essentially all
+of the RE. Random slopes tie on skill for 8x the per-group parameters and converge worse
+(RE Rhat 1.5 vs 1.1). Start there before touching any shrinkage knob.
+
+**Scoring caveat.** `codes/score_nested_cut.R` / `run/score.R` is IN-SAMPLE — it measures
+reproduction, not generalisation, and mechanically favours the richer RE block. The only genuine
+held-out harness in the repo is `experiments/mixing/re_idx_tradeoff.R` (country-stratified, with
+predictions averaged over posterior draws rather than plugged in at the mean).
 
 ## 9. Known traps
 

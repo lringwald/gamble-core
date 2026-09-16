@@ -52,14 +52,14 @@ Single-level MNL over all classes at once — no nesting.
 **B.** `Rscript run/nested.R`
 **C.**
 ```bash
-run/fit_nested.sh smoke factorized intercept      diag    # ~10-15 min sanity check
-run/fit_nested.sh prod  factorized intercept      diag    # production (~6-24 h), backgrounded
-run/fit_nested.sh prod  factorized intercept+socio symhs  # random slopes + symmetric horseshoe
+run/fit_nested.sh smoke factorized intercept      symhs  # ~10-15 min sanity check
+run/fit_nested.sh prod  factorized intercept      symhs  # production (~6-24 h), backgrounded
+run/fit_nested.sh prod  factorized intercept      diag   # diagonal measurement arm
 ```
 or drive `run_nested_cut.R` directly — args are
 `BRANCH design.rds M NITER USE_RE IVMODE STREAM N_CHAINS N_CORES`:
 ```bash
-NCUT_USE_IV=FALSE NCUT_RE_COLS=intercept NCUT_SUB=0 NCUT_SYM_HS=FALSE \
+NCUT_USE_IV=FALSE NCUT_RE_COLS=intercept NCUT_SUB=0 NCUT_SYM_HS=TRUE \
 NCUT_STORE_DIR=output/ncut_store_myrun \
 Rscript run_nested_cut.R GLOBIOM output/pixel_model_inputs.rds 25 1000 TRUE auto TRUE 1 1
 ```
@@ -70,7 +70,7 @@ Choices, and what the measurements say:
 |---|---|---|
 | variant | `factorized` \| `iv` | factorized is the validated choice; `iv` estimates λ but on the 27-class tree λ fell outside (0,1] on 4 of 6 nests, and it is far slower (root refit per imputation) |
 | RE block | `intercept` \| `intercept+socio` | intercept-only wins on held-out *and* converges (RE Rhat 1.1 vs 1.5); the 7 slopes tie on skill for 8x the per-group parameters |
-| shrinkage | `diag` \| `symhs` | symmetric = baseline-invariant shrinkage, but ~120 nats worse held-out. Fixed 2026-08-19; earlier symmetric fits are invalid |
+| shrinkage | `diag` \| `symhs` | symmetric = baseline-invariant shrinkage. The old "~120 nats worse held-out" gate is **VOID** — those arms ran the pre-2026-08-19 bug, at Rhat 1.91. Post-fix the only head-to-head is IN-SAMPLE at one node (McFadden +0.216 sym vs +0.260 diag); no held-out comparison has been run. `diag` is the untested default, not a measured winner |
 | `N_CHAINS` | 1 \| 4 | 4 gives per-node Rhat/ESS in `fit$convergence`, at ~4x cost |
 
 ## 4. Livestock count model

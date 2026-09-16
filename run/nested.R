@@ -23,9 +23,13 @@ VARIANT    <- "factorized"     # "factorized" = levels fit independently (VALIDA
                                #                GLOBIOM tree lambda fell outside (0,1] on 4 of 6 nests.
 RE_BLOCK   <- "intercept"      # "intercept"       = country random intercept (best held-out + converges)
                                # "intercept+socio" = + 7 random slopes (ties on skill, RE Rhat 1.5 vs 1.1)
-SYMMETRIC_HS <- FALSE          # TRUE = zero-sum/CLR horseshoe: shrinkage invariant to which class is the
-                               # baseline. Fixed 2026-08-19; costs ~120 nats held-out vs the diagonal
-                               # horseshoe, so switch on for the INVARIANCE property, not for accuracy.
+SYMMETRIC_HS <- TRUE           # STANDARD as of 2026-09-16 (BMLEH_Los1). Zero-sum/CLR horseshoe:
+                               # shrinkage invariant to which class is the baseline -- which matters
+                               # because `baseline` is which.max(colSums(Y)), i.e. data-dependent and
+                               # DIFFERENT PER NODE.
+                               # The old "~120 nats worse held-out" gate is VOID: those arms ran the
+                               # pre-2026-08-19 bug, at Rhat 1.91. Set FALSE for a diagonal
+                               # measurement arm. See docs/sampler_model_specification.md sec. 8.0.
 SUBSAMPLE  <- 6000L            # 0 = all 64,173 pixels (production). 6000 ~ a 10-15 min smoke.
 NITER      <- 200L             # production = 1000
 M          <- 25L              # posterior draws carried per node (also IV imputations when VARIANT="iv")

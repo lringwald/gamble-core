@@ -2,8 +2,11 @@
 # =============================================================================
 # run/fit_nested.sh — batch runner for the nested land-use model
 # =============================================================================
-# Usage: run/fit_nested.sh [smoke|prod] [factorized|iv] [intercept|intercept+socio] [diag|symhs]
-# Default:                  prod         factorized      intercept                   diag
+# Usage: run/fit_nested.sh [smoke|prod] [factorized|iv] [intercept|intercept+socio] [symhs|diag]
+# Default:                  prod         factorized      intercept                   symhs
+#
+# symhs is the STANDARD (BMLEH_Los1, 2026-09-16); diag is the measurement arm.
+# See docs/sampler_model_specification.md sec. 8.0.
 #
 #   smoke  6000 px / 200 iter  (~10-15 min)      prod  64,173 px / 1000 iter (~24 h)
 #
@@ -13,7 +16,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-MODE="${1:-prod}"; VARIANT="${2:-factorized}"; RE_COLS="${3:-intercept}"; HS="${4:-diag}"
+MODE="${1:-prod}"; VARIANT="${2:-factorized}"; RE_COLS="${3:-intercept}"; HS="${4:-symhs}"
 DESIGN="${NCUT_DESIGN:-output/pixel_model_inputs.rds}"
 
 [ -f "$DESIGN" ] || { echo "FATAL: no design dump at $DESIGN (build one with run/flat.R)"; exit 1; }
