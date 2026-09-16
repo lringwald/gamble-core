@@ -1,6 +1,19 @@
 # The BMLEH cascade on REAL Eurostat shares: composition, area conservation, geo fallback.
 suppressMessages(library(data.table))
 source("codes/target_class_split.R")
+# This test needs the BMLEH project rules AND a built share table. Both live under paths the repo
+# git-ignores (`projects/` and `output/`), so on a fresh clone they are legitimately absent. Declare
+# that OUT LOUD: run_all.R reads a `SKIP:` line as a third status, because exiting 0 with no
+# assertions would otherwise be scored as a FAIL ("silent success" is the failure mode this repo
+# keeps hitting), and quietly passing would be worse still.
+.need <- c("projects/BMLEH_Los1_CAPRI/gamble_model/target_rules.R",
+           "output/gamble_model/BMLEH_Los1_CAPRI/crop_shares_nuts2.csv")
+.miss <- .need[!file.exists(.need)]
+if (length(.miss)) {
+  cat(sprintf("SKIP: BMLEH project inputs absent (%s) -- build with projects/BMLEH_Los1_CAPRI/gamble_model/run.sh\n",
+              paste(basename(.miss), collapse = ", ")))
+  quit(status = 0)
+}
 source("projects/BMLEH_Los1_CAPRI/gamble_model/target_rules.R")
 np <- 0L; nf <- 0L
 ok <- function(c_, m) { if (isTRUE(c_)) { np <<- np+1L; cat(sprintf("[PASS] %s\n", m)) }

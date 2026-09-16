@@ -106,7 +106,8 @@ source("run/score.R")                                    # compare fits side by 
 ```
 ```bash
 Rscript codes/score_nested_cut.R output/nested_cut_A.rds output/nested_cut_B.rds
-Rscript codes/master_test_suite_sym.R    # 35-check sampler gate — run before/after touching codes/
+Rscript tests/run_all.R                  # EVERY test + HTML report & figure -> output/report/
+Rscript codes/test_suite_lu_pixel.R      # 37-check sampler gate — run before/after touching codes/
 Rscript tests/test_nested_cut.R          # nested-framework synthetic validation
 ```
 Scoring is **in-sample**: it measures reproduction, not generalisation, and favours the richer RE

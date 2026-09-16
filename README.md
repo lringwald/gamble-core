@@ -25,7 +25,8 @@ codes/            core samplers + Rcpp cores + shared helpers
   nested_cut.R, nest_trees.R, mnlogit_nested_iv.R    nested / inclusive-value framework
   lnm_gibbs.R, mvclr_gibbs.R (+ cores)               alternative compositional samplers
   score_nested_cut.R                                 scoring (used by run/score.R)
-  master_test_suite_sym.R                            35-check sampler gate
+  test_suite_lu_pixel.R                              37-check sampler gate (was master_test_suite_sym.R)
+  test_suite_ls_count.R                              count-feature gate
   mnl_aux_func.R, prior_model_predict.R, spatial_utils.R, MNL_*.R
 drivers (root):   run_prior_module_pixel_level_model.R   (pixel MNL / design assembly)
                   run_prior_module_count_model.R         (livestock count)
@@ -70,7 +71,9 @@ Non-interactive equivalents:
 ```bash
 run/fit_nested.sh smoke factorized intercept symhs    # ~10-15 min sanity run
 run/fit_nested.sh prod  factorized intercept symhs    # full run (~24 h), backgrounded + resumable
-Rscript codes/master_test_suite_sym.R                 # sampler gate (35 checks)
+Rscript tests/run_all.R                               # EVERY test + HTML report & figure
+Rscript tests/run_all.R fast                          # same, minus the two long suites
+Rscript codes/test_suite_lu_pixel.R                   # sampler gate (37 checks)
 Rscript tests/test_nested_cut.R                       # nested-framework validation
 ```
 
