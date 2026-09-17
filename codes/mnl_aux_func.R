@@ -274,6 +274,42 @@ refresh_workers <- function() {
 }
 
 # --- Label Formatting for Reports ---
+# --- Throttled per-chain progress for PARALLEL sampling -----------------------------------------
+# WHY THIS EXISTS. mnlogit_rcpp_sym has three progress modes (its progress_cb branch, ~L4124):
+#   progress_cb supplied  -> calls it with "Chain N: Iteration i / niter <phase>"
+#   chain_id NULL         -> a real txtProgressBar
+#   chain_id set, no cb   -> cat() on EVERY iteration
+# A parallel run sets chain_id and passes no callback, so it takes the third path: niter lines per
+# chain. Worse, future_lapply CAPTURES worker stdout unless future.stdout = NA, so those lines are
+# relayed only when the worker EXITS -- which is why a 4-chain fit shows nothing for hours and then
+# dumps everything at once.
+#
+# Four txtProgressBars cannot share one terminal (each rewrites the same line), so the readable
+# shape for N parallel chains is ONE THROTTLED LINE PER CHAIN. Emitted via base::message(), i.e.
+# stderr, which future.stdout = NA passes straight through; stdout would be captured again.
+#
+# Pair BOTH halves at the call site -- a callback without future.stdout = NA is still invisible:
+#   progress_cb = make_progress_cb(sprintf("chain %d", ci), every_sec, niter)
+#   future_lapply(..., future.stdout = NA)
+make_progress_cb <- function(label, every_sec = 30, niter = NA_integer_) {
+  if (!is.finite(every_sec) || every_sec <= 0) return(function(...) invisible(NULL))  # silent
+  e <- new.env(parent = emptyenv())
+  e$last <- as.numeric(Sys.time()) - 1e6; e$t0 <- as.numeric(Sys.time()); e$n <- 0L
+  function(message = NULL, ...) {   # `message` shadows base::message -> call base:: explicitly
+    e$n <- e$n + 1L
+    now <- as.numeric(Sys.time())
+    if (now - e$last < every_sec) return(invisible())
+    e$last <- now
+    el <- (now - e$t0) / 60
+    # ETA from the observed rate so far; only meaningful once niter is known.
+    eta <- if (is.finite(niter) && niter > 0 && e$n > 0) max(0, el / e$n * (niter - e$n)) else NA_real_
+    txt <- if (is.null(message)) sprintf("iteration %d", e$n) else sub("^Chain [^:]*: ", "", message)
+    base::message(sprintf("[%-8s] %-38s elapsed %5.1fm%s", label, txt, el,
+                          if (is.finite(eta)) sprintf(" | ~ETA %5.1fm", eta) else ""))
+    invisible()
+  }
+}
+
 # --- Display scaling: the ONE definition of how coefficients are put on a comparable scale ------
 # THE PROBLEM THIS SOLVES. Saved coefficients are in RAW covariate units, and those units differ by
 # four orders of magnitude: Growing_Degree_Days_gdd5 has sd 962, Annual_Precipitation_bio12 340,

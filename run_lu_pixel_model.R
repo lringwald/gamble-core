@@ -1401,7 +1401,48 @@ if ("focal_dummy_fcl_class" %in% names(dat_pixel)) {
 # Explicit Filtering
 skewed_vars <- c("GDP", "Pop")   # RAI removed 2026-08-04 (replaced by the GHM threat groups)
 static_chelsa_cols <- intersect(c("Growing_Degree_Days_gdd5", "Precipitation_Seasonality_bio15", "Annual_Precipitation_bio12"), names(dat_pixel))
-spatial_cont_cols <- c("Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "allPA_share", GHM_VARS, "CISI", skewed_vars, yield_cols, static_chelsa_cols, climate_cols)
+
+# ---- YIELD REPARAMETERISATION: level + input response (2026-09-17) -----------------------------
+# The three yield_index columns are ONE suitability surface entered three times. Measured on the
+# GLOBIOM design: pairwise r 0.95-0.99, PC1 carries 98.31% of the variance with near-equal loadings
+# (0.575/0.582/0.575), and the ratios are near-constant (Med/Low median 1.46, High/Low 2.12). That
+# leaves VIF 312.8 / 107.6 / 82.6 -- i.e. 99.7% of yield_index_Med is explained by the other two, and
+# its standard error is inflated ~17.7x.
+#
+# The consequence is specific: the JOINT yield effect is identified, the SPLIT between the three is
+# not. Only ~1.7% of residual variation distinguishes them, so individual coefficients can be large
+# and opposite-signed, they move between chains and seeds, and the horseshoe shrinks an essentially
+# arbitrary one of them. Prediction is largely unharmed (collinear predictors that keep the same
+# relationship out of sample predict fine); ATTRIBUTION is not, and a near-collinear block is a prime
+# suspect for the slow mixing seen on the 2026-09-16 GLOBIOM fit (21% of mu above Rhat 1.05).
+#
+# const_sum_blocks="auto" cannot catch this: it detects blocks summing to a CONSTANT, while these sum
+# to a varying total (0 - 3.90, sd 1.07), and mnlogit_rcpp_sym.R states that continuous indices are
+# never flagged. So nothing upstream handles it.
+#
+# Replaced by two quantities, formed AFTER the 1km -> pixel weighted-mean aggregation above (a mean
+# of ratios is not the ratio of means):
+#   yield_level    = mean(Low, Med, High)   general suitability     (~ PC1, 98.3% of the variance)
+#   yield_response = High - Low             response to input intensification
+# Measured effect: VIF 312/108/83 -> 9.09 / 8.53. Still correlated (r = 0.926), so improved rather
+# than clean -- report them as a pair, not as independent drivers.
+#
+# OPEN DATA QUESTION: 5,551 of 64,472 GLOBIOM pixels (8.6%) have all three indices exactly 0. If that
+# is a missing-data sentinel rather than true zero suitability, both derived columns inherit it and
+# the fix is upstream in gridwork, not here.
+YIELD_PARAM <- Sys.getenv("DRIVER_YIELD_PARAM", "level_contrast")   # "level_contrast" | "raw"
+yield_model_cols <- yield_cols
+if (identical(YIELD_PARAM, "level_contrast") && all(yield_cols %in% names(dat_pixel))) {
+  dat_pixel[, yield_level    := rowMeans(.SD, na.rm = TRUE), .SDcols = yield_cols]
+  dat_pixel[, yield_response := yield_index_High - yield_index_Low]
+  dat_pixel[, (yield_cols) := NULL]
+  yield_model_cols <- c("yield_level", "yield_response")
+  cat(">>> yield: level + response contrast (collinearity VIF ~312/108/83 -> ~9). DRIVER_YIELD_PARAM=raw restores the three raw indices.\n")
+} else if (!identical(YIELD_PARAM, "level_contrast")) {
+  cat(">>> yield: RAW three indices (DRIVER_YIELD_PARAM=raw) -- near-collinear, VIF ~312/108/83; individual coefficients are not interpretable.\n")
+}
+
+spatial_cont_cols <- c("Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "allPA_share", GHM_VARS, "CISI", skewed_vars, yield_model_cols, static_chelsa_cols, climate_cols)
 soil_cols <- grep("_s[0-9]+$", colnames(dat_pixel), value = TRUE)
 focal_cols <- grep("^focal_", colnames(dat_pixel), value = TRUE)
 
@@ -1614,7 +1655,7 @@ for (.v in skewed_vars) {
 
 spatial_cont_cols_trans <- c(
   "Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "allPA_share", GHM_VARS, "CISI",
-  paste0("log1p_", skewed_vars), static_chelsa_cols, climate_cols, yield_cols
+  paste0("log1p_", skewed_vars), static_chelsa_cols, climate_cols, yield_model_cols
 )
 focal_cov_cols <- grep("^focal_", colnames(dat_pixel), value = TRUE)
 prev_cov_cols  <- grep("^prev_",  colnames(dat_pixel), value = TRUE)   # own t-1 state (DRIVER_PREV_STATE)
@@ -1862,6 +1903,11 @@ if (isTRUE(as.logical(Sys.getenv("DRIVER_DUMP_INPUTS", "FALSE")))) {
                geo_col = if (exists("GEO_REGION_COL")) GEO_REGION_COL else NA_character_,
                baseline_class = baseline_class, col_names = colnames(X_mat),
                focal_cov_cols = focal_cov_cols, spatial_cont_cols_trans = spatial_cont_cols_trans,
+               # WHICH yield parameterisation built this design. A dump with yield_level/
+               # yield_response and one with the three raw indices are not interchangeable, and a
+               # consumer cannot tell them apart from the column names alone without knowing the
+               # convention -- so record it rather than infer it.
+               yield_param = YIELD_PARAM, yield_model_cols = yield_model_cols,
                # coords/ID aligned 1:1 with X_mat rows (dat_pixel row order) -> enables spatial tile-block CV
                coord_X = if ("X" %in% names(dat_pixel)) dat_pixel$X else NULL,
                coord_Y = if ("Y" %in% names(dat_pixel)) dat_pixel$Y else NULL,
