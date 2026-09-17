@@ -89,17 +89,21 @@ MNL_parameter_heatplot <- function(draws, cov_names = NULL, cat_names = NULL, ti
   }
   
   # Apply intercept filtering if requested
+  # LU-LAG DETECTION. These labels come from format_mnl_labels, which renders `focal_*` as
+  # "Spatial lag: <class>" and `prev_*` as "Temporal lag: <class>" (it used to say "Neighbor:",
+  # which hid that both are LAGS of the response). The pattern below MUST track that function --
+  # a mismatch does not error, it silently empties one facet.
+  .LAG_PAT <- "^(Spatial|Temporal) lag:"
   if (exclude_intercept) {
     df_summary <- df_summary %>%
       filter(!grepl("intercept", Covariate, ignore.case = TRUE)) %>%
       mutate(
         Covariate = factor(Covariate, levels = rev(levels(Covariate)[levels(Covariate) %in% Covariate])),
-        # Detect Neighborhood for faceting
-        Panel = ifelse(grepl("Neighbor", Covariate), "Neighborhood Context", "Main Effects")
+        Panel = ifelse(grepl(.LAG_PAT, Covariate), "LU lags (spatial / temporal)", "Main effects")
       )
   } else {
     df_summary <- df_summary %>%
-      mutate(Panel = ifelse(grepl("Neighbor", Covariate), "Neighborhood Context", "Main Effects"))
+      mutate(Panel = ifelse(grepl(.LAG_PAT, Covariate), "LU lags (spatial / temporal)", "Main effects"))
   }
   
   # --- Apply custom sorting ---
@@ -113,8 +117,8 @@ MNL_parameter_heatplot <- function(draws, cov_names = NULL, cat_names = NULL, ti
   
   # 2. Sort Covariates: Main alphabetically, Neighborhood matching Categories
   covs <- unique(as.character(df_summary$Covariate))
-  is_neighb <- grepl("Neighbor", covs, ignore.case = TRUE)
-  
+  is_neighb <- grepl(.LAG_PAT, covs)          # same pattern as the Panel split above
+
   neighb_covs <- covs[is_neighb]
   main_covs <- sort(covs[!is_neighb])
   
@@ -150,18 +154,19 @@ MNL_parameter_heatplot <- function(draws, cov_names = NULL, cat_names = NULL, ti
     geom_tile(fill = "grey95", width = 1, height = 1) +
     
     # Main Effects tiles
-    geom_tile(data = subset(df_summary, Panel == "Main Effects"),
+    geom_tile(data = subset(df_summary, Panel == "Main effects"),
               aes(width = Credibility, height = Credibility, fill = median)) +
-    scale_fill_gradient2(low = "#7b3294", mid = "white", high = "#008837", 
-                         midpoint = 0, name = "Est (Main)", 
+    scale_fill_gradient2(low = "#7b3294", mid = "white", high = "#008837",
+                         midpoint = 0, name = "Est (main)\nper SD",
                          guide = guide_colorbar(order = 1)) +
-    
-    # New scale for Neighborhood Context
+
+    # Separate scale for the LU lags: they are per UNIT (shares), not per SD, so they must not
+    # share a colour bar with the main effects -- that would imply a comparability that is not there.
     new_scale_fill() +
-    geom_tile(data = subset(df_summary, Panel == "Neighborhood Context"),
+    geom_tile(data = subset(df_summary, Panel == "LU lags (spatial / temporal)"),
               aes(width = Credibility, height = Credibility, fill = median)) +
-    scale_fill_gradient2(low = "#7b3294", mid = "white", high = "#008837", 
-                         midpoint = 0, name = "Est (Neighb.)", 
+    scale_fill_gradient2(low = "#7b3294", mid = "white", high = "#008837",
+                         midpoint = 0, name = "Est (LU lag)\nper unit",
                          guide = guide_colorbar(order = 2)) +
                          
     # Borders
@@ -178,12 +183,19 @@ MNL_parameter_heatplot <- function(draws, cov_names = NULL, cat_names = NULL, ti
       strip.text = element_text(face = "bold", size = 11),
       plot.title = element_text(face = "bold", size = 14),
       plot.subtitle = element_text(size = 11),
+      plot.caption = element_text(size = 8.5, colour = "grey30", hjust = 0),
       legend.position = "right",
       panel.spacing = unit(1, "lines")
     ) +
+    # STATE THE SCALING CONVENTION ON THE FIGURE. Raw coefficients are in raw covariate units, which
+    # span four orders of magnitude here, so an unscaled heatplot ranks climate last when per SD it
+    # is among the largest effects. A reader cannot infer the convention from the tiles.
     labs(title = title,
          subtitle = subtitle,
-         x = "Land-Use Category", 
+         caption = if (!is.null(scaling_vec)) display_scale_note() else
+           paste("UNSCALED: tiles are raw coefficients in raw covariate units and are NOT comparable",
+                 "across drivers (pass scaling_vec = display_sds(X) to put them on a comparable scale)."),
+         x = "Land-Use Category",
          y = "Driver / Covariate")
   
   return(p)

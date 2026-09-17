@@ -126,6 +126,16 @@ for(v in sl_rows){
   rot[[covs[v]]] <- data.frame(cov=covs[v], class=cats, median=med, q025=lo, q975=hi)
 }
 rot <- rbindlist(rot)
+# DISPLAY SCALE, computed here because this is the only point in the report pipeline where the
+# design X is in scope. render_heatplot.R and build_html.R read this cache and never see a design,
+# so without it they can only plot RAW coefficients -- which span four orders of magnitude in this
+# design and rank climate last when per SD it is among the largest effects. Rule B lives in
+# codes/mnl_aux_func.R (display_sds): per SD for unbounded covariates, per unit for shares.
+source("codes/mnl_aux_func.R")
+sds_display <- display_sds(X)
+rot[, sd_x := sds_display[cov]]
+rot[is.na(sd_x), sd_x := 1]
+rot[, `:=`(eff_median = median * sd_x, eff_q025 = q025 * sd_x, eff_q975 = q975 * sd_x)]
 
 # ---- totals with CI (class + per-country) ----
 TD <- do.call(rbind, tot_draws)                       # [S x J]
@@ -154,6 +164,7 @@ saveRDS(list(branch=BR, cfg=cfg, meta=meta, n=n, J=J, cats=cats, baseline=cats[b
              coordX=coordX, coordY=coordY, grp=grp, glev=glev[uq],
              obs=Y, pred=pointP, parea=parea,
              class_tot=class_tot, ctry_tot=ctry_tot, fitm=fitm, rot=rot, conv=conv,
+             sds_display=sds_display, scale_note=display_scale_note(),
              McF_recon=McF_recon, LLn=LLn, LLp=LLp, ndraw_used=ndraw_used,
              use_true_int=use_true_int, intercept_mode=intercept_mode,
              meanBt=meanBt),

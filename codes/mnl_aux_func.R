@@ -274,6 +274,48 @@ refresh_workers <- function() {
 }
 
 # --- Label Formatting for Reports ---
+# --- Display scaling: the ONE definition of how coefficients are put on a comparable scale ------
+# THE PROBLEM THIS SOLVES. Saved coefficients are in RAW covariate units, and those units differ by
+# four orders of magnitude: Growing_Degree_Days_gdd5 has sd 962, Annual_Precipitation_bio12 340,
+# Elevation 409, while CISI is 0.04, Slope_rad 0.11 and every focal_* share lives on [0,1]. Ranking
+# or colouring `value_median` directly therefore shows climate as a hairline and the LU lags as
+# dominant -- the REVERSE of the truth. Measured on the BMLEH fit: raw |coef| puts climate last at
+# 0.0169, but per-SD it is the second LARGEST family at 0.479 (vs 0.027 for the lag block).
+#
+# THE CONVENTION (rule B). Scale by the covariate's own SD where the covariate is unbounded, and
+# leave it at 1 where a unit is already meaningful:
+#   * unbounded covariates (max|x| > 1)  -> effect per 1 SD
+#   * shares / bounded indices, intercept -> effect per 1 UNIT (a share moving 0 -> 1)
+# The max|x| > 1 test mirrors `cont_idx` in mnlogit_rcpp_sym.R, so the display scale matches the
+# scale the sampler actually standardised on; `^focal_|_share$` is forced to 1 because those are
+# zero-sum projected shares whose raw coefficient is already the per-unit effect.
+#
+# ANY PLOT OR TABLE USING THIS MUST SAY SO -- a scaling convention that is not stated on the figure
+# is how the climate covariates came to look inert for so long.
+display_sds <- function(X, cov_names = colnames(X)) {
+  sds <- setNames(rep(1, length(cov_names)), cov_names)
+  if (!is.null(X)) {
+    present <- intersect(cov_names, colnames(X))
+    if (length(present)) {
+      s <- apply(X[, present, drop = FALSE], 2, stats::sd)
+      unbounded <- apply(X[, present, drop = FALSE], 2, function(x) max(abs(x), na.rm = TRUE) > 1)
+      s[!unbounded] <- 1                      # bounded -> per unit (mirrors cont_idx)
+      s[!is.finite(s) | s <= 0] <- 1          # zero-variance / degenerate -> leave unscaled
+      sds[present] <- s
+    }
+  }
+  sds[grep("^focal_|^prev_|_share$", names(sds))] <- 1   # zero-sum projected shares: per unit
+  if ("intercept" %in% names(sds)) sds["intercept"] <- 1
+  sds
+}
+
+# One-line statement of the convention, for plot captions and report notes. Every figure that scales
+# by display_sds() should print this.
+display_scale_note <- function() {
+  paste("Effects on a comparable scale: per 1 SD for unbounded covariates (SD shown in the label),",
+        "per 1 unit for shares and bounded indices (LU lags, soil levels, protected-area share).")
+}
+
 format_mnl_labels <- function(cov_names, sds) {
   # Map raw names to descriptive labels
   m <- c(
@@ -328,14 +370,23 @@ format_mnl_labels <- function(cov_names, sds) {
     nm <- cov_names[i]
     base_name <- m[nm]
 
-    # Handle Neighborhood
-    if (is.na(base_name) && grepl("^focal_", nm)) {
-      cls <- gsub("^focal_", "", nm)
+    # Handle the two LU LAGS. `focal_*` is the queen-8 NEIGHBOURHOOD composition with the centre
+    # excluded, taken at FOCAL_YEARS -- a SPATIAL lag (which is also lagged in time, e.g. 2010 for a
+    # 2018 outcome). `prev_*` is the pixel's OWN composition at t-1 -- a purely TEMPORAL lag. Naming
+    # them "Neighbor:" hid that distinction and hid the fact that they are lags at all; the sampler's
+    # own vocabulary (nested_cut.R: "spatial:focal_", "temporal:prev_") is used instead.
+    # NOTE: this is a DISPLAY rename only. The column prefixes stay `focal_`/`prev_` -- they are
+    # baked into every saved design, fit and resumable store, and into the sampler's own `^focal_`
+    # matching, so renaming the columns would invalidate existing artifacts.
+    if (is.na(base_name) && grepl("^(focal|prev)_", nm)) {
+      is_spatial <- grepl("^focal_", nm)
+      cls <- sub("^(focal|prev)_", "", nm)
       mapped <- focal_map[cls]
       # focal_map returns NA (not NULL) for unknown classes, which %||% does not
-      # catch -> all unknown classes collapsed to "Neighbor: NA" (duplicate labels
+      # catch -> all unknown classes collapsed to one label (duplicate labels
       # crash factor(levels=...)). Fall back to the class name itself when unmapped.
-      base_name <- paste0("Neighbor: ", if (is.na(mapped)) cls else unname(mapped))
+      base_name <- paste0(if (is_spatial) "Spatial lag: " else "Temporal lag: ",
+                          if (is.na(mapped)) cls else unname(mapped))
     }
 
     # Handle Soil
@@ -384,12 +435,15 @@ format_mnl_labels <- function(cov_names, sds) {
       if (base_name == "intercept") base_name <- "Intercept"
     }
 
-    # Add SD scaling information
+    # Mark the display scale (see display_sds). "(sd=...)" alone did not tell the reader that the
+    # coefficient had been put on a per-SD footing, so the unit is now named: a covariate scaled by
+    # its SD reads "per SD", everything else is per unit and left bare (annotating all 27 lag
+    # columns with "per unit" would be noise -- the caption carries that half).
     s <- sds[nm]
     if (is.na(s) || s == 1) {
       new_labels[i] <- base_name
     } else {
-      new_labels[i] <- sprintf("%s (sd=%.2f)", base_name, s)
+      new_labels[i] <- sprintf("%s (per SD, sd=%.4g)", base_name, s)
     }
   }
   return(new_labels)

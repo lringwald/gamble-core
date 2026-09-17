@@ -2148,7 +2148,10 @@ if (SAMPLER %in% c("lnm_gibbs", "mvclr_gibbs")) {
   )
 
   cat("\n>>> Generating Parameter Heatplot...\n")
-  understandable_labels <- format_mnl_labels(cov_names_processed, setNames(rep(1, P), cov_names_processed))
+  # Display scale (rule B) -- see codes/mnl_aux_func.R. X_mat is the fitted design, so the SDs are
+  # the ones the sampler actually standardised on.
+  .sd_disp <- display_sds(X_mat, cov_names_processed)
+  understandable_labels <- format_mnl_labels(cov_names_processed, .sd_disp)
   cat_sym <- c(setdiff(cat_all, baseline_class), intersect(cat_all, baseline_class))
   reordered <- reorder_mnl_covariates(cov_names_processed, cat_names = cat_sym)
   ord <- match(reordered, cov_names_processed)
@@ -2158,8 +2161,11 @@ if (SAMPLER %in% c("lnm_gibbs", "mvclr_gibbs")) {
   p_heat <- MNL_parameter_heatplot(
     draws = flat_draws, cov_names = understandable_labels[ord], cat_names = cat_sym,
     exclude_intercept = TRUE,
+    # Was unscaled ("Raw symmetric coefficients"), which is not comparable across drivers: raw units
+    # span four orders of magnitude here, so climate rendered as a hairline. Same rule B as the MNL path.
+    scaling_vec = .sd_disp[reordered],
     title = paste0(MODEL_LABEL, " ", SAMPLER, " Coefficient Heatplot (baseline-free symmetric)"),
-    subtitle = "Tile size = Credibility, Color = Median. Raw symmetric (zero-sum) coefficients."
+    subtitle = "Tile size = Credibility, Color = Median. Symmetric (zero-sum) coefficients."
   ) + theme(axis.text.y = element_text(size = 9, hjust = 1))
   dir.create("output/plots", recursive = TRUE, showWarnings = FALSE)
   ggsave(paste0("output/plots/", SAMPLER, "_pixel_", MODEL_LABEL, "_heatplot.png"), p_heat, width = 12, height = 20)
@@ -2186,9 +2192,13 @@ if (SAMPLER %in% c("lnm_gibbs", "mvclr_gibbs")) {
     for (ti in seq_len(K)) {
       if (fi == ti) next
       qq <- .rq(draws3[, ti, ] - draws3[, fi, ])
+      # sd_x carries the DISPLAY scale with the artifact (rule B, codes/mnl_aux_func.R), so any
+      # consumer can put coefficients on a comparable footing without needing the design: multiply
+      # value_* by sd_x. Without it a reader ranks raw units and concludes climate does nothing.
       rot_list[[ci]] <- data.table::data.table(
         ks = cov_names_processed, from_class = cat_all[fi], to_class = cat_all[ti],
-        value_median = qq[, 1], value_q025 = qq[, 2], value_q975 = qq[, 3]
+        value_median = qq[, 1], value_q025 = qq[, 2], value_q975 = qq[, 3],
+        sd_x = as.numeric(display_sds(X_mat, cov_names_processed)[cov_names_processed])
       )
       ci <- ci + 1L
     }
@@ -2422,16 +2432,13 @@ cat(sprintf(
 # 9. GENERATE PARAMETER HEATPLOT
 cat("\n>>> Generating Parameter Heatplot...\n")
 # Create understandable labels and scaling info
-sd_final <- setNames(rep(1, length(cov_names_processed)), cov_names_processed)
-existing_sds <- apply(X_mat, 2, sd)
-for (n in intersect(names(existing_sds), names(sd_final))) sd_final[n] <- existing_sds[n]
-sd_final["intercept"] <- 1
-
-# Do not scale share variables — they are already zero-sum projected,
-# so plotting the raw coefficient (effect of a 1-unit share change) is correct.
-# Their own legend handles the magnitude difference.
-share_vars <- grep("^focal_|_share$", names(sd_final), value = TRUE)
-sd_final[share_vars] <- 1.0
+# Display scale = rule B, now defined ONCE in codes/mnl_aux_func.R (display_sds) so every plot,
+# table and artifact in the repo uses the same convention: per 1 SD for unbounded covariates, per
+# 1 unit for shares and bounded indices (which are already zero-sum projected, so the raw
+# coefficient IS the per-unit effect). This block used to define that rule inline, here only, which
+# is why the other heatplot, the report heatplot and the rotated artifacts all showed raw
+# coefficients -- and why climate looked inert when per SD it is one of the largest families.
+sd_final <- display_sds(X_mat, cov_names_processed)
 
 understandable_labels <- format_mnl_labels(cov_names_processed, sd_final)
 

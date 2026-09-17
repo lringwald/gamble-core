@@ -93,6 +93,16 @@ branch_section <- function(b){
   if (!is.null(R$meanBt)) {
     Bt <- R$meanBt
     covnames <- R$meta$cov_names
+    # DISPLAY SCALE (rule B) -- codes/mnl_aux_func.R display_sds, cached by engine.R because this
+    # script never sees the design. The tiles below BOTH print the coefficient and colour by it, so
+    # on raw units climate is invisible next to shares: gdd5 has sd ~960 and CISI ~0.04, i.e. four
+    # orders of magnitude, which ranks the largest real effects last. Scaling here once means vlim
+    # and the printed value both inherit the comparable scale. Older caches (no sds_display) fall
+    # back to 1, i.e. exactly the previous unscaled behaviour.
+    .sdv <- R$sds_display
+    .sc  <- if (is.null(.sdv)) rep(1, length(covnames)) else {
+              v <- as.numeric(.sdv[covnames]); ifelse(is.na(v), 1, v) }
+    Bt <- sweep(Bt, 1, .sc, "*")
     
     class_opts <- paste(sprintf('<option value="%d">%s</option>', seq_along(cats), esc(cats)), collapse="")
     class_sel <- sprintf('<select class="re-class-sel" data-b="%s" style="margin-left:10px;padding:2px 8px;border-radius:4px">%s</select>', b, class_opts)
@@ -120,7 +130,7 @@ branch_section <- function(b){
     
     re_heat <- sprintf('
       <h3>Country total effects (MNL fixed + random) <span class="sub">posterior mean &#946;<sub>total</sub> &middot; tile size = deviation from mean</span> %s</h3>
-      <p class="note">These are the absolute coefficients applied to each country for the selected land-use class. <span style="color:#B2182B;font-weight:bold">Red</span> = pushes share up, <span style="color:#2166AC;font-weight:bold">Blue</span> = pushes share down. Color intensity scaled relative to cross-country standard deviation.</p>
+      <p class="note">Coefficients applied to each country for the selected land-use class, on a <strong>comparable scale</strong>: <strong>per 1 SD</strong> for unbounded covariates (climate, elevation, GDP) and <strong>per 1 unit</strong> for shares and bounded indices (LU lags, soil levels, protected-area share). Raw coefficients are <em>not</em> comparable across drivers &mdash; units here span four orders of magnitude, which makes the largest real effects look like the smallest. <span style="color:#B2182B;font-weight:bold">Red</span> = pushes share up, <span style="color:#2166AC;font-weight:bold">Blue</span> = pushes share down. Tile <em>size</em> is a separate quantity: how far that country departs from the cross-country mean, in cross-country standard deviations.</p>
       %s
     ', class_sel, re_heat_html)
   }

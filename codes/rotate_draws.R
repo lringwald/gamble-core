@@ -20,8 +20,15 @@
 # =============================================================================
 suppressMessages({library(data.table)})
 
+# `sds`: the DISPLAY scale (rule B, codes/mnl_aux_func.R display_sds). This function never sees the
+# design -- it reads posterior batches off disk -- so the caller must pass it if the artifact is to
+# carry a comparable scale. When supplied, an `sd_x` column is attached and value_* * sd_x is the
+# effect per 1 SD (unbounded covariates) or per 1 unit (shares). Without it the artifact holds raw
+# coefficients in raw covariate units, which are NOT comparable across drivers: on this design the
+# units span four orders of magnitude, so ranking them raw puts climate last when per SD it is one
+# of the largest families.
 rotate_draws <- function(dirs, groups = NULL, groups_all = NULL, max_draws = 1000L, zero_cols = NULL,
-                         probs = c(0.025, 0.975), chains = NULL, verbose = TRUE) {
+                         probs = c(0.025, 0.975), chains = NULL, verbose = TRUE, sds = NULL) {
   stopifnot(length(dirs) >= 1)
   acc_re <- NULL; acc_mu <- NULL; cn <- NULL; vn <- NULL; grp <- NULL
   for (d in dirs) {
@@ -109,6 +116,13 @@ rotate_draws <- function(dirs, groups = NULL, groups_all = NULL, max_draws = 100
       message(sprintf(">>> rotate_draws: zeroed %d inert covariate(s) (identically zero in the design): %s",
                       length(.hit), paste(.hit, collapse = ", ")))
     }
+  }
+  # Attach the display scale so downstream consumers need no design (see the header note on `sds`).
+  if (!is.null(sds)) {
+    res[, sd_x := { v <- sds[ks]; fifelse(is.na(v), 1, as.numeric(v)) }]
+  } else if (verbose) {
+    message(">>> rotate_draws: no `sds` supplied -- the artifact carries RAW coefficients in raw ",
+            "covariate units, which are not comparable across drivers. Pass sds = display_sds(X).")
   }
   res[]
 }
