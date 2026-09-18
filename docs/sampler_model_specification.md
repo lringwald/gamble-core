@@ -129,7 +129,7 @@ the log-sum-exp from child nodes and CUT/multiple-imputation propagating their u
 **This section is not the authority on defaults — the callers are.** Two production callers ship
 DIFFERENT configurations, both newer than the table below was:
 
-- **flat / pixel** — `run_lu_pixel_model.R:2001-2034` (`sampler_extra$mnlogit_rcpp_sym`)
+- **flat / pixel** — `drivers/run_lu_pixel_model.R:2001-2034` (`sampler_extra$mnlogit_rcpp_sym`)
 - **nested** — `codes/nested_cut.R:325-425` (`.ncut_fit_block`)
 
 Read those two blocks before quoting anything here. Where this document and the code disagree, the
@@ -228,7 +228,7 @@ carries essentially all of the held-out log-score skill, and the intercept carri
 of the RE. Random slopes tie on skill for 8x the per-group parameters and converge worse
 (RE Rhat 1.5 vs 1.1). Start there before touching any shrinkage knob.
 
-**Scoring caveat.** `codes/score_nested_cut.R` / `run/score.R` is IN-SAMPLE — it measures
+**Scoring caveat.** `postprocess/score_nested_cut.R` / `run/score.R` is IN-SAMPLE — it measures
 reproduction, not generalisation, and mechanically favours the richer RE block. The only genuine
 held-out harness in the repo is `experiments/mixing/re_idx_tradeoff.R` (country-stratified, with
 predictions averaged over posterior draws rather than plugged in at the mean).

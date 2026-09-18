@@ -2,7 +2,7 @@
 # =============================================================================
 # diagnose_posterior.R — per-block convergence for a streamed posterior directory
 # =============================================================================
-#   Rscript diagnose_posterior.R output/bart_gate/posterior_bart
+#   Rscript postprocess/diagnose_posterior.R <posterior_dir>
 #
 # Reads every chain written by save_posterior_to_disk and reports split-Rhat and bulk ESS for
 # each STRUCTURAL ELEMENT separately, because they fail differently: the location parameters

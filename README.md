@@ -23,28 +23,33 @@ codes/            core samplers + Rcpp cores + shared helpers
   mnlogit_rcpp.R     + mnlogit_gibbs_core.cpp        base MNL (dependency)
   count_rcpp.R       + count_gibbs_core.cpp          livestock count (NB/Poisson)
   nested_cut.R, nest_trees.R, mnlogit_nested_iv.R    nested / inclusive-value framework
-  lnm_gibbs.R, mvclr_gibbs.R (+ cores)               alternative compositional samplers
-  score_nested_cut.R                                 scoring (used by run/score.R)
-  test_suite_lu_pixel.R                              37-check sampler gate (was master_test_suite_sym.R)
-  test_suite_ls_count.R                              count-feature gate
-  mnl_aux_func.R, prior_model_predict.R, spatial_utils.R, MNL_*.R
-drivers (root):   run_prior_module_pixel_level_model.R   (pixel MNL / design assembly)
-                  run_prior_module_count_model.R         (livestock count)
-                  run_nested_cut.R                       (nested)
-                  — env-driven; run/ wraps them. Run from the repo ROOT.
-prep/             data assembly: data_preparation_pixel_panel.R, compile_complete_LUM_map.R,
-                  prepare_eurostat_livestock_shares.R, prepare_composition_training.R
+  predict_gamble.R, prior_model_predict.R            prediction engines
+  spatial_split.R, spatial_utils.R, mundlak.R        spatial & model specification utilities
+  mnl_aux_func.R, rotate_draws.R, target_class_split.R
+drivers/          pipeline drivers (env-driven; run/ wraps them)
+  run_lu_pixel_model.R   (pixel MNL / design assembly)
+  run_ls_count_model.R   (livestock count)
+  run_nested_cut.R       (nested cut)
+  run_bart_gate.R        (linear vs BART gate)
+prep/             data assembly & harmonization:
+  data_preparation_pixel_panel.R, compile_complete_LUM_map.R,
+  harmonize_to_targets.R, build_globiom_subclass.R,
+  prepare_eurostat_livestock_shares.R, prepare_composition_training.R
 composition/      subtype composition: fit_composition.R, fit_delta_contrast.R, fit_organic.R,
                   build_subclass_parameters.R, consolidate_composition.R
-postprocess/      engine.R, render_maps.R, render_heatplot.R, build_html.R (fit report),
-                  calculate_fit_metrics.R, plot_results_heatmap.R, count_validation_report.R
+postprocess/      reporting & diagnostics:
+  engine.R, render_maps.R, render_heatplot.R, build_html.R (fit report),
+  calculate_fit_metrics.R, plot_results_heatmap.R, count_validation_report.R,
+  score_nested_cut.R, check_progress.R, diagnose_posterior.R, MNL_*
 experiments/      measurement harnesses (mixing/re_idx_tradeoff.R, focal/, count/, nested/)
-tests/            synthetic validation of the nested framework (see tests/README.md)
+tests/            synthetic validation & sampler gates:
+  run_all.R (unified runner), test_suite_lu_pixel.R (37-check gate),
+  test_suite_ls_count.R (count gate), test_*.R
 aux_files/        LUM_Code_to_macro_model_mapping.csv — CURATED class + nest taxonomy (source of truth)
 docs/             model specs (docs/nested_cut_model.md = nested model + algorithm)
 input/            model input data (grids, NUTS geometries, Eurostat)   [tracked]
 output/           all model outputs / batches / reports                 [git-ignored, regenerable]
-_local/           scratch + superseded scripts                          [git-ignored]
+_local/           scratch + superseded scripts & legacy samplers        [git-ignored]
 ```
 
 ## Running
@@ -56,7 +61,7 @@ directory), then edit the CONTROL PANEL at the top of a `run/` script and source
 
 ```r
 # 1. build the design (choose the classification inside the file), then
-source("run/flat.R")      # BUILD_DESIGN_ONLY = TRUE -> output/pixel_model_inputs.rds
+source("run/flat.R")      # BUILD_DESIGN_ONLY = TRUE -> output/designs/pixel_model_inputs.rds
 
 # 2. fit the nested model on it (variant / RE block / symmetric HS inside the file)
 source("run/nested.R")
@@ -73,7 +78,7 @@ run/fit_nested.sh smoke factorized intercept symhs    # ~10-15 min sanity run
 run/fit_nested.sh prod  factorized intercept symhs    # full run (~24 h), backgrounded + resumable
 Rscript tests/run_all.R                               # EVERY test + HTML report & figure
 Rscript tests/run_all.R fast                          # same, minus the two long suites
-Rscript codes/test_suite_lu_pixel.R                   # sampler gate (37 checks)
+Rscript tests/test_suite_lu_pixel.R                   # sampler gate (37 checks)
 Rscript tests/test_nested_cut.R                       # nested-framework validation
 ```
 

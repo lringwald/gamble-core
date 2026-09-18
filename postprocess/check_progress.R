@@ -2,9 +2,9 @@
 # =============================================================================
 # check_progress.R — how far along is a streamed sampler run?
 # =============================================================================
-#   Rscript check_progress.R                       # newest run under results/ or output/
-#   Rscript check_progress.R <dir>                 # a run dir, or its posterior/ dir
-#   Rscript check_progress.R <dir> --watch         # refresh every 60s until done
+#   Rscript postprocess/check_progress.R                       # newest run under results/ or output/
+#   Rscript postprocess/check_progress.R <dir>                 # a run dir, or its posterior/ dir
+#   Rscript postprocess/check_progress.R <dir> --watch         # refresh every 60s until done
 #
 # Reads the batch files the sampler streams to disk. Note the two things that make a naive look at
 # the directory misleading:

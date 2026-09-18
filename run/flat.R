@@ -6,7 +6,7 @@
 #   2. Edit the CONTROL PANEL. 3. Source the file.
 #
 # TWO JOBS, one switch:
-#   BUILD_DESIGN_ONLY = TRUE   assemble X/Y and STOP, writing output/pixel_model_inputs.rds.
+#   BUILD_DESIGN_ONLY = TRUE   assemble X/Y and STOP, writing output/designs/pixel_model_inputs.rds.
 #                              This is the input run/nested.R needs. ~30 min.
 #   BUILD_DESIGN_ONLY = FALSE  assemble the design AND fit the flat (single-level) MNL over all
 #                              classes at once -- no nesting.
@@ -39,7 +39,7 @@ NITER   <- 1000L
 NCHAINS <- 1L
 ## ========================================================================= ##
 
-if (!file.exists("run_lu_pixel_model.R"))
+if (!file.exists("drivers/run_lu_pixel_model.R"))
   stop("Working directory is not the repo root. Open gamble-core.Rproj, or setwd() to gamble-core/.")
 
 vars <- c(DRIVER_CLASS_COLS = CLASSIFICATION,
@@ -56,10 +56,10 @@ do.call(Sys.setenv, as.list(vars))
 message(sprintf(">>> classification=%s | %s | years %s (focal %s, cov %s)",
                 CLASSIFICATION, if (isTRUE(BUILD_DESIGN_ONLY)) "DESIGN ONLY" else "FLAT FIT",
                 MODEL_YEARS, FOCAL_YEARS, COV_YEARS))
-source("run_lu_pixel_model.R", echo = FALSE)
+source("drivers/run_lu_pixel_model.R", echo = FALSE)
 
 ## ------------------------------- NEXT ------------------------------------- ##
-# Design written to output/pixel_model_inputs.rds -> now run run/nested.R.
+# Design written to output/designs/pixel_model_inputs.rds -> now run run/nested.R.
 # Check what you built:
-#   inp <- readRDS("output/pixel_model_inputs.rds")
+#   inp <- readRDS("output/designs/pixel_model_inputs.rds")
 #   dim(inp$X_mat); colnames(inp$Y_pixel); inp$class_nest   # class_nest = the curated tree

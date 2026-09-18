@@ -46,16 +46,21 @@ preferred <- c(
   "tests/test_predict_gamble.R",      # unified predictor: dispatch, delta, mundlak, disk round-trip
   "tests/test_target_class_split.R"   # project target cascade (SKIPs unless the BMLEH build exists)
 )
+long_suites <- c("tests/test_suite_lu_pixel.R", "tests/test_suite_ls_count.R")
+# MEMBERSHIP IS BY DISCOVERY (see header). This line was lost in the 2026-09-17 restructure, leaving
+# `discovered` assigned from itself: the file still PARSED, so the breakage surfaced only at runtime
+# as "object 'discovered' not found" -- i.e. the whole runner was dead while looking healthy.
 discovered <- sort(list.files("tests", pattern = "^test_.*\\.R$", full.names = TRUE))
+discovered <- setdiff(discovered, long_suites)   # the long gates are appended separately, below
 undeclared <- setdiff(discovered, preferred)
 if (length(undeclared))
   cat(sprintf("  [note] running %d test file(s) not in the ordered list: %s\n",
               length(undeclared), paste(basename(undeclared), collapse = ", ")))
 files <- c(preferred[preferred %in% discovered], undeclared)
 
-# The two long gates live in codes/ and are self-contained (they locate SOURCE files, not fixtures),
-# so they always run -- they never SKIP.
-if (!FAST) files <- c(files, "codes/test_suite_lu_pixel.R", "codes/test_suite_ls_count.R")
+# The two long gates live in tests/ and are self-contained (they locate SOURCE files, not fixtures),
+# so they always run unless FAST is requested -- they never SKIP.
+if (!FAST) files <- c(files, long_suites)
 files <- files[file.exists(files)]
 
 cat(sprintf("\n%s\n running %d test file(s)%s\n%s\n", strrep("=", 64), length(files),

@@ -6,7 +6,7 @@
 # held-out set. Arms differ in ONE thing: whether the six topographic covariates
 # (slope, elevation, aspect cos/sin, lon, lat) enter as linear terms or as a tree ensemble.
 #
-#   Rscript run_bart_gate.R
+#   Rscript drivers/run_bart_gate.R
 #
 # Resumable: each arm is written as soon as it finishes and is SKIPPED on a rerun, so a crash
 # or a kill costs you at most the arm in flight. Re-running after both arms exist just redoes
@@ -38,7 +38,7 @@ THIN  <- as.integer(Sys.getenv("BG_THIN","8"));     NCH   <- as.integer(Sys.gete
 NPIX  <- as.integer(Sys.getenv("BG_NPIX","0"));     TESTF <- as.numeric(Sys.getenv("BG_TESTFRAC","0.2"))
 SPLIT <- Sys.getenv("BG_SPLIT","random");           ARMS  <- trimws(strsplit(Sys.getenv("BG_ARMS","linear,bart"),",")[[1]])
 NCORES<- as.integer(Sys.getenv("BG_CORES", as.character(max(1L, parallel::detectCores() - 2L))))
-INPUT <- Sys.getenv("BG_INPUT","output/pixel_model_inputs_GLOBIOM_init2000.rds")
+INPUT <- Sys.getenv("BG_INPUT","output/designs/pixel_model_inputs_GLOBIOM_init2000.rds")
 # Versioned run folder, following the repo's existing stamp convention
 # (cf. output/nested_cut_GLOBIOM_2026-09-03_0558.rds): <name>_<BRANCH>_<date>_<HHMM>.
 # A fresh stamp each run means a 48 h comparison never silently overwrites an earlier one --
@@ -51,7 +51,7 @@ OUT <- Sys.getenv("BG_OUT", file.path("output", sprintf("bart_gate_%s_%s", .bran
 
 # ---- preflight: fail NOW, not 6 hours in ------------------------------------------------------
 if (!file.exists(INPUT)) stop("input not found: ", INPUT,
-  "\n  produce it with: DRIVER_DUMP_INPUTS=TRUE DRIVER_DUMP_EXIT=TRUE Rscript run_lu_pixel_model.R")
+  "\n  produce it with: DRIVER_DUMP_INPUTS=TRUE DRIVER_DUMP_EXIT=TRUE Rscript drivers/run_lu_pixel_model.R")
 for (p in c("sf","dbarts","qs2")) if (!requireNamespace(p, quietly=TRUE)) stop("missing package: ", p)
 for (f in c("codes/mnl_aux_func.R","codes/mnlogit_rcpp_sym.R")) if (!file.exists(f)) stop("run from the repo root; missing ", f)
 if (NBURN >= NITER) stop("BG_NBURN must be < BG_NITER")

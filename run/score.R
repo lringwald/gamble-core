@@ -19,8 +19,8 @@ SCORE_N <- 0L     # 0 = all rows; a positive number subsamples for speed
 SCORE_D <- 0L     # 0 = use every posterior draw the fit carries
 ## ========================================================================= ##
 
-if (!file.exists("codes/score_nested_cut.R"))
+if (!file.exists("postprocess/score_nested_cut.R"))
   stop("Working directory is not the repo root. Open gamble-core.Rproj, or setwd() to gamble-core/.")
 Sys.setenv(SCORE_N = as.character(SCORE_N), SCORE_D = as.character(SCORE_D))
 message(">>> scoring:\n", paste0("    ", basename(FITS), collapse = "\n"))
-system2("Rscript", c("codes/score_nested_cut.R", shQuote(FITS)))
+system2("Rscript", c("postprocess/score_nested_cut.R", shQuote(FITS)))

@@ -14,7 +14,10 @@ dir.create(OUT, showWarnings=FALSE, recursive=TRUE)
 RECON_MIN_GROUP_PIXELS <- 100L   # fallback group filter when metadata lacks group_levels
 # discover the newest saved batch dir + matching design for the branch (no hardcoded paths)
 .dir <- Sys.glob(sprintf("output/saved_model_outputs/*%s*", BR))
-.dat <- Sys.glob(sprintf("output/dat_pixel_FULL_*%s*.rds", BR))
+# Glob BOTH locations: intermediates moved to output/intermediate/ on 2026-09-17, and files written
+# before that still sit at the old top-level path.
+.dat <- c(Sys.glob(sprintf("output/intermediate/dat_pixel_FULL_*%s*.rds", BR)),
+          Sys.glob(sprintf("output/dat_pixel_FULL_*%s*.rds", BR)))
 if (!length(.dir) || !length(.dat)) stop(sprintf("engine: no saved batches / dat_pixel_FULL for %s under output/.", BR))
 cfg <- list(dir = .dir[which.max(file.mtime(.dir))], dat = .dat[which.max(file.mtime(.dat))],
             scheme = c(AGMIP="AgMIP crop-type", GLOBIOM="GLOBIOM land-use", BIOCLIMA="BIOCLIMA intensity")[BR] %||% BR,

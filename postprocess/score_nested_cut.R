@@ -2,7 +2,7 @@
 # =============================================================================
 # score_nested_cut.R — score one or more saved nested_cut fits on a common design
 # =============================================================================
-# Usage:  Rscript codes/score_nested_cut.R <fit1.rds> [fit2.rds ...]
+# Usage:  Rscript postprocess/score_nested_cut.R <fit1.rds> [fit2.rds ...]
 #   env: SCORE_N  (subsample rows for speed; 0 = all, default 0)
 #        SCORE_D  (posterior draws per fit; default = fit$M)
 #

@@ -17,7 +17,7 @@ results.
 
 ## 1. Build the design (do this first)
 
-Assembles X and Y and writes `output/pixel_model_inputs.rds`, which the nested model consumes.
+Assembles X and Y and writes `output/designs/pixel_model_inputs.rds`, which the nested model consumes.
 The **classification** knob decides what the model predicts. ~30 min.
 
 **A.** open `run/flat.R` → set `CLASSIFICATION`, keep `BUILD_DESIGN_ONLY <- TRUE` → source
@@ -27,7 +27,7 @@ C.
 GAMBLE_MASTER_PARQUET=/Users/leopoldringwald/gamble_local_data/prior_model_1km_master_inputs.parquet \
 DRIVER_CLASS_COLS="GLOBIOM_subclass" DRIVER_PROMOTE_NATURAL_OTHER=TRUE \
 DRIVER_DUMP_INPUTS=TRUE DRIVER_DUMP_EXIT=TRUE \
-Rscript run_lu_pixel_model.R
+Rscript drivers/run_lu_pixel_model.R
 ```
 
 Classifications: `GLOBIOM_subclass` (27 classes + the curated 6-nest tree — production),
@@ -35,7 +35,7 @@ Classifications: `GLOBIOM_subclass` (27 classes + the curated 6-nest tree — pr
 
 Check what you built:
 ```r
-inp <- readRDS("output/pixel_model_inputs.rds")
+inp <- readRDS("output/designs/pixel_model_inputs.rds")
 dim(inp$X_mat); colnames(inp$Y_pixel); inp$class_nest   # class_nest = the curated tree
 ```
 
@@ -56,12 +56,12 @@ run/fit_nested.sh smoke factorized intercept      symhs  # ~10-15 min sanity che
 run/fit_nested.sh prod  factorized intercept      symhs  # production (~6-24 h), backgrounded
 run/fit_nested.sh prod  factorized intercept      diag   # diagonal measurement arm
 ```
-or drive `run_nested_cut.R` directly — args are
+or drive `drivers/run_nested_cut.R` directly — args are
 `BRANCH design.rds M NITER USE_RE IVMODE STREAM N_CHAINS N_CORES`:
 ```bash
 NCUT_USE_IV=FALSE NCUT_RE_COLS=intercept NCUT_SUB=0 NCUT_SYM_HS=TRUE \
 NCUT_STORE_DIR=output/ncut_store_myrun \
-Rscript run_nested_cut.R GLOBIOM output/pixel_model_inputs.rds 25 1000 TRUE auto TRUE 1 1
+Rscript drivers/run_nested_cut.R GLOBIOM output/designs/pixel_model_inputs.rds 25 1000 TRUE auto TRUE 1 1
 ```
 
 Choices, and what the measurements say:
@@ -78,7 +78,7 @@ Choices, and what the measurements say:
 One run fits **both** BOV and SGT.
 
 **A.** `run/count.R` → source **B.** `Rscript run/count.R`
-**C.** `DRIVER_RUN_MODE=production DRIVER_NITER=20000 Rscript run_ls_count_model.R`
+**C.** `DRIVER_RUN_MODE=production DRIVER_NITER=20000 Rscript drivers/run_ls_count_model.R`
 
 The count Gibbs mixes slowly; for publication-grade runs use
 `experiments/count/long_run_segmented.R`, which is resumable (long single jobs get killed here).
@@ -95,6 +95,16 @@ REPORT_MAP_CLASSES=20 Rscript postprocess/nested_report.R # more mapped classes 
 ```
 -> `output/report/nested_fit_report.html`
 
+or inspect posterior convergence and progress:
+```bash
+Rscript postprocess/check_progress.R results/gamble_model/.../
+Rscript postprocess/diagnose_posterior.R <posterior_dir>
+```
+
+Postprocess also renders the full MNL HTML report (`postprocess/build_html.R`),
+the count validation report (`postprocess/build_count_html.R`), and driver-effect
+heatplots (`postprocess/render_heatplot.R`).
+
 The FLAT model has its own report pipeline (`postprocess/engine.R` -> `render_maps.R` ->
 `build_html.R` -> `output/report/prior_model_fit_report.html`); it reconstructs from on-disk posterior
 batches and does not read nested fits. The two share a stylesheet, so they look like one product.
@@ -105,9 +115,9 @@ batches and does not read nested fits. The two share a stylesheet, so they look 
 source("run/score.R")                                    # compare fits side by side
 ```
 ```bash
-Rscript codes/score_nested_cut.R output/nested_cut_A.rds output/nested_cut_B.rds
+Rscript postprocess/score_nested_cut.R output/nested_cut_A.rds output/nested_cut_B.rds
 Rscript tests/run_all.R                  # EVERY test + HTML report & figure -> output/report/
-Rscript codes/test_suite_lu_pixel.R      # 37-check sampler gate — run before/after touching codes/
+Rscript tests/test_suite_lu_pixel.R      # 37-check sampler gate — run before/after touching codes/
 Rscript tests/test_nested_cut.R          # nested-framework synthetic validation
 ```
 Scoring is **in-sample**: it measures reproduction, not generalisation, and favours the richer RE

@@ -14,7 +14,7 @@
 # =============================================================================
 
 ## ============================ CONTROL PANEL ============================== ##
-DESIGN     <- "output/pixel_model_inputs.rds"  # design dump from run/flat.R (BUILD_DESIGN_ONLY=TRUE)
+DESIGN     <- "output/designs/pixel_model_inputs.rds"  # design dump from run/flat.R (BUILD_DESIGN_ONLY=TRUE)
 BRANCH     <- "GLOBIOM"        # "GLOBIOM" | "AGMIP" | "BIOCLIMA" -- only used when the dump carries
                                # no curated `class_nest` column; otherwise the curated tree wins.
 VARIANT    <- "factorized"     # "factorized" = levels fit independently (VALIDATED CHOICE)
@@ -64,7 +64,7 @@ NCUT_ARGS <- c(BRANCH, DESIGN, M, NITER, "TRUE", "auto", "TRUE", N_CHAINS,
 message(sprintf(">>> %s | %s | RE=%s | symHS=%s | n=%s | niter=%d",
                 BRANCH, VARIANT, RE_BLOCK, SYMMETRIC_HS,
                 if (SUBSAMPLE == 0) "all" else SUBSAMPLE, NITER))
-source("run_nested_cut.R", echo = FALSE)
+source("drivers/run_nested_cut.R", echo = FALSE)
 
 ## ------------------------------- INSPECT ---------------------------------- ##
 # s <- summary_nested_cut(fit); names(s)                    # per-node coefficient tables
@@ -74,4 +74,4 @@ source("run_nested_cut.R", echo = FALSE)
 # fit$convergence                                           # Rhat / ESS  (N_CHAINS > 1 only)
 #
 # Score it (in-sample) against any other fit on the same design:
-#   system2("Rscript", c("codes/score_nested_cut.R", "output/nested_cut_<...>.rds"))
+#   system2("Rscript", c("postprocess/score_nested_cut.R", "output/nested_cut_<...>.rds"))

@@ -23,24 +23,24 @@ export GAMBLE_DS_DIR=/path/to/LAMASUS_downscaling/
 
 ### Entry A — from raw grids (you have the gridwork data)
 ```bash
-# data-prep ONLY: reads GRIDWORK_DIR, writes output/pixel_model_inputs.rds, exits before the fit (minutes)
+# data-prep ONLY: reads GRIDWORK_DIR, writes output/designs/pixel_model_inputs.rds, exits before the fit (minutes)
 DRIVER_DUMP_INPUTS=TRUE DRIVER_DUMP_EXIT=TRUE <BRANCH env vars, see §1.1> \
-  Rscript run_prior_module_pixel_level_model.R
+  Rscript drivers/run_lu_pixel_model.R
 
 # fit the nested model off that dump (arg2 = .rds path => FROM_INPUTS, auto-detected)
-Rscript run_nested_cut.R <BRANCH> output/pixel_model_inputs.rds <M> <NITER> <USE_RE> <IVMODE>
+Rscript drivers/run_nested_cut.R <BRANCH> output/designs/pixel_model_inputs.rds <M> <NITER> <USE_RE> <IVMODE>
 ```
 
 ### Entry B — from a pre-built design (no gridwork data — the collaborator path)
-`output/pixel_model_inputs.rds` (or a `dat_pixel_FULL_*.rds`) is portable — built once by someone with the
+`output/designs/pixel_model_inputs.rds` (or an `output/intermediate/dat_pixel_FULL_*.rds`) is portable — built once by someone with the
 gridwork data, then shared. Model development needs only this, not the 5 GB of rasters:
 ```bash
-Rscript run_nested_cut.R <BRANCH> path/to/pixel_model_inputs.rds <M> <NITER> <USE_RE> <IVMODE>
+Rscript drivers/run_nested_cut.R <BRANCH> path/to/pixel_model_inputs.rds <M> <NITER> <USE_RE> <IVMODE>
 ```
 
 ### Entry C — no data at all: synthetic validation
 ```bash
-Rscript test_nested_cut.R      # known-λ DGP: λ recovery + held-out draws vs moments vs flat
+Rscript tests/test_nested_cut.R      # known-λ DGP: λ recovery + held-out draws vs moments vs flat
 ```
 
 `pixel_model_inputs.rds` holds `X_mat` (with intercept), `Y_pixel`, `group_idx_vec`, `re_group_names`,
@@ -57,12 +57,12 @@ around lines 45–260). Typical settings:
 | BIOCLIMA | `DRIVER_LUM_LINEAGE=bioclima` · `DRIVER_PIXEL_INTERSECT=CAPRI_NUTS` (per the saved run) |
 
 Always confirm against the driver header (`DRIVER_*` are read at the top of
-`run_prior_module_pixel_level_model.R`); the class-name set the dump produces drives which `NEST_TREES`
+`drivers/run_lu_pixel_model.R`); the class-name set the dump produces drives which `NEST_TREES`
 builder applies (§3).
 
-### `run_nested_cut.R` arguments
+### `drivers/run_nested_cut.R` arguments
 ```
-Rscript run_nested_cut.R <BRANCH> <arg2> <M> <NITER> <USE_RE> <IVMODE> <STREAM> <N_CHAINS>
+Rscript drivers/run_nested_cut.R <BRANCH> <arg2> <M> <NITER> <USE_RE> <IVMODE> <STREAM> <N_CHAINS>
   BRANCH   AGMIP | GLOBIOM | BIOCLIMA
   arg2     integer  -> subsample n pixels (0 = all), reconstructs design from saved dat+metadata (CFG)
            *.rds    -> FROM_INPUTS: read that pixel_model_inputs.rds directly (recommended for dev)

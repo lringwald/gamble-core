@@ -117,8 +117,8 @@ plot_mnl_convergence_summary <- function(res_list, name, output_dir) {
 # --- 3. PARAMETRIC EFFECTS ---
 
 plot_mnl_parametric_report <- function(res_combined, cov_names, cat_names, output_dir) {
-  source("codes/MNL_parameter_heatplot.R")
-  source("codes/MNL_re_viz_utils.R")
+  source(file.path(if (dir.exists("postprocess")) "postprocess" else ".", "MNL_parameter_heatplot.R"))
+  source(file.path(if (dir.exists("postprocess")) "postprocess" else ".", "MNL_re_viz_utils.R"))
   
   # 1. Heatplot
   p_heat <- MNL_parameter_heatplot(

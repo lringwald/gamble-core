@@ -15,7 +15,7 @@
 #   PART A  Exact unit tests of the symmetric kernels (machine precision / MC)
 #   PART B  Symmetric feature behaviour in the full sampler (end-to-end)
 #
-# Run:  Rscript codes/test_suite_lu_pixel.R
+# Run:  Rscript tests/test_suite_lu_pixel.R
 # Exit code is non-zero on any failure.
 # =============================================================================
 

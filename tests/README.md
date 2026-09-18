@@ -34,13 +34,13 @@ ones that should go first; anything undeclared still runs and is reported as a n
 the list used to be the membership, hand-maintained, and three feature tests (`re_mean_shift`,
 `joint_shrink`, `mundlak`) sat outside it and never ran at all.
 
-The two long gates in `codes/` are appended unless `fast`. They are self-contained — they locate
+The two long gates in `tests/` are appended unless `fast`. They are self-contained — they locate
 *source* files, not fixtures — so they always run and never skip.
 
 ## The gates
 
-    Rscript codes/test_suite_lu_pixel.R    # 37 checks — the gate for codes/mnlogit_rcpp_sym.R
-    Rscript codes/test_suite_ls_count.R    # count-feature validation
+    Rscript tests/test_suite_lu_pixel.R    # 37 checks — the gate for codes/mnlogit_rcpp_sym.R
+    Rscript tests/test_suite_ls_count.R    # count-feature validation
 
 `test_suite_lu_pixel.R` was called `master_test_suite_sym.R` until 2026-08-25; the rename left stale
 instructions in several READMEs, since corrected.

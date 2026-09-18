@@ -185,7 +185,7 @@ if (length(FOCAL_YEARS) != length(MODEL_YEARS) || length(COV_YEARS) != length(MO
 
 # --- Source Functions ---
 source("codes/mnl_aux_func.R")
-source("codes/MNL_parameter_heatplot.R")
+source("postprocess/MNL_parameter_heatplot.R")
 source("codes/mnlogit_rcpp.R")
 source("codes/spatial_utils.R")
 
@@ -333,7 +333,7 @@ organic_area_weight <- function(yr) {
 # Base land-use values folded into a single non-modelled "no_choice" class:
 # ---- NATURE / NO-CHOICE STRUCTURE --------------------------------------------------------------
 # The natural split now lives in the MAPPING, not here: `GLOBIOM_subclass` (built by
-# codes/build_globiom_subclass.R) resolves the old catch-all Natural_unmanaged into
+# prep/build_globiom_subclass.R) resolves the old catch-all Natural_unmanaged into
 # Natural_grassland / Natural_shrubland using the BIOCLIMA_DS_reporting taxonomy, while
 # reproducing all 54 managed class names EXACTLY. Select it with
 #   DRIVER_CLASS_COLS="GLOBIOM_subclass"
@@ -1540,7 +1540,11 @@ dat_pixel[is.na(dat_pixel)] <- 0
 
 # Save FULL dat_pixel for debugging and post-estimation analysis (including dummy years)
 timestamp_str <- Sys.Date()
-dat_pixel_file <- paste0("output/dat_pixel_FULL_", MODEL_LABEL, "_", timestamp_str, ".rds")
+# INTERMEDIATES live under output/intermediate/ (2026-09-17). They are large, regenerable, and were
+# cluttering the top of output/ alongside the artifacts people actually look for. Consumers glob BOTH
+# locations, so files written before the move are still found.
+dir.create("output/intermediate", recursive = TRUE, showWarnings = FALSE)
+dat_pixel_file <- paste0("output/intermediate/dat_pixel_FULL_", MODEL_LABEL, "_", timestamp_str, ".rds")
 saveRDS(dat_pixel, dat_pixel_file)
 cat(sprintf("\n>>> Saved FULL dat_pixel (including dummy years) to %s\n", dat_pixel_file))
 
@@ -1673,7 +1677,8 @@ cols <- names(X_mat_full)[sapply(X_mat_full, is.numeric)]
 for (j in cols) {
   set(X_mat_full, i = which(!is.finite(X_mat_full[[j]])), j = j, value = 0)
 }
-Xmat_pixel_file <- paste0("output/Xmat_FULL_", MODEL_LABEL, "_", timestamp_str, ".rds")
+dir.create("output/intermediate", recursive = TRUE, showWarnings = FALSE)
+Xmat_pixel_file <- paste0("output/intermediate/Xmat_FULL_", MODEL_LABEL, "_", timestamp_str, ".rds")
 saveRDS(X_mat_full, Xmat_pixel_file)
 
 # ── APPROACH B: Zero-Sum Carving via Centered Predictors ──────────────────
@@ -1887,7 +1892,9 @@ if (use_re) {
 if (isTRUE(as.logical(Sys.getenv("DRIVER_DUMP_INPUTS", "FALSE")))) {
   # Project runs need their own dump: a BMLEH design and a GLOBIOM design cannot share one path
   # without one silently overwriting the other.
-  .dump_path <- Sys.getenv("DRIVER_DUMP_PATH", "output/pixel_model_inputs.rds")
+  # DESIGN DUMPS live under output/designs/ (2026-09-17). Everything that consumes a dump takes an
+  # explicit path, so the only thing this default changes is where an unqualified build lands.
+  .dump_path <- Sys.getenv("DRIVER_DUMP_PATH", "output/designs/pixel_model_inputs.rds")
   dir.create(dirname(.dump_path), recursive = TRUE, showWarnings = FALSE)
   saveRDS(list(X_mat = X_mat, Y_pixel = Y_pixel, weights_pixel = weights_pixel,
                mundlak_def = mundlak_def,   # NULL unless DRIVER_MUNDLAK; needed to rebuild the

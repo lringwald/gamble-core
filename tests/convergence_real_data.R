@@ -23,7 +23,7 @@ THIN    <- as.integer(Sys.getenv("THIN", "2"))       # storage thinning; postb_t
 WORKERS <- as.integer(Sys.getenv("WORKERS", "4"))    # raise on a many-core box, or run arms concurrently
 TAG     <- Sys.getenv("TAG", "")                     # label so concurrent runs are distinguishable
 
-inp <- readRDS("output/pixel_model_inputs_GLOBIOM_init2000.rds")
+inp <- readRDS("output/designs/pixel_model_inputs_GLOBIOM_init2000.rds")
 set.seed(1)
 idx <- if (NPIX < nrow(inp$X_mat)) sort(sample(nrow(inp$X_mat), NPIX)) else seq_len(nrow(inp$X_mat))
 X <- as.matrix(inp$X_mat)[idx, , drop = FALSE]

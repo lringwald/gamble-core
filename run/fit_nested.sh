@@ -17,7 +17,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 MODE="${1:-prod}"; VARIANT="${2:-factorized}"; RE_COLS="${3:-intercept}"; HS="${4:-symhs}"
-DESIGN="${NCUT_DESIGN:-output/pixel_model_inputs.rds}"
+DESIGN="${NCUT_DESIGN:-output/designs/pixel_model_inputs.rds}"
 
 [ -f "$DESIGN" ] || { echo "FATAL: no design dump at $DESIGN (build one with run/flat.R)"; exit 1; }
 case "$MODE"    in smoke) SUB=6000; NITER=200 ;; prod) SUB=0; NITER=1000 ;;
@@ -57,5 +57,5 @@ EOF
 
 NCUT_USE_IV="$USE_IV" NCUT_RE_COLS="$RE_COLS" NCUT_SUB="$SUB" NCUT_SYM_HS="$SYM" \
 NCUT_STORE_DIR="$STORE" \
-nohup Rscript run_nested_cut.R GLOBIOM "$DESIGN" 25 "$NITER" TRUE auto TRUE 1 1 > "$LOG" 2>&1 &
+nohup Rscript drivers/run_nested_cut.R GLOBIOM "$DESIGN" 25 "$NITER" TRUE auto TRUE 1 1 > "$LOG" 2>&1 &
 echo ">>> pid $!   tail -f \"$LOG\""

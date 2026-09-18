@@ -3,7 +3,7 @@
 # run_nested_cut.R — fit the CUT nested MNL on a real branch (AGMIP/GLOBIOM/BIOCLIMA)
 # =============================================================================
 # Flexible: the classification tree is built by codes/nest_trees.R (any scheme + subnodes).
-# Usage:  Rscript run_nested_cut.R <BRANCH> <arg2> [M] [NITER] [USE_RE] [IVMODE] [STREAM] [N_CHAINS] [N_CORES]
+# Usage:  Rscript drivers/run_nested_cut.R <BRANCH> <arg2> [M] [NITER] [USE_RE] [IVMODE] [STREAM] [N_CHAINS] [N_CORES]
 #   BRANCH   AGMIP | GLOBIOM | BIOCLIMA
 #   arg2     integer -> subsample n pixels (0 = all), design reconstructed from the newest saved
 #                       dat_pixel_FULL + metadata for the branch (auto-discovered).
@@ -63,7 +63,9 @@ if (!is.null(FROM_INPUTS)) {
   CLASS_NEST <- inp$class_nest
 } else {
   # ---- reconstruct the design from the NEWEST saved dat_pixel_FULL + metadata for this branch ----
-  dat_f <- Sys.glob(sprintf("output/dat_pixel_FULL_*%s*.rds", BR))
+  # Both locations: intermediates moved to output/intermediate/ on 2026-09-17; older files remain.
+  dat_f <- c(Sys.glob(sprintf("output/intermediate/dat_pixel_FULL_*%s*.rds", BR)),
+             Sys.glob(sprintf("output/dat_pixel_FULL_*%s*.rds", BR)))
   dir_f <- Sys.glob(sprintf("output/saved_model_outputs/*%s*", BR))
   if (!length(dat_f) || !length(dir_f))
     stop(sprintf("No saved dat_pixel_FULL / metadata for %s under output/. Pass a pixel_model_inputs.rds dump as arg2, or run the data-prep first (docs/DEVELOPMENT.md).", BR))

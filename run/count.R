@@ -23,7 +23,7 @@ CLASS_COLS <- "GLOBIOM_UNFCCC,GLOBIOM_mngmt" # GLOBIOM settings
 DOWNSCALE_GRID <- "" # "" runs the MCMC; "10km" builds the grid and stops
 ## ========================================================================= ##
 
-if (!file.exists("run_ls_count_model.R"))
+if (!file.exists("drivers/run_ls_count_model.R"))
   stop("Working directory is not the repo root. Open gamble-core.Rproj, or setwd() to gamble-core/.")
 if (!RUN_MODE %in% c("production", "test")) stop("RUN_MODE must be 'production' or 'test'")
 
@@ -35,4 +35,4 @@ if (nzchar(MASTER_PARQUET)) vars <- c(vars, GAMBLE_MASTER_PARQUET = MASTER_PARQU
 do.call(Sys.setenv, as.list(vars))
 
 message(sprintf(">>> count model (BOV + SGT) | mode=%s | niter=%d", RUN_MODE, NITER))
-source("run_ls_count_model.R", echo = FALSE)
+source("drivers/run_ls_count_model.R", echo = FALSE)

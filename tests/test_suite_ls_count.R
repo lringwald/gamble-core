@@ -8,7 +8,7 @@
 #   PART A  Exact unit tests of the count kernels (machine precision / MC)
 #   PART B  Count feature behaviour in the full sampler (end-to-end)
 #
-# Run:  Rscript codes/test_suite_ls_count.R
+# Run:  Rscript tests/test_suite_ls_count.R
 # Exit code is non-zero on any failure.
 # =============================================================================
 
