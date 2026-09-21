@@ -31,6 +31,27 @@ N_CORES="${N_CORES:-${N_CHAINS}}"
 DESIGN_PATH="${DESIGN_PATH:-output/designs/pixel_model_inputs.rds}"
 OUTPUT_DIR="${OUTPUT_DIR:-output}"
 
+# --- results must land on the MOUNTED DRIVE, not in the container ---------------------
+# The platform uploads only what appears under the FUSE mount; a run that writes into the
+# repo's own output/ finishes with "No files created ... to upload" and looks like a job
+# that produced nothing.
+#
+# OUTPUT_DIR CANNOT DO THIS. No R file reads it -- every driver writes to a RELATIVE
+# "output/..." path (output/saved_model_outputs, output/designs, output/intermediate,
+# output/plots, output/diagnostics), about 25 of them, hardcoded. So the redirection has to
+# happen at the FILESYSTEM: give the name `output` to the drive and the existing paths
+# follow, with no change to any R code.
+GAMBLE_WORK_DIR="${GAMBLE_WORK_DIR:-/mnt/wdrv}"
+if [ -d "$GAMBLE_WORK_DIR" ] && [ ! -L output ]; then
+  mkdir -p "$GAMBLE_WORK_DIR/output"
+  # carry over whatever the checkout shipped (in practice just .gitkeep) before handing the
+  # name over, so nothing tracked is lost
+  [ -d output ] && cp -a output/. "$GAMBLE_WORK_DIR/output/" 2>/dev/null || true
+  rm -rf output
+  ln -s "$GAMBLE_WORK_DIR/output" output
+  echo ">>> output/ -> $GAMBLE_WORK_DIR/output  (results land on the mounted drive)"
+fi
+
 # Ensure output directories exist
 mkdir -p "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR/designs"
@@ -55,6 +76,21 @@ fi
 # Cascade data resolution (/data auto-detect)
 if [ -z "${GAMBLE_CASCADE_DATA:-}" ] && [ -d "/data/cascadinggamble-core/data" ]; then
   export GAMBLE_CASCADE_DATA="/data/cascadinggamble-core/data"
+fi
+
+# Design-dump resolution (explicit DESIGN_PATH -> drive/-/data auto-detect). A cold container
+# has no design: output/ ships with nothing but .gitkeep, so TASK=nested hit its preflight and
+# exited before doing any work. If a dump is already staged on the drive, use it rather than
+# making the caller spell out the path.
+if [ ! -f "$DESIGN_PATH" ]; then
+  for cand_dir in "$GAMBLE_WORK_DIR" /data; do
+    [ -d "$cand_dir" ] || continue
+    cand=$(find "$cand_dir" -maxdepth 3 -name 'pixel_model_inputs*.rds' 2>/dev/null | sort | head -1)
+    if [ -n "${cand:-}" ]; then
+      echo ">>> Auto-detected design dump: $cand"
+      DESIGN_PATH="$cand"; break
+    fi
+  done
 fi
 
 # The BMLEH project scripts ARE tracked: they were force-added in d93583e (2026-09-19) and
