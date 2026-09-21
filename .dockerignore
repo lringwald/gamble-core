@@ -1,0 +1,23 @@
+# Build context hygiene. `COPY . /app` copies what DOCKER can see, which has nothing to do
+# with .gitignore -- without this file an image built locally carries the 116 MB reading
+# shelf, every posterior batch under output/, and the .git history.
+.git
+.gitignore
+literature/
+output/
+results/
+input/
+_local/
+*.log
+*.rds
+*.qs
+*.qs2
+*.parquet
+.DS_Store
+.Rproj.user
+*.Rproj
+
+# ...but keep the tracked placeholders, so the directories exist in the image even
+# before entrypoint.sh mkdir -p's them.
+!output/.gitkeep
+!results/.gitkeep

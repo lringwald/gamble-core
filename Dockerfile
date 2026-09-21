@@ -18,17 +18,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     liblapack-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install required R packages:
-# - Gibbs samplers & C++ bridge: Rcpp, RcppArmadillo, qs2, matrixStats, posterior, abind
-# - Parallelism & progress: future, future.apply, progressr
-# - Data & reporting: data.table, arrow, patchwork, base64enc, spdep
-RUN R -e "install.packages(c( \
-    'Rcpp', 'RcppArmadillo', 'data.table', 'qs2', 'matrixStats', \
-    'posterior', 'abind', 'future', 'future.apply', 'progressr', \
-    'patchwork', 'base64enc', 'spdep', 'arrow' \
-), repos='https://cloud.r-project.org/', Ncpus=parallel::detectCores())"
-
+# ONE dependency list for BOTH deployment paths: init.R is the contract and this just runs
+# it, so the Accelerator predefined stack and this image can never drift apart. It is copied
+# ALONE and run BEFORE the source, so editing a model file does not invalidate the package
+# layer and trigger a full reinstall.
 WORKDIR /app
+COPY init.R /app/init.R
+RUN Rscript /app/init.R
 
 # Copy repository code
 COPY . /app
