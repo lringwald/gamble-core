@@ -12,6 +12,9 @@ cd "$(dirname "$0")"
 
 # The task list, named ONCE. It used to be spelled out again inside the passthrough test, which
 # silently omitted all four bmleh* tasks -- harmless only because `command -v bmleh` happens to fail.
+# The knob registry, generated from config/knobs.json (tools/gen_config.py).
+[ -f config/knobs.generated.sh ] && . config/knobs.generated.sh
+
 GAMBLE_TASKS="bmleh bmleh_all bmleh_smoke bmleh_design bmleh_fit nested flat_design flat_fit count report test"
 is_task() { case " $GAMBLE_TASKS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
@@ -60,6 +63,69 @@ write_manifest() {
     printf '\n  }\n}\n'
   } > "$out"
 }
+# ---- registry + profiles -----------------------------------------------------------------------
+# NO ASSOCIATIVE ARRAYS: bash 3.2 rejects `declare -A`, and then silently treats t[key] as index 0,
+# so a lookup APPEARS to work while returning the wrong entry. Prefixed variables instead.
+PROFILE_KEYS=""
+profile_set()  { printf -v "PROFILE_VAL_$1" '%s' "$2"; PROFILE_KEYS="$PROFILE_KEYS $1"; }
+profile_has()  { case " $PROFILE_KEYS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+profile_get()  { eval "printf '%s' \"\${PROFILE_VAL_$1}\""; }
+in_registry()  { local x; for x in "${KNOB_REGISTRY[@]}"; do [ "$x" = "$1" ] && return 0; done; return 1; }
+
+load_profile() {
+  local pf line k v
+  [ -n "$PROFILE" ] || return 0
+  pf="config/profiles/${PROFILE}.env"
+  if [ ! -f "$pf" ]; then
+    echo "ERROR: no profile '$PROFILE' ($pf does not exist)."
+    echo "  Available: $(ls config/profiles/*.env 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.env$//' | tr '\n' ' ')"
+    exit 1
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|\#*) continue ;; esac
+    k="${line%%=*}"; v="${line#*=}"
+    k="$(printf '%s' "$k" | tr -d '[:space:]')"
+    if ! in_registry "$k"; then
+      echo "ERROR: profile '$PROFILE' sets '$k', which is not declared in config/knobs.json."
+      echo "       Rejected rather than ignored -- a setting nobody reads is precisely the failure"
+      echo "       this mechanism exists to prevent."
+      exit 1
+    fi
+    profile_set "$k" "$v"
+  done < "$pf"
+  echo ">>> profile: $PROFILE  ($pf)"
+}
+
+# Resolve every registry knob: environment > profile > declared default. Each is exported under the
+# name the R drivers actually read, and a model-scope knob moved off its default is announced --
+# those defaults are the validated standard, so deviating is a modelling claim, not a preference.
+SPEC_DEVIATIONS=()
+resolve_registry() {
+  local kn def envvar scope cur src
+  for kn in "${KNOB_REGISTRY[@]}"; do
+    eval "def=\$KNOB_DEFAULT_$kn"; eval "envvar=\$KNOB_ENV_$kn"; eval "scope=\$KNOB_SCOPE_$kn"
+    cur="${!kn-}"
+    if   [ -n "$cur" ];         then src="environment"
+    elif profile_has "$kn";     then cur="$(profile_get "$kn")"; src="profile:$PROFILE"
+    else cur="$def";                 src="default"
+    fi
+    printf -v "$kn" '%s' "$cur"
+    KNOB_NAMES+=("$kn"); KNOB_VALUES+=("$cur"); KNOB_SOURCES+=("$src")
+    [ -n "$cur" ] && export "$envvar=$cur"
+    if [ "$scope" = "model" ] && [ "$cur" != "$def" ]; then
+      SPEC_DEVIATIONS+=("$kn: $def -> $cur   ($src)")
+    fi
+  done
+}
+print_spec_deviations() {
+  [ ${#SPEC_DEVIATIONS[@]} -eq 0 ] && { echo " Model spec: STANDARD (every model knob at its validated default)"; return 0; }
+  echo "----------------------------------------------------------------------"
+  echo " MODEL SPEC DEVIATIONS -- this run does not estimate the standard model."
+  echo " Results are not comparable with runs at the defaults."
+  local d; for d in "${SPEC_DEVIATIONS[@]}"; do echo "   $d"; done
+  echo "----------------------------------------------------------------------"
+}
+
 print_settings() {
   local i n v src
   echo "----------------------------------------------------------------------"
@@ -151,19 +217,15 @@ if ! is_task "$TASK" && ! resolve_project_task "$TASK"; then
   exit 1
 fi
 knob_record TASK "$TASK" "$TASK_SRC"
-knob CLASSIFICATION "GLOBIOM_subclass"
+knob PROFILE ""
+load_profile
+resolve_registry
 # PROJECT names the project-specific build (e.g. BMLEH_Los1_CAPRI). It is the FIRST thing
 # consulted when picking a staged design dump, because a project build and a classification
 # are not the same axis: pixel_model_inputs_BMLEH_Los1_CAPRI.rds is selected by project, while
 # pixel_model_inputs_GLOBIOM_subclass.rds is selected by classification.
 knob PROJECT ""
-knob VARIANT "factorized"
-knob RE_BLOCK "intercept"
-knob SYMMETRIC_HS "TRUE"
-knob NITER "1000"
-knob SUBSAMPLE "0"
 knob M "25"
-knob N_CHAINS "1"
 knob N_CORES "$N_CHAINS"
 knob DESIGN_PATH "output/designs/pixel_model_inputs.rds"
 knob OUTPUT_DIR "output"
@@ -261,8 +323,18 @@ mkdir -p "$OUTPUT_DIR"
 # Written BEFORE any work: a job that dies mid-run still leaves a complete record of how it was
 # configured. OUTPUT_DIR is the symlink to the mounted drive by this point, so it is uploaded.
 print_settings
+print_spec_deviations
 write_manifest "$OUTPUT_DIR/run_manifest.json"
 echo ">>> settings manifest: $OUTPUT_DIR/run_manifest.json"
+
+# DRY_RUN resolves and reports the configuration, then stops before dispatch. It answers "what
+# would this routine actually do" without spending a job to find out -- which, for a workflow whose
+# cheapest task is minutes and whose dearest is days, is the difference between checking a config
+# and gambling one.
+if [ "${DRY_RUN:-FALSE}" = "TRUE" ] || [ "${DRY_RUN:-false}" = "true" ]; then
+  echo ">>> DRY_RUN: configuration resolved and written; stopping before the task runs."
+  exit 0
+fi
 mkdir -p "$OUTPUT_DIR/designs"
 mkdir -p "$OUTPUT_DIR/report"
 
