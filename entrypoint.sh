@@ -15,6 +15,62 @@ cd "$(dirname "$0")"
 GAMBLE_TASKS="bmleh bmleh_all bmleh_smoke bmleh_design bmleh_fit nested flat_design flat_fit count report test"
 is_task() { case " $GAMBLE_TASKS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
+# =============================================================================
+# EVERY SETTING, AND WHERE IT CAME FROM
+# =============================================================================
+# The recurring failure in this pipeline is not a wrong value, it is a value that exists in one
+# layer and never reaches the next: a routine schema default that never entered the container, an
+# OUTPUT_DIR nothing read, a design dump chosen by filename. A log that prints only the VALUE
+# cannot tell "you asked for this" from "nothing arrived and I fell back" -- which is exactly the
+# distinction that took two failed jobs to establish.
+#
+# So every knob is recorded WITH ITS PROVENANCE, and written out as a manifest before any work
+# starts. One artifact then answers "what did this run actually use", instead of reading a log and
+# hoping.
+KNOB_NAMES=(); KNOB_VALUES=(); KNOB_SOURCES=()
+knob() {                       # knob NAME DEFAULT  -- env wins, otherwise the default
+  local n="$1" d="$2" v s
+  v="${!n-}"
+  if [ -n "$v" ]; then s="environment"; else v="$d"; s="default"; printf -v "$n" '%s' "$v"; fi
+  KNOB_NAMES+=("$n"); KNOB_VALUES+=("$v"); KNOB_SOURCES+=("$s")
+}
+knob_record() {                # knob_record NAME VALUE SOURCE -- for knobs resolved specially
+  KNOB_NAMES+=("$1"); KNOB_VALUES+=("$2"); KNOB_SOURCES+=("$3")
+}
+knob_update() {                # a knob decided LATER (the design auto-detect) corrects its record,
+  local i                      # so the manifest shows what was used, not what was first guessed
+  for i in "${!KNOB_NAMES[@]}"; do
+    if [ "${KNOB_NAMES[$i]}" = "$1" ]; then KNOB_VALUES[$i]="$2"; KNOB_SOURCES[$i]="$3"; return 0; fi
+  done
+  knob_record "$1" "$2" "$3"
+}
+json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+write_manifest() {
+  local out="$1" i n v src sep=""
+  { printf '{\n'
+    printf '  "generated_at": "%s",\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    printf '  "task": "%s",\n' "$(json_escape "$TASK")"
+    printf '  "task_source": "%s",\n' "$(json_escape "$TASK_SRC")"
+    printf '  "git_commit": "%s",\n' "$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    printf '  "settings": {\n'
+    for i in "${!KNOB_NAMES[@]}"; do
+      n="${KNOB_NAMES[$i]}"; v="$(json_escape "${KNOB_VALUES[$i]}")"; src="${KNOB_SOURCES[$i]}"
+      printf '%s    "%s": { "value": "%s", "source": "%s" }' "$sep" "$n" "$v" "$src"; sep=$',\n'
+    done
+    printf '\n  }\n}\n'
+  } > "$out"
+}
+print_settings() {
+  local i n v src
+  echo "----------------------------------------------------------------------"
+  echo " Settings (value <- where it came from)"
+  for i in "${!KNOB_NAMES[@]}"; do
+    n="${KNOB_NAMES[$i]}"; v="${KNOB_VALUES[$i]}"; src="${KNOB_SOURCES[$i]}"
+    printf "   %-22s %-46s <- %s\n" "$n" "${v:-(empty)}" "$src"
+  done
+  echo "----------------------------------------------------------------------"
+}
+
 # PROJECT TASKS ARE DISCOVERED, NOT ENUMERATED. Any projects/<NAME>/gamble_model/run.sh yields
 # <NAME>_design, <NAME>_fit, <NAME>_smoke, <NAME>_all and <NAME>_more, so the task list never has to
 # be kept in step with the projects directory by hand. GLOBIOM_subclass has had a runnable run.sh
@@ -94,22 +150,23 @@ if ! is_task "$TASK" && ! resolve_project_task "$TASK"; then
   echo "  Project tasks: $(gamble_project_tasks)"
   exit 1
 fi
-CLASSIFICATION="${CLASSIFICATION:-GLOBIOM_subclass}"
+knob_record TASK "$TASK" "$TASK_SRC"
+knob CLASSIFICATION "GLOBIOM_subclass"
 # PROJECT names the project-specific build (e.g. BMLEH_Los1_CAPRI). It is the FIRST thing
 # consulted when picking a staged design dump, because a project build and a classification
 # are not the same axis: pixel_model_inputs_BMLEH_Los1_CAPRI.rds is selected by project, while
 # pixel_model_inputs_GLOBIOM_subclass.rds is selected by classification.
-PROJECT="${PROJECT:-}"
-VARIANT="${VARIANT:-factorized}"
-RE_BLOCK="${RE_BLOCK:-intercept}"
-SYMMETRIC_HS="${SYMMETRIC_HS:-TRUE}"
-NITER="${NITER:-1000}"
-SUBSAMPLE="${SUBSAMPLE:-0}"
-M="${M:-25}"
-N_CHAINS="${N_CHAINS:-1}"
-N_CORES="${N_CORES:-${N_CHAINS}}"
-DESIGN_PATH="${DESIGN_PATH:-output/designs/pixel_model_inputs.rds}"
-OUTPUT_DIR="${OUTPUT_DIR:-output}"
+knob PROJECT ""
+knob VARIANT "factorized"
+knob RE_BLOCK "intercept"
+knob SYMMETRIC_HS "TRUE"
+knob NITER "1000"
+knob SUBSAMPLE "0"
+knob M "25"
+knob N_CHAINS "1"
+knob N_CORES "$N_CHAINS"
+knob DESIGN_PATH "output/designs/pixel_model_inputs.rds"
+knob OUTPUT_DIR "output"
 
 # --- Redirect output/ and results/ to the mounted drive -------------------------
 # The platform uploads only what appears under the FUSE mount. Two directories
@@ -118,7 +175,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-output}"
 #   results/ — posterior batches and chain states (estimate_prior.R writes here)
 # Without the results/ symlink every posterior draw lands in the container's
 # ephemeral filesystem and is lost at job end ("No files found to upload").
-GAMBLE_WORK_DIR="${GAMBLE_WORK_DIR:-/mnt/wdrv}"
+knob GAMBLE_WORK_DIR "/mnt/wdrv"
 if [ -d "$GAMBLE_WORK_DIR" ]; then
   if [ ! -L output ]; then
     mkdir -p "$GAMBLE_WORK_DIR/output"
@@ -171,6 +228,7 @@ if [ ! -f "$DESIGN_PATH" ]; then
     if [ -n "$match" ]; then
       DESIGN_PATH="$match"
       echo ">>> Auto-detected design dump for $sel: $DESIGN_PATH"
+      knob_update DESIGN_PATH "$DESIGN_PATH" "auto-detected, matched $sel"
       echo ">>>   ($n_cand dumps on the drive; the others were ignored)"
     else
       echo "------------------------------------------------------------------"
@@ -199,6 +257,12 @@ fi
 
 # Ensure output directories exist
 mkdir -p "$OUTPUT_DIR"
+
+# Written BEFORE any work: a job that dies mid-run still leaves a complete record of how it was
+# configured. OUTPUT_DIR is the symlink to the mounted drive by this point, so it is uploaded.
+print_settings
+write_manifest "$OUTPUT_DIR/run_manifest.json"
+echo ">>> settings manifest: $OUTPUT_DIR/run_manifest.json"
 mkdir -p "$OUTPUT_DIR/designs"
 mkdir -p "$OUTPUT_DIR/report"
 
