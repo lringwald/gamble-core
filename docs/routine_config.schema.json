@@ -1,0 +1,135 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "gamble-core routine configuration",
+  "description": "Every field maps to an environment variable of the same name, read by entrypoint.sh. Leave a field at its default unless you mean to change it.",
+  "type": "object",
+  "required": ["TASK"],
+  "properties": {
+    "TASK": {
+      "type": "string",
+      "title": "Workflow / Task",
+      "description": "Which gamble-core workflow to run. Project tasks are named <PROJECT>_<action>. The run log prints the task AND where the value came from, so a default that never arrives is visible.",
+      "default": "BMLEH_Los1_CAPRI_smoke",
+      "enum": [
+        "BMLEH_Los1_CAPRI_smoke",
+        "BMLEH_Los1_CAPRI_design",
+        "BMLEH_Los1_CAPRI_fit",
+        "BMLEH_Los1_CAPRI_all",
+        "BMLEH_Los1_CAPRI_more",
+        "GLOBIOM_subclass_smoke",
+        "GLOBIOM_subclass_design",
+        "GLOBIOM_subclass_fit",
+        "GLOBIOM_subclass_all",
+        "GLOBIOM_subclass_more",
+        "nested",
+        "flat_design",
+        "flat_fit",
+        "count",
+        "report",
+        "test"
+      ]
+    },
+    "PROJECT": {
+      "type": "string",
+      "title": "Project (design selection)",
+      "description": "Used only by the generic tasks (nested / flat_*) to choose between design dumps staged on the drive. Project tasks carry their own project, so leave this empty for those. If several dumps are staged and none matches PROJECT or CLASSIFICATION, the job stops rather than guessing.",
+      "default": "",
+      "enum": ["", "BMLEH_Los1_CAPRI", "GLOBIOM_subclass"]
+    },
+    "DESIGN_PATH": {
+      "type": "string",
+      "title": "Design dump path (explicit override)",
+      "description": "Absolute path to a pixel_model_inputs*.rds. Set this to remove all ambiguity; when empty the job auto-detects one under the mounted drive or /data and logs what it searched.",
+      "default": ""
+    },
+    "CLASSIFICATION": {
+      "type": "string",
+      "title": "Classification",
+      "description": "Class column(s) the model predicts. Used by flat_design / flat_fit, and as the fallback design selector for nested.",
+      "default": "GLOBIOM_subclass",
+      "enum": ["GLOBIOM_subclass", "GLOBIOM_UNFCCC,GLOBIOM_mngmt", "AgMIP_label", "BIOCLIMA_DS_reporting", "BMLEH_Los1_label"]
+    },
+    "VARIANT": {
+      "type": "string",
+      "title": "Nested variant",
+      "description": "factorized = independent nests; iv = inclusive-value coupling between levels.",
+      "default": "factorized",
+      "enum": ["factorized", "iv"]
+    },
+    "RE_BLOCK": {
+      "type": "string",
+      "title": "Random-effect block",
+      "description": "Which coefficients vary by country. intercept is the documented standard; intercept+socio is the measurement arm.",
+      "default": "intercept",
+      "enum": ["intercept", "intercept+socio"]
+    },
+    "SYMMETRIC_HS": {
+      "type": "string",
+      "title": "Symmetric horseshoe",
+      "description": "TRUE is the standard. The job verifies the sampler actually carries the symmetric-HS fix before fitting, rather than trusting the flag.",
+      "default": "TRUE",
+      "enum": ["TRUE", "FALSE"]
+    },
+    "NITER": {
+      "type": "integer",
+      "title": "Iterations (sweeps)",
+      "description": "Total MCMC sweeps. 1000 is a sanity run; a publication fit wants considerably more.",
+      "default": 1000,
+      "minimum": 1
+    },
+    "N_CHAINS": {
+      "type": "integer",
+      "title": "Chains",
+      "description": "Chains fitted in parallel. Convergence diagnostics (Rhat) need at least 2.",
+      "default": 1,
+      "minimum": 1,
+      "maximum": 8
+    },
+    "N_CORES": {
+      "type": "integer",
+      "title": "Cores",
+      "description": "Worker processes. Defaults to N_CHAINS; more cores than chains does not help.",
+      "default": 1,
+      "minimum": 1
+    },
+    "SUBSAMPLE": {
+      "type": "integer",
+      "title": "Pixel subsample",
+      "description": "0 = use every pixel. A non-zero value caps the pixel count, for a fast check.",
+      "default": 0,
+      "minimum": 0
+    },
+    "M": {
+      "type": "integer",
+      "title": "Imputations (M)",
+      "description": "Multiple-imputation draws of the inclusive value in the nested cut. Only meaningful with VARIANT=iv.",
+      "default": 25,
+      "minimum": 1
+    },
+    "BM_NITER": {
+      "type": "integer",
+      "title": "Project fit iterations",
+      "description": "Sweeps for project *_fit / *_all / *_more tasks. Falls back to NITER, then 5000.",
+      "default": 5000,
+      "minimum": 1
+    },
+    "GAMBLE_WORK_DIR": {
+      "type": "string",
+      "title": "Mounted drive",
+      "description": "The FUSE mount results are collected from. output/ and results/ are symlinked here before the run, because the model code writes to relative paths that the uploader would otherwise never see.",
+      "default": "/mnt/wdrv"
+    },
+    "GAMBLE_MASTER_PARQUET": {
+      "type": "string",
+      "title": "Master 1km parquet",
+      "description": "Covariate parquet for design builds. Auto-detected at /data/prior_model_1km_master_inputs.parquet when empty. Required by any *_design task.",
+      "default": ""
+    },
+    "GAMBLE_CASCADE_DATA": {
+      "type": "string",
+      "title": "Cascade data directory",
+      "description": "cascadinggamble-core/data. Auto-detected under /data when empty.",
+      "default": ""
+    }
+  }
+}
