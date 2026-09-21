@@ -44,6 +44,7 @@ preferred <- c(
   "tests/test_joint_shrink.R",        # joint FE/RE gate kappa_v, incl. the seed-noise floor
   "tests/test_mundlak.R",             # group-mean prior mean: gamma recovery + beta debiasing
   "tests/test_predict_gamble.R",      # unified predictor: dispatch, delta, mundlak, disk round-trip
+  "tests/test_gamble_paths.R",        # generated-artifact path resolver + legacy lookup
   "tests/test_target_class_split.R"   # project target cascade (SKIPs unless the BMLEH build exists)
 )
 long_suites <- c("tests/test_suite_lu_pixel.R", "tests/test_suite_ls_count.R")

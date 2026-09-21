@@ -13,6 +13,66 @@ library(Matrix) # For nearPD in ensure_pd
 
 # --- Null-coalescing operator ---
 `%||%` <- function(a, b) if (!is.null(a)) a else b
+
+# =============================================================================
+# WHERE GENERATED FILES GO
+# =============================================================================
+# One place decides the layout, so the ~40 hardcoded "output/..." strings scattered through the
+# drivers stop BEING the structure. Two roots, one rule each:
+#
+#   output/    REGENERABLE. Safe to delete wholesale; every file in it can be rebuilt.
+#   results/   FITTED RUNS you keep. Never auto-deleted.
+#
+# That split is the whole point: today output/gamble_model/<PROJ>/ (prep products) and
+# results/gamble_model/<PROJ>/ (fitted runs) have the same shape and nothing says which is which.
+#
+# Both roots are env-overridable. That is what lets a container put them on a mounted drive
+# HONESTLY -- entrypoint.sh currently has to symlink the repo's own output/ and results/ precisely
+# because no R code reads an output-directory variable. Once writers go through here, setting
+# GAMBLE_OUTPUT_DIR is enough.
+GAMBLE_DIRS <- c(
+  designs      = "designs",              # model-ready design dumps (X/Y) + their GeoTIFFs
+  intermediate = "intermediate",         # dat_pixel_FULL_*, Xmat_FULL_* -- large, regenerable
+  prep         = "prep",                 # crop shares, eurostat extracts, composition training
+  reports      = "reports",              # cross-run HTML / PNG
+  scratch      = "scratch",              # experiments, gates, diagnostics: never read downstream
+  batches      = "saved_model_outputs"   # streamed posterior batches (legacy name, deliberately kept:
+)                                        # renaming it would orphan every existing run on disk)
+
+gamble_output_root  <- function() Sys.getenv("GAMBLE_OUTPUT_DIR",  "output")
+gamble_results_root <- function() Sys.getenv("GAMBLE_RESULTS_DIR", "results")
+
+# gamble_path("designs", "pixel_model_inputs.rds") -> "output/designs/pixel_model_inputs.rds"
+# Creates the DIRECTORY (not the file) unless create = FALSE, so callers can hand the result
+# straight to saveRDS/writeRaster without a dir.create dance at every site.
+gamble_path <- function(kind, ..., create = TRUE) {
+  if (!kind %in% names(GAMBLE_DIRS))
+    stop("unknown output kind '", kind, "'; one of: ", paste(names(GAMBLE_DIRS), collapse = ", "),
+         call. = FALSE)
+  p <- file.path(gamble_output_root(), GAMBLE_DIRS[[kind]], ...)
+  if (isTRUE(create)) dir.create(dirname(p), recursive = TRUE, showWarnings = FALSE)
+  p
+}
+
+# A fitted run: results/gamble_model/<PROJECT>/<stamp>/...
+# The gamble_model level is kept because postprocess/model_report.R derives the project name from
+# basename(dirname(RUN)); flattening it would silently mislabel every report.
+gamble_run_path <- function(project, ..., create = TRUE) {
+  p <- file.path(gamble_results_root(), "gamble_model", project, ...)
+  if (isTRUE(create)) dir.create(dirname(p), recursive = TRUE, showWarnings = FALSE)
+  p
+}
+
+# READERS must keep finding files written before the move. Globs the new location first, then the
+# legacy flat one, newest-mtime first -- the same dual-location rule the 2026-09-17 intermediate/
+# move used, so nothing already on disk is orphaned.
+gamble_find <- function(kind, pattern) {
+  hits <- c(Sys.glob(file.path(gamble_output_root(), GAMBLE_DIRS[[kind]], pattern)),
+            Sys.glob(file.path(gamble_output_root(), pattern)))
+  hits <- unique(hits[file.exists(hits)])
+  if (!length(hits)) return(character(0))
+  hits[order(file.mtime(hits), decreasing = TRUE)]
+}
 # --- Bias-Corrected PG Sampler ---
 # Normal approx for PG(h, z): mean = h/(2z)*tanh(z/2),
 #                              var  = h*(sinh(z)-z)/(4z^3*cosh^2(z/2))
