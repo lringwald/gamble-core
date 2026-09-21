@@ -1958,10 +1958,27 @@ if (isTRUE(as.logical(Sys.getenv("DRIVER_DUMP_INPUTS", "FALSE")))) {
       .yr <- if ("out_year" %in% names(dat_pixel)) as.character(dat_pixel$out_year) else rep("all", nrow(dat_pixel))
       for (.y in unique(.yr)) {
         .k <- which(.yr == .y)
-        .A <- as.data.frame(Y_pixel_raw[.k, , drop = FALSE])
-        .dom <- max.col(as.matrix(.A), ties.method = "first")
-        .dom[rowSums(as.matrix(.A)) <= 0] <- NA_integer_
-        .xyz <- data.frame(x = dat_pixel$X[.k], y = dat_pixel$Y[.k], .A, dominant = .dom, check.names = FALSE)
+        # AGGREGATE FRAGMENTS TO THE GRID CELL FIRST.
+        # PIXEL_INTERSECT_COL splits one grid cell into one row PER REGION, and those rows all
+        # carry the PARENT cell's X/Y. terra::rast(type = "xyz") keeps a single row per
+        # coordinate, so rasterising the rows directly stamped ONE region's composition across
+        # the whole cell and silently dropped the others -- on the BMLEH 10 km design, 19,791 of
+        # 66,861 rows (29.6%), with up to 9 fragments in a cell. The visible symptom was crisp
+        # borders along the INTERSECT geometry (NUTS3) that the model itself never produces:
+        # the design keeps the fragments separate, only this picture collapsed them.
+        # Y_pixel_raw is class AREA, so the cell's composition is the SUM over its fragments --
+        # exact, not an approximation. `dominant` is then taken from the AGGREGATE, since an
+        # argmax cannot be averaged after the fact.
+        .agg <- cbind(data.table(x = dat_pixel$X[.k], y = dat_pixel$Y[.k]),
+                      as.data.table(Y_pixel_raw[.k, , drop = FALSE]))[
+                        , lapply(.SD, sum), by = .(x, y)]
+        .A <- as.matrix(.agg[, !c("x", "y"), with = FALSE])
+        if (nrow(.agg) < length(.k))
+          cat(sprintf(">>> DRIVER_DUMP_TIF: merged %d region fragments into %d grid cells\n",
+                      length(.k), nrow(.agg)))
+        .dom <- max.col(.A, ties.method = "first")
+        .dom[rowSums(.A) <= 0] <- NA_integer_
+        .xyz <- data.frame(x = .agg$x, y = .agg$y, .A, dominant = .dom, check.names = FALSE)
         .r <- terra::rast(.xyz, type = "xyz", crs = "EPSG:3035")   # dat_pixel X/Y are ETRS89-LAEA
         levels(.r[["dominant"]]) <- data.frame(value = seq_along(final_cats_pixel), class = final_cats_pixel)
         .out <- sprintf("%s_%s.tif", .tif_base, .y)
