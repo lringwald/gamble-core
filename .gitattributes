@@ -1,0 +1,24 @@
+# Line endings are normalised in the repository and checked out as LF everywhere.
+#
+# This repo lives on a synced drive and is edited from more than one machine. On
+# 2026-09-21 every tracked file came back rewritten with CRLF. That is not a
+# cosmetic problem: a shell script with CRLF fails on Linux at
+# `#!/usr/bin/env bash\r` with "bad interpreter: No such file or directory", so a
+# container would have died before reaching any model code, with an error that
+# points nowhere near the cause.
+* text=auto eol=lf
+
+# Executed by a Linux shell or Rscript -- never anything but LF.
+*.sh  text eol=lf
+*.R   text eol=lf
+*.cpp text eol=lf
+
+# Binary: git must not touch these.
+*.rds     binary
+*.qs      binary
+*.qs2     binary
+*.tif     binary
+*.parquet binary
+*.png     binary
+*.pdf     binary
+*.epub    binary
