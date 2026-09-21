@@ -52,8 +52,15 @@ YEARS   <- as.integer(strsplit(Sys.getenv("EU_CROP_YEARS", "2017,2018,2019"), ",
 .IN_CORE    <- file.exists("codes/mnlogit_rcpp_sym.R")
 if (!.IN_CASCADE && !.IN_CORE)
   stop("run from the cascadinggamble repo root or the gamble-core root")
+# PREP PRODUCTS LIVE UNDER prep/, NOT gamble_model/. The root here switches by which REPO you are
+# in, while fitted runs are written to results/gamble_model/<PROJECT>/ by estimate_prior.R -- so the
+# old "gamble_model/<PROJECT>" subpath collided with runs whenever both landed under the same root,
+# with nothing in the path saying which was which. `prep/` separates them in both repos.
 OUT_DIR <- Sys.getenv("EU_CROP_OUT",
-  file.path(if (.IN_CASCADE) "results" else "output", "gamble_model/BMLEH_Los1_CAPRI"))
+  file.path(if (.IN_CASCADE) "results" else "output", "prep/BMLEH_Los1_CAPRI"))
+# Read-side compatibility: a table written before this move is still where it was. Consumers glob
+# both (see run.sh), and this keeps the OLD directory usable if it is the only one populated.
+.OUT_LEGACY <- file.path(if (.IN_CASCADE) "results" else "output", "gamble_model/BMLEH_Los1_CAPRI")
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 # ---- the splits ------------------------------------------------------------------------------

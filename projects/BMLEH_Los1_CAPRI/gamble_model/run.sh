@@ -35,13 +35,16 @@ cd "$(dirname "$0")/../../.."
 P=projects/BMLEH_Los1_CAPRI/gamble_model
 DUMP=output/designs/pixel_model_inputs_BMLEH_Los1_CAPRI.rds
 # The share table is written by prepare_eurostat_crop_shares.R, whose OUT_DIR resolves to
-# <root>/gamble_model/BMLEH_Los1_CAPRI -- "output" when run from the gamble-core root, "results" when
+# <root>/prep/BMLEH_Los1_CAPRI -- "output" when run from the gamble-core root, "results" when
 # run from the cascadinggamble root. This is that path.
 # DO NOT repoint this at output/eurostat/crop_shares_nuts2.csv: that file is older, unrelated output
 # produced by the SUPERSEDED generator (pre 2026-09-09), and it lacks the "<permanent residual>" and
 # derived-OCRO groups that target_rules.R now requires -- the design build fails on
 # "share table has no rows for split group(s): <permanent residual>".
-SHARES=output/gamble_model/BMLEH_Los1_CAPRI/crop_shares_nuts2.csv
+SHARES=output/prep/BMLEH_Los1_CAPRI/crop_shares_nuts2.csv
+# Fall back to the pre-2026-09-21 location, so a share table generated before prep/ existed
+# still drives a design build rather than failing the preflight.
+[ -f "$SHARES" ] || SHARES=output/gamble_model/BMLEH_Los1_CAPRI/crop_shares_nuts2.csv
 mkdir -p "$(dirname "$DUMP")"
 
 # The local parquet copy exists because reading straight off Google Drive intermittently dies with

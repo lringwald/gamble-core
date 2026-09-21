@@ -6,8 +6,12 @@ source("codes/target_class_split.R")
 # that OUT LOUD: run_all.R reads a `SKIP:` line as a third status, because exiting 0 with no
 # assertions would otherwise be scored as a FAIL ("silent success" is the failure mode this repo
 # keeps hitting), and quietly passing would be worse still.
-.need <- c("projects/BMLEH_Los1_CAPRI/gamble_model/target_rules.R",
-           "output/gamble_model/BMLEH_Los1_CAPRI/crop_shares_nuts2.csv")
+# ONE resolution for the share table, used by both the skip-check and the read below: prep/ since
+# 2026-09-21, falling back to the pre-move location. Resolving it twice is how a test starts
+# skipping for a file it would in fact have found.
+.sh_f <- "output/prep/BMLEH_Los1_CAPRI/crop_shares_nuts2.csv"
+if (!file.exists(.sh_f)) .sh_f <- "output/gamble_model/BMLEH_Los1_CAPRI/crop_shares_nuts2.csv"
+.need <- c("projects/BMLEH_Los1_CAPRI/gamble_model/target_rules.R", .sh_f)
 .miss <- .need[!file.exists(.need)]
 if (length(.miss)) {
   cat(sprintf("SKIP: BMLEH project inputs absent (%s) -- build with projects/BMLEH_Los1_CAPRI/gamble_model/run.sh\n",
@@ -18,7 +22,7 @@ source("projects/BMLEH_Los1_CAPRI/gamble_model/target_rules.R")
 np <- 0L; nf <- 0L
 ok <- function(c_, m) { if (isTRUE(c_)) { np <<- np+1L; cat(sprintf("[PASS] %s\n", m)) }
                         else { nf <<- nf+1L; cat(sprintf("[FAIL] %s\n", m)) } }
-sh <- fread("output/gamble_model/BMLEH_Los1_CAPRI/crop_shares_nuts2.csv")
+sh <- fread(.sh_f)
 
 # 4 pixels: an Italian region (durum country), an Austrian one, a German one, and an UNKNOWN geo
 geo <- data.table(join_id = 1:4, geo = c("ITF4","AT11","DE21","ZZ99"))
