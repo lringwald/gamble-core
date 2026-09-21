@@ -50,6 +50,8 @@ mkdir -p "$(dirname "$DUMP")"
 LOCAL_PARQUET=/Users/leopoldringwald/gamble_local_data/prior_model_1km_master_inputs.parquet
 if [ -f "$LOCAL_PARQUET" ]; then
   export GAMBLE_MASTER_PARQUET="${GAMBLE_MASTER_PARQUET:-$LOCAL_PARQUET}"
+elif [ -f "/data/prior_model_1km_master_inputs.parquet" ]; then
+  export GAMBLE_MASTER_PARQUET="${GAMBLE_MASTER_PARQUET:-/data/prior_model_1km_master_inputs.parquet}"
 fi
 
 design() {

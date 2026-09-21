@@ -43,11 +43,42 @@ echo " Task:            $TASK"
 echo " Output Dir:      $OUTPUT_DIR"
 echo "======================================================================"
 
-# If GAMBLE_MASTER_PARQUET is passed, export it
+# Master Parquet resolution (env override -> /data auto-detect)
 if [ -n "${GAMBLE_MASTER_PARQUET:-}" ]; then
   echo ">>> Master Parquet: $GAMBLE_MASTER_PARQUET"
   export GAMBLE_MASTER_PARQUET
+elif [ -f "/data/prior_model_1km_master_inputs.parquet" ]; then
+  echo ">>> Auto-detected Master Parquet: /data/prior_model_1km_master_inputs.parquet"
+  export GAMBLE_MASTER_PARQUET="/data/prior_model_1km_master_inputs.parquet"
 fi
+
+# Cascade data resolution (/data auto-detect)
+if [ -z "${GAMBLE_CASCADE_DATA:-}" ] && [ -d "/data/cascadinggamble-core/data" ]; then
+  export GAMBLE_CASCADE_DATA="/data/cascadinggamble-core/data"
+fi
+
+# The BMLEH project scripts ARE tracked: they were force-added in d93583e (2026-09-19) and
+# .gitignore's `projects/` rule does not apply to files git already tracks. So if run.sh is
+# missing here, the CODE is not the problem -- this checkout or image predates that commit,
+# or the build context dropped it. The old message here said the opposite and sent a debug
+# session after a non-existent commit step; say the checkable thing instead.
+BM_RUN=projects/BMLEH_Los1_CAPRI/gamble_model/run.sh
+require_bmleh() {
+  [ -f "$BM_RUN" ] && { chmod +x "$BM_RUN"; return 0; }
+  echo "------------------------------------------------------------------"
+  echo "ERROR: $BM_RUN not found in this image."
+  echo
+  echo "These scripts ARE committed (d93583e, 2026-09-19) even though .gitignore lists"
+  echo "'projects/' -- ignore rules do not apply to already-tracked files. Do NOT re-add them."
+  echo
+  echo "Check instead which commit this image was built from:"
+  echo "    git -C . log -1 --oneline    # if .git is present"
+  echo "    ls projects/                 # empty => built before d93583e, or context-filtered"
+  echo "If it predates d93583e, rebuild the image. If you build locally, confirm"
+  echo ".dockerignore does not exclude projects/."
+  echo "------------------------------------------------------------------"
+  exit 1
+}
 
 case "$TASK" in
   nested)
@@ -148,38 +179,26 @@ case "$TASK" in
 
   bmleh|bmleh_all)
     echo ">>> Task: BMLEH_Los1_CAPRI project model (design + fit)"
-    if [ ! -f "projects/BMLEH_Los1_CAPRI/gamble_model/run.sh" ]; then
-      echo "------------------------------------------------------------------"
-      echo "ERROR: projects/BMLEH_Los1_CAPRI/gamble_model/run.sh not found!"
-      echo "Note: 'projects/' is git-ignored by default. To run in a remote routine,"
-      echo "ensure 'projects/BMLEH_Los1_CAPRI' is committed to your branch or mounted."
-      echo "------------------------------------------------------------------"
-      exit 1
-    fi
-    chmod +x projects/BMLEH_Los1_CAPRI/gamble_model/run.sh
+    require_bmleh
     export BM_NITER="${BM_NITER:-${NITER:-5000}}"
     ./projects/BMLEH_Los1_CAPRI/gamble_model/run.sh all
     ;;
 
   bmleh_smoke)
     echo ">>> Task: BMLEH_Los1_CAPRI project model (smoke run: design + 5k px fit)"
-    if [ ! -f "projects/BMLEH_Los1_CAPRI/gamble_model/run.sh" ]; then
-      echo "ERROR: projects/BMLEH_Los1_CAPRI/gamble_model/run.sh not found!"
-      exit 1
-    fi
-    chmod +x projects/BMLEH_Los1_CAPRI/gamble_model/run.sh
+    require_bmleh
     ./projects/BMLEH_Los1_CAPRI/gamble_model/run.sh smoke
     ;;
 
   bmleh_design)
     echo ">>> Task: BMLEH_Los1_CAPRI (design only)"
-    chmod +x projects/BMLEH_Los1_CAPRI/gamble_model/run.sh
+    require_bmleh
     ./projects/BMLEH_Los1_CAPRI/gamble_model/run.sh design
     ;;
 
   bmleh_fit)
     echo ">>> Task: BMLEH_Los1_CAPRI (fit only)"
-    chmod +x projects/BMLEH_Los1_CAPRI/gamble_model/run.sh
+    require_bmleh
     export BM_NITER="${BM_NITER:-${NITER:-5000}}"
     ./projects/BMLEH_Los1_CAPRI/gamble_model/run.sh fit
     ;;
