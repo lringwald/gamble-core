@@ -122,6 +122,64 @@ nest_tree_by_prefix <- function(classes, sep = "_", subsplit = character(0), fla
   nest_tree_from_paths(paths)
 }
 
+# --- (b2) RECURSIVE nesting from the class names themselves ------------------
+# nest_tree_by_prefix goes at most TWO levels deep, and only for groups named by hand in
+# `subsplit`. GLOBIOM never passes one, so its 33 crop classes -- Cropland_arable_barley,
+# Cropland_permanent_olives, ... -- collapse into a single flat Cropland nest, which is
+# precisely the structure a nested model exists to avoid: one nest holding three quarters of
+# the alternatives buys nothing over a flat MNL on those classes.
+#
+# This walks the tokens all the way down instead, so Type_Subtype_Detail names yield
+# Type > Type_Subtype > leaves without anyone naming the levels.
+#
+# Two rules keep the result a SENSIBLE nested-logit tree rather than just a faithful
+# transcription of the names:
+#
+#   * A GROUP OF ONE IS A LEAF, never a nest. A nest with a single child has no choice
+#     inside it, so its inclusive value is degenerate and the lambda for that nest is not
+#     identified -- the model would carry a parameter that the data cannot inform.
+#   * A LEVEL THAT DISCRIMINATES NOTHING IS SKIPPED, not emitted. If every member of a group
+#     shares the next token, that token adds a tier with one child; we descend past it and
+#     keep looking for the level that actually splits the group.
+#
+# Classes with fewer tokens than the current depth stop where they are and sit as leaves
+# beside the deeper nests, so "Artificial" and "Cropland_arable_barley" coexist correctly.
+nest_tree_auto <- function(classes, sep = "_", max_depth = 6L, flat = character(0)) {
+  stopifnot(length(classes) > 0L)
+  tok <- strsplit(classes, sep, fixed = TRUE); names(tok) <- classes
+  paths <- setNames(vector("list", length(classes)), classes)
+  for (cl in classes) paths[[cl]] <- character(0)
+
+  assign_paths <- function(members, depth, ancestors) {
+    if (length(members) <= 1L || depth > max_depth) {
+      for (m in members) paths[[m]] <<- ancestors
+      return(invisible(NULL))
+    }
+    key <- vapply(members, function(m) {
+      t <- tok[[m]]
+      if (length(t) >= depth) paste(t[seq_len(depth)], collapse = sep) else NA_character_
+    }, character(1))
+    short <- members[is.na(key)]                    # too few tokens: they stop here
+    for (m in short) paths[[m]] <<- ancestors
+    rest <- members[!is.na(key)]
+    if (!length(rest)) return(invisible(NULL))
+    groups <- split(rest, key[!is.na(key)])
+    if (length(groups) == 1L && !length(short)) {   # this level splits nothing -> skip the tier
+      assign_paths(rest, depth + 1L, ancestors)
+      return(invisible(NULL))
+    }
+    for (g in names(groups)) {
+      mem <- groups[[g]]
+      if (length(mem) == 1L) paths[[mem]] <<- ancestors     # group of one -> leaf, no nest
+      else assign_paths(mem, depth + 1L, c(ancestors, g))
+    }
+    invisible(NULL)
+  }
+  keep <- setdiff(classes, flat)                    # `flat` forces root-level leaves
+  if (length(keep)) assign_paths(keep, 1L, character(0))
+  nest_tree_from_paths(paths)
+}
+
 # --- validate + pretty-print --------------------------------------------------
 .tree_leaves <- function(node) if (is.character(node)) node else unlist(lapply(node, .tree_leaves), use.names = FALSE)
 nest_tree_check <- function(tree, classes, print = TRUE) {
@@ -228,7 +286,14 @@ NEST_TREES <- list(
 )
 
 # convenience: build (and check) the tree for a named scheme + its classes
+# AUTO derives the tree from the names alone -- the scheme to use when a classification has no
+# curated taxonomy in the mapping CSV, instead of falling back to a one-level prefix split.
 build_nest_tree <- function(scheme, classes, check = TRUE) {
+  if (identical(toupper(scheme), "AUTO")) {
+    tree <- nest_tree_auto(classes)
+    if (check) nest_tree_check(tree, classes)
+    return(tree)
+  }
   b <- NEST_TREES[[toupper(scheme)]]
   if (is.null(b)) stop("Unknown scheme: ", scheme, " (have: ", paste(names(NEST_TREES), collapse=", "), ")")
   tree <- b(classes)
