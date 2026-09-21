@@ -10,15 +10,34 @@ set -eo pipefail
 # Ensure we are in the repository root
 cd "$(dirname "$0")"
 
+# The task list, named ONCE. It used to be spelled out again inside the passthrough test, which
+# silently omitted all four bmleh* tasks -- harmless only because `command -v bmleh` happens to fail.
+GAMBLE_TASKS="bmleh bmleh_all bmleh_smoke bmleh_design bmleh_fit nested flat_design flat_fit count report test"
+is_task() { case " $GAMBLE_TASKS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
 # Allow arbitrary command passthrough if specified (e.g. bash, Rscript custom.R)
-if [ $# -gt 0 ] && command -v "$1" >/dev/null 2>&1 && [ "$1" != "nested" ] && [ "$1" != "flat_design" ] && [ "$1" != "flat_fit" ] && [ "$1" != "count" ] && [ "$1" != "report" ] && [ "$1" != "test" ]; then
+if [ $# -gt 0 ] && ! is_task "$1" && command -v "$1" >/dev/null 2>&1; then
   exec "$@"
 fi
 
 # -----------------------------------------------------------------------------
 # Configuration mapping (Environment Variables -> Driver Knobs)
 # -----------------------------------------------------------------------------
-TASK="${1:-${TASK:-nested}}"
+# WHERE THE TASK CAME FROM, not just what it is. A schema default only helps if the platform
+# actually injects it: job 8721 ran `nested` while the routine's schema said `bmleh`, because
+# neither $1 nor $TASK was set and the fallback won without saying so. "Task: nested" on its own
+# cannot tell "you asked for nested" apart from "nothing reached me". Now it can.
+if   [ $# -gt 0 ] && [ -n "${1:-}" ]; then TASK="$1";           TASK_SRC="command argument"
+elif [ -n "${TASK:-}" ];             then                       TASK_SRC="TASK env"
+elif [ -n "${task:-}" ];             then TASK="$task";         TASK_SRC="task env (lowercase)"
+elif [ -n "${WORKFLOW:-}" ];         then TASK="$WORKFLOW";     TASK_SRC="WORKFLOW env"
+elif [ -n "${workflow:-}" ];         then TASK="$workflow";     TASK_SRC="workflow env"
+elif [ -n "${GAMBLE_TASK:-}" ];      then TASK="$GAMBLE_TASK";  TASK_SRC="GAMBLE_TASK env"
+else                                      TASK="nested";        TASK_SRC="DEFAULT -- nothing was set"
+fi
+if ! is_task "$TASK"; then
+  echo "ERROR: unknown task '$TASK' (from $TASK_SRC). Supported: $GAMBLE_TASKS"; exit 1
+fi
 CLASSIFICATION="${CLASSIFICATION:-GLOBIOM_subclass}"
 # PROJECT names the project-specific build (e.g. BMLEH_Los1_CAPRI). It is the FIRST thing
 # consulted when picking a staged design dump, because a project build and a classification
@@ -130,7 +149,7 @@ mkdir -p "$OUTPUT_DIR/report"
 echo "======================================================================"
 echo " Starting gamble-core Routine"
 echo " Time:            $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-echo " Task:            $TASK"
+echo " Task:            $TASK   (from $TASK_SRC)"
 echo " Output Dir:      $OUTPUT_DIR"
 echo "======================================================================"
 
