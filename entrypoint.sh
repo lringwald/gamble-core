@@ -20,6 +20,11 @@ fi
 # -----------------------------------------------------------------------------
 TASK="${1:-${TASK:-nested}}"
 CLASSIFICATION="${CLASSIFICATION:-GLOBIOM_subclass}"
+# PROJECT names the project-specific build (e.g. BMLEH_Los1_CAPRI). It is the FIRST thing
+# consulted when picking a staged design dump, because a project build and a classification
+# are not the same axis: pixel_model_inputs_BMLEH_Los1_CAPRI.rds is selected by project, while
+# pixel_model_inputs_GLOBIOM_subclass.rds is selected by classification.
+PROJECT="${PROJECT:-}"
 VARIANT="${VARIANT:-factorized}"
 RE_BLOCK="${RE_BLOCK:-intercept}"
 SYMMETRIC_HS="${SYMMETRIC_HS:-TRUE}"
@@ -63,14 +68,46 @@ fi
 # the drive, use it rather than making the caller spell the path out.
 # (This was written once and lost in a merge on 2026-09-21; job 8721 failed for exactly that.)
 if [ ! -f "$DESIGN_PATH" ]; then
-  for cand_dir in "$GAMBLE_WORK_DIR" /data; do
-    [ -d "$cand_dir" ] || continue
-    cand=$(find "$cand_dir" -maxdepth 4 -name 'pixel_model_inputs*.rds' 2>/dev/null | sort | head -1)
-    if [ -n "${cand:-}" ]; then
-      echo ">>> Auto-detected design dump: $cand"
-      DESIGN_PATH="$cand"; break
+  # The trailing `true` is load-bearing. This script runs under `set -eo pipefail`, and without it
+  # the loop's exit status is that of its last test -- `[ -d /data ]`, which is FALSE whenever /data
+  # is not mounted. pipefail carries that through the pipe, the assignment fails, and the routine
+  # dies right here with no message. `bash -n` accepts it either way.
+  cands=$(for cand_dir in "$GAMBLE_WORK_DIR" /data; do
+            [ -d "$cand_dir" ] && find "$cand_dir" -maxdepth 4 -name 'pixel_model_inputs*.rds' 2>/dev/null
+            true
+          done | sort)
+  n_cand=$(printf '%s' "$cands" | grep -c . || true)
+  if [ "${n_cand:-0}" -eq 1 ]; then
+    DESIGN_PATH="$cands"
+    echo ">>> Auto-detected design dump: $DESIGN_PATH"
+  elif [ "${n_cand:-0}" -gt 1 ]; then
+    # NEVER GUESS BETWEEN DESIGNS. Alphabetical order would hand a GLOBIOM run the BMLEH dump and
+    # fit it without a word -- a wrong answer is worse than a failed job. Match the classification
+    # the task actually asked for; if that is ambiguous too, stop and show the candidates.
+    # PROJECT first, then CLASSIFICATION -- the two selectors name different axes, and a project
+    # build (pixel_model_inputs_BMLEH_Los1_CAPRI.rds) does not carry a classification in its name.
+    match=""
+    [ -n "$PROJECT" ] && match=$(printf '%s\n' "$cands" | grep -F "$PROJECT" | head -1 || true)
+    sel="PROJECT=$PROJECT"
+    if [ -z "$match" ]; then
+      match=$(printf '%s\n' "$cands" | grep -F "$CLASSIFICATION" | head -1 || true)
+      sel="CLASSIFICATION=$CLASSIFICATION"
     fi
-  done
+    if [ -n "$match" ]; then
+      DESIGN_PATH="$match"
+      echo ">>> Auto-detected design dump for $sel: $DESIGN_PATH"
+      echo ">>>   ($n_cand dumps on the drive; the others were ignored)"
+    else
+      echo "------------------------------------------------------------------"
+      echo "ERROR: $n_cand design dumps are staged and none names PROJECT='$PROJECT' or"
+      echo "       CLASSIFICATION='$CLASSIFICATION':"
+      printf '%s\n' "$cands" | sed 's/^/         /'
+      echo "Set PROJECT, or DESIGN_PATH explicitly. Refusing to guess: picking the"
+      echo "wrong design fits a different model and reports success."
+      echo "------------------------------------------------------------------"
+      exit 1
+    fi
+  fi
   # Say what was SEARCHED and what is actually there. Neither the routine author nor anyone reading
   # this log can list the mount by hand, so a bare "not found" ends the investigation; the .rds files
   # that DO exist usually name the problem (wrong directory, or a project-specific filename).

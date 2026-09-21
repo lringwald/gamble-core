@@ -1897,6 +1897,17 @@ if (isTRUE(as.logical(Sys.getenv("DRIVER_DUMP_INPUTS", "FALSE")))) {
   .dump_path <- Sys.getenv("DRIVER_DUMP_PATH", "output/designs/pixel_model_inputs.rds")
   dir.create(dirname(.dump_path), recursive = TRUE, showWarnings = FALSE)
   saveRDS(list(X_mat = X_mat, Y_pixel = Y_pixel, weights_pixel = weights_pixel,
+               # WHAT THIS DESIGN IS. A dump previously recorded nothing about the scheme that
+               # produced it, so anything choosing between several staged dumps could only read the
+               # FILENAME -- and a filename is a convention, not a fact. entrypoint.sh has to select
+               # by PROJECT/CLASSIFICATION substring for exactly this reason; with these fields a
+               # consumer can VERIFY the dump it picked instead of trusting what it is called.
+               class_cols     = CLASS_COLS,      # DRIVER_CLASS_COLS, verbatim
+               class_scheme   = CLASS_SCHEME,    # GLOBIOM / BMLEH / AGMIP / BIOCLIMA
+               model_label    = MODEL_LABEL,
+               pixel_res_km   = PIXEL_RES,
+               pixel_intersect = PIXEL_INTERSECT_COL,
+               built_at       = Sys.time(),
                mundlak_def = mundlak_def,   # NULL unless DRIVER_MUNDLAK; needed to rebuild the
                                             # same group-mean columns on new data at predict time
                group_idx_vec = group_idx_vec, re_group_names = if (use_re) re_group_names else NULL,
