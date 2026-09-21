@@ -57,6 +57,34 @@ if [ -d "$GAMBLE_WORK_DIR" ]; then
   echo ">>> Mounted drive: $GAMBLE_WORK_DIR  (all model output lands here)"
 fi
 
+# --- Design-dump resolution -----------------------------------------------------
+# A cold container has no design: output/ ships with nothing but .gitkeep, and TASK=nested is the
+# routine's default, so the preflight fires before any work happens. If a dump is already staged on
+# the drive, use it rather than making the caller spell the path out.
+# (This was written once and lost in a merge on 2026-09-21; job 8721 failed for exactly that.)
+if [ ! -f "$DESIGN_PATH" ]; then
+  for cand_dir in "$GAMBLE_WORK_DIR" /data; do
+    [ -d "$cand_dir" ] || continue
+    cand=$(find "$cand_dir" -maxdepth 4 -name 'pixel_model_inputs*.rds' 2>/dev/null | sort | head -1)
+    if [ -n "${cand:-}" ]; then
+      echo ">>> Auto-detected design dump: $cand"
+      DESIGN_PATH="$cand"; break
+    fi
+  done
+  # Say what was SEARCHED and what is actually there. Neither the routine author nor anyone reading
+  # this log can list the mount by hand, so a bare "not found" ends the investigation; the .rds files
+  # that DO exist usually name the problem (wrong directory, or a project-specific filename).
+  if [ ! -f "$DESIGN_PATH" ]; then
+    echo ">>> No pixel_model_inputs*.rds under $GAMBLE_WORK_DIR or /data (searched 4 levels)."
+    for cand_dir in "$GAMBLE_WORK_DIR" /data; do
+      [ -d "$cand_dir" ] || continue
+      echo ">>>   .rds files present under $cand_dir:"
+      find "$cand_dir" -maxdepth 4 -name '*.rds' 2>/dev/null | head -10 | sed 's/^/>>>     /'
+      [ -z "$(find "$cand_dir" -maxdepth 4 -name '*.rds' 2>/dev/null | head -1)" ] && echo ">>>     (none)"
+    done
+  fi
+fi
+
 # Ensure output directories exist
 mkdir -p "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR/designs"
