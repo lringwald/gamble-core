@@ -35,8 +35,46 @@ elif [ -n "${workflow:-}" ];         then TASK="$workflow";     TASK_SRC="workfl
 elif [ -n "${GAMBLE_TASK:-}" ];      then TASK="$GAMBLE_TASK";  TASK_SRC="GAMBLE_TASK env"
 else                                      TASK="nested";        TASK_SRC="DEFAULT -- nothing was set"
 fi
-if ! is_task "$TASK"; then
-  echo "ERROR: unknown task '$TASK' (from $TASK_SRC). Supported: $GAMBLE_TASKS"; exit 1
+# PROJECT TASKS ARE DISCOVERED, NOT ENUMERATED. Any projects/<NAME>/gamble_model/run.sh yields
+# <NAME>_design, <NAME>_fit, <NAME>_smoke, <NAME>_all and <NAME>_more, so the task list never has to
+# be kept in step with the projects directory by hand. GLOBIOM_subclass has had a runnable run.sh
+# all along and no task, purely because nobody added one.
+PROJECT_ACTIONS="design fit smoke all more"
+gamble_project_tasks() {
+  for d in projects/*/; do
+    [ -f "${d}gamble_model/run.sh" ] || continue
+    n=$(basename "$d")
+    for a in $PROJECT_ACTIONS; do printf '%s_%s ' "$n" "$a"; done
+  done
+}
+# Splits <PROJECT>_<action> into PROJ_NAME / PROJ_ACTION, and ONLY when that project really exists
+# -- so `flat_design`, which also ends in _design, falls through to the core task list.
+resolve_project_task() {
+  for a in $PROJECT_ACTIONS; do
+    case "$1" in
+      *_"$a")
+        n="${1%_$a}"
+        if [ -f "projects/$n/gamble_model/run.sh" ]; then PROJ_NAME="$n"; PROJ_ACTION="$a"; return 0; fi
+        ;;
+    esac
+  done
+  return 1
+}
+
+# The bmleh* spellings predate discovery. Keep them working, and resolve them to the explicit name
+# so a config pinned to the old form neither breaks nor stays vague about which project it means.
+case "$TASK" in
+  bmleh|bmleh_all) TASK="BMLEH_Los1_CAPRI_all" ;;
+  bmleh_smoke)     TASK="BMLEH_Los1_CAPRI_smoke" ;;
+  bmleh_design)    TASK="BMLEH_Los1_CAPRI_design" ;;
+  bmleh_fit)       TASK="BMLEH_Los1_CAPRI_fit" ;;
+esac
+
+if ! is_task "$TASK" && ! resolve_project_task "$TASK"; then
+  echo "ERROR: unknown task '$TASK' (from $TASK_SRC)."
+  echo "  Core tasks:    $GAMBLE_TASKS"
+  echo "  Project tasks: $(gamble_project_tasks)"
+  exit 1
 fi
 CLASSIFICATION="${CLASSIFICATION:-GLOBIOM_subclass}"
 # PROJECT names the project-specific build (e.g. BMLEH_Los1_CAPRI). It is the FIRST thing
@@ -172,8 +210,8 @@ fi
 # missing here, the CODE is not the problem -- this checkout or image predates that commit,
 # or the build context dropped it. The old message here said the opposite and sent a debug
 # session after a non-existent commit step; say the checkable thing instead.
-BM_RUN=projects/BMLEH_Los1_CAPRI/gamble_model/run.sh
-require_bmleh() {
+require_project() {
+  BM_RUN="$1"
   [ -f "$BM_RUN" ] && { chmod +x "$BM_RUN"; return 0; }
   echo "------------------------------------------------------------------"
   echo "ERROR: $BM_RUN not found in this image."
@@ -287,36 +325,21 @@ case "$TASK" in
     Rscript tests/run_all.R fast
     ;;
 
-  bmleh|bmleh_all)
-    echo ">>> Task: BMLEH_Los1_CAPRI project model (design + fit)"
-    require_bmleh
-    export BM_NITER="${BM_NITER:-${NITER:-5000}}"
-    ./projects/BMLEH_Los1_CAPRI/gamble_model/run.sh all
-    ;;
-
-  bmleh_smoke)
-    echo ">>> Task: BMLEH_Los1_CAPRI project model (smoke run: design + 5k px fit)"
-    require_bmleh
-    ./projects/BMLEH_Los1_CAPRI/gamble_model/run.sh smoke
-    ;;
-
-  bmleh_design)
-    echo ">>> Task: BMLEH_Los1_CAPRI (design only)"
-    require_bmleh
-    ./projects/BMLEH_Los1_CAPRI/gamble_model/run.sh design
-    ;;
-
-  bmleh_fit)
-    echo ">>> Task: BMLEH_Los1_CAPRI (fit only)"
-    require_bmleh
-    export BM_NITER="${BM_NITER:-${NITER:-5000}}"
-    ./projects/BMLEH_Los1_CAPRI/gamble_model/run.sh fit
-    ;;
-
   *)
-    echo "ERROR: Unknown TASK: '$TASK'"
-    echo "Supported tasks: nested | flat_design | flat_fit | count | report | test | bmleh | bmleh_smoke | bmleh_design | bmleh_fit"
-    exit 1
+    if resolve_project_task "$TASK"; then
+      PROJ_RUN="projects/$PROJ_NAME/gamble_model/run.sh"
+      echo ">>> Task: $PROJ_NAME project model ($PROJ_ACTION)"
+      require_project "$PROJ_RUN"
+      case "$PROJ_ACTION" in
+        fit|all|more) export BM_NITER="${BM_NITER:-${NITER:-5000}}" ;;
+      esac
+      "./$PROJ_RUN" "$PROJ_ACTION"
+    else
+      echo "ERROR: Unknown TASK: '$TASK' (from $TASK_SRC)"
+      echo "  Core tasks:    $GAMBLE_TASKS"
+      echo "  Project tasks: $(gamble_project_tasks)"
+      exit 1
+    fi
     ;;
 esac
 
