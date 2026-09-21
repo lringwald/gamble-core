@@ -15,26 +15,6 @@ cd "$(dirname "$0")"
 GAMBLE_TASKS="bmleh bmleh_all bmleh_smoke bmleh_design bmleh_fit nested flat_design flat_fit count report test"
 is_task() { case " $GAMBLE_TASKS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
-# Allow arbitrary command passthrough if specified (e.g. bash, Rscript custom.R)
-if [ $# -gt 0 ] && ! is_task "$1" && command -v "$1" >/dev/null 2>&1; then
-  exec "$@"
-fi
-
-# -----------------------------------------------------------------------------
-# Configuration mapping (Environment Variables -> Driver Knobs)
-# -----------------------------------------------------------------------------
-# WHERE THE TASK CAME FROM, not just what it is. A schema default only helps if the platform
-# actually injects it: job 8721 ran `nested` while the routine's schema said `bmleh`, because
-# neither $1 nor $TASK was set and the fallback won without saying so. "Task: nested" on its own
-# cannot tell "you asked for nested" apart from "nothing reached me". Now it can.
-if   [ $# -gt 0 ] && [ -n "${1:-}" ]; then TASK="$1";           TASK_SRC="command argument"
-elif [ -n "${TASK:-}" ];             then                       TASK_SRC="TASK env"
-elif [ -n "${task:-}" ];             then TASK="$task";         TASK_SRC="task env (lowercase)"
-elif [ -n "${WORKFLOW:-}" ];         then TASK="$WORKFLOW";     TASK_SRC="WORKFLOW env"
-elif [ -n "${workflow:-}" ];         then TASK="$workflow";     TASK_SRC="workflow env"
-elif [ -n "${GAMBLE_TASK:-}" ];      then TASK="$GAMBLE_TASK";  TASK_SRC="GAMBLE_TASK env"
-else                                      TASK="nested";        TASK_SRC="DEFAULT -- nothing was set"
-fi
 # PROJECT TASKS ARE DISCOVERED, NOT ENUMERATED. Any projects/<NAME>/gamble_model/run.sh yields
 # <NAME>_design, <NAME>_fit, <NAME>_smoke, <NAME>_all and <NAME>_more, so the task list never has to
 # be kept in step with the projects directory by hand. GLOBIOM_subclass has had a runnable run.sh
@@ -60,6 +40,44 @@ resolve_project_task() {
   done
   return 1
 }
+
+# Allow arbitrary command passthrough if specified (e.g. bash, Rscript custom.R)
+if [ $# -gt 0 ] && ! is_task "$1" && command -v "$1" >/dev/null 2>&1; then
+  exec "$@"
+fi
+
+# -----------------------------------------------------------------------------
+# Configuration mapping (Environment Variables -> Driver Knobs)
+# -----------------------------------------------------------------------------
+# WHERE THE TASK CAME FROM, not just what it is. A schema default only helps if the platform
+# actually injects it: job 8721 ran `nested` while the routine's schema said `bmleh`, because
+# neither $1 nor $TASK was set and the fallback won without saying so. "Task: nested" on its own
+# cannot tell "you asked for nested" apart from "nothing reached me". Now it can.
+if   [ $# -gt 0 ] && [ -n "${1:-}" ]; then TASK="$1";           TASK_SRC="command argument"
+elif [ -n "${TASK:-}" ];             then                       TASK_SRC="TASK env"
+elif [ -n "${task:-}" ];             then TASK="$task";         TASK_SRC="task env (lowercase)"
+elif [ -n "${WORKFLOW:-}" ];         then TASK="$WORKFLOW";     TASK_SRC="WORKFLOW env"
+elif [ -n "${workflow:-}" ];         then TASK="$workflow";     TASK_SRC="workflow env"
+elif [ -n "${GAMBLE_TASK:-}" ];      then TASK="$GAMBLE_TASK";  TASK_SRC="GAMBLE_TASK env"
+else
+  # NO SILENT FALLBACK. This used to default to `nested`, which meant a routine whose task never
+  # reached the container quietly started a different, long-running workflow -- twice, on jobs 8721
+  # and 8733, the second of which got as far as fitting a BMLEH design through a generically-coded
+  # GLOBIOM nest tree. A misconfiguration should cost a second, not a day of cores.
+  echo "------------------------------------------------------------------"
+  echo "ERROR: no task given, so there is nothing to run."
+  echo
+  echo "Nothing arrived as a command argument, or in TASK / task / WORKFLOW /"
+  echo "workflow / GAMBLE_TASK. A default set in a routine's config schema is"
+  echo "NOT enough -- the platform has to pass the value into the container:"
+  echo "    command:  ./entrypoint.sh BMLEH_Los1_CAPRI_smoke"
+  echo "    or env:   TASK=BMLEH_Los1_CAPRI_smoke"
+  echo
+  echo "  Core tasks:    $GAMBLE_TASKS"
+  echo "  Project tasks: $(gamble_project_tasks)"
+  echo "------------------------------------------------------------------"
+  exit 1
+fi
 
 # The bmleh* spellings predate discovery. Keep them working, and resolve them to the explicit name
 # so a config pinned to the old form neither breaks nor stays vague about which project it means.
