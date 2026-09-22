@@ -14,12 +14,29 @@
   ],
   "knobs": [
     {
+      "name": "NSAMPLE",
+      "env": "",
+      "type": "string",
+      "default": "auto",
+      "blank": "auto",
+      "scope": "operational",
+      "label": "Retained draws (post burn-in)",
+      "desc": "How many sweeps to KEEP. The total is derived: NITER = NSAMPLE + NBURN. This is normally what you mean -- asking for a total instead is how a run ends up with fewer kept draws than intended, or with nburn >= niter and no run at all.",
+      "tasks": [
+        "nested",
+        "flat",
+        "project",
+        "count",
+        "gate"
+      ]
+    },
+    {
       "name": "NITER",
       "env": "DRIVER_NITER",
       "type": "integer",
       "default": "1000",
       "scope": "operational",
-      "desc": "Total MCMC sweeps.",
+      "desc": "TOTAL sweeps, burn-in included. Leave it alone if you set NSAMPLE, which derives this. Setting both is an error rather than a silent preference.",
       "tasks": [
         "nested",
         "flat",
@@ -27,7 +44,7 @@
         "count",
         "gate"
       ],
-      "label": "Iterations (sweeps)"
+      "label": "Total sweeps (burn-in + kept)"
     },
     {
       "name": "NBURN",
@@ -35,7 +52,7 @@
       "type": "integer",
       "default": "auto",
       "scope": "operational",
-      "desc": "Burn-in sweeps; must be < NITER. Empty keeps the driver default.  ('auto' = leave it to the driver's own default)",
+      "desc": "Burn-in sweeps, discarded. With NSAMPLE set, the total becomes NSAMPLE + NBURN.  ('auto' = leave it to the driver's own default)",
       "tasks": [
         "flat",
         "gate"

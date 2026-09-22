@@ -40,6 +40,12 @@ knob() {                       # knob NAME DEFAULT  -- env wins, otherwise the d
 knob_record() {                # knob_record NAME VALUE SOURCE -- for knobs resolved specially
   KNOB_NAMES+=("$1"); KNOB_VALUES+=("$2"); KNOB_SOURCES+=("$3")
 }
+knob_source() {                # what resolve_registry recorded for a knob, "" if unknown
+  local i
+  for i in "${!KNOB_NAMES[@]}"; do
+    if [ "${KNOB_NAMES[$i]}" = "$1" ]; then printf '%s' "${KNOB_SOURCES[$i]}"; return 0; fi
+  done
+}
 knob_update() {                # a knob decided LATER (the design auto-detect) corrects its record,
   local i                      # so the manifest shows what was used, not what was first guessed
   for i in "${!KNOB_NAMES[@]}"; do
@@ -141,7 +147,12 @@ resolve_registry() {
       continue
     fi
     KNOB_NAMES+=("$kn"); KNOB_VALUES+=("$cur"); KNOB_SOURCES+=("$src")
-    [ -n "$cur" ] && export "$envvar=$cur"
+    # A knob with no `env` is CONFIG-LAYER ONLY (NSAMPLE derives NITER; nothing reads NSAMPLE
+    # itself). Exporting it would run `export "=6000"`, which fails with "not a valid identifier"
+    # -- and as the last command of an AND-list that is fatal under set -e, so the whole settings
+    # table disappeared and the run stopped without a word.
+    [ -n "$envvar" ] && [ -n "$cur" ] && export "$envvar=$cur"
+    true
     if [ "$scope" = "model" ] && [ "$cur" != "$def" ]; then
       SPEC_DEVIATIONS+=("$kn: $def -> $cur   ($src)")
     fi
@@ -445,6 +456,37 @@ if ! ( : > "$OUTPUT_DIR/.write_probe" ) 2>/dev/null; then
   echo "------------------------------------------------------------------"
 else
   rm -f "$OUTPUT_DIR/.write_probe" 2>/dev/null || true
+fi
+
+# ---- NSAMPLE: say how many draws you want KEPT, not how many sweeps in total -------------------
+# NITER = NSAMPLE + NBURN. Asking for a total is how a run ends up with fewer kept draws than
+# intended -- or, when the burn-in is larger than the total, with no run at all: "niter must be >
+# nburn", which is precisely how job 8807 died after loading a design for two minutes.
+# NITER remains settable for the rare case where the total really is the quantity in hand, but
+# setting BOTH is an error rather than a silent preference for one of them.
+NSAMPLE_DEFAULT_BURN=2000
+if [ "${NSAMPLE:-auto}" != "auto" ] && [ -n "${NSAMPLE:-}" ]; then
+  # Ask the RECORD, not the environment: EXTRA is applied inside resolve_registry, so a flag
+  # computed before it runs cannot see "NITER=8000" that arrived that way -- which is exactly how
+  # the contradiction check silently passed the first time.
+  if [ "$(knob_source NITER)" != "default" ]; then
+    echo "ERROR: set NSAMPLE or NITER, not both."
+    echo "  NSAMPLE=$NSAMPLE (kept draws) derives the total; NITER=$NITER states it outright."
+    exit 1
+  fi
+  _nb="${NBURN:-auto}"
+  if [ "$_nb" = "auto" ] || [ -z "$_nb" ]; then
+    _nb=$NSAMPLE_DEFAULT_BURN
+    echo ">>> NSAMPLE=$NSAMPLE with no NBURN: using burn-in $_nb (set NBURN to choose your own)"
+  fi
+  NITER=$(( NSAMPLE + _nb ))
+  NBURN="$_nb"
+  export DRIVER_NITER="$NITER" DRIVER_NBURN="$NBURN"
+  knob_update NITER "$NITER" "derived: NSAMPLE $NSAMPLE + NBURN $NBURN"
+  _nbsrc="$(knob_source NBURN)"
+  case "$_nbsrc" in *"unset:"*|default) _nbsrc="default with NSAMPLE" ;; esac
+  knob_update NBURN "$NBURN" "$_nbsrc"
+  echo ">>> sweeps: $NITER total = $NSAMPLE kept + $NBURN burn-in"
 fi
 
 print_settings

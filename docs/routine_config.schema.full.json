@@ -49,16 +49,22 @@
           "globiom_nested_smoke"
         ]
       },
+      "NSAMPLE": {
+        "type": "string",
+        "title": "Retained draws (post burn-in)  [count, flat, gate, nested, project]",
+        "description": "Retained draws (post burn-in)  [count, flat, gate, nested, project] -- How many sweeps to KEEP. The total is derived: NITER = NSAMPLE + NBURN. This is normally what you mean -- asking for a total instead is how a run ends up with fewer kept draws than intended, or with nburn >= niter and no run at all.",
+        "default": "auto"
+      },
       "NITER": {
         "type": "string",
-        "title": "Iterations (sweeps)  [count, flat, gate, nested, project]",
-        "description": "Iterations (sweeps)  [count, flat, gate, nested, project] -- Total MCMC sweeps.",
+        "title": "Total sweeps (burn-in + kept)  [count, flat, gate, nested, project]",
+        "description": "Total sweeps (burn-in + kept)  [count, flat, gate, nested, project] -- TOTAL sweeps, burn-in included. Leave it alone if you set NSAMPLE, which derives this. Setting both is an error rather than a silent preference.",
         "default": "1000"
       },
       "NBURN": {
         "type": "string",
         "title": "Burn-in sweeps  [flat, gate]",
-        "description": "Burn-in sweeps  [flat, gate] -- Burn-in sweeps; must be < NITER. Empty keeps the driver default.  ('auto' = leave it to the driver's own default)",
+        "description": "Burn-in sweeps  [flat, gate] -- Burn-in sweeps, discarded. With NSAMPLE set, the total becomes NSAMPLE + NBURN.  ('auto' = leave it to the driver's own default)",
         "default": "auto"
       },
       "THIN": {
