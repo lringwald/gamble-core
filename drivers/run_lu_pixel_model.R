@@ -2226,7 +2226,13 @@ res_list <- with_progress({
       niter = niter, nburn = nburn, thin = thin_keep, standardize = TRUE, method = c("center", "scale"),
       calc_loo = FALSE, horseshoe_idx = horseshoe_idx_pixel,
       p0_mu = round(0.6 * length(horseshoe_idx_pixel)), gamma_matched_pg = FALSE,
-      re_scale_A = 1, chain_id = i, progress_cb = function(...) p_bar(),
+      # progress_cb MUST STAY NULL. Supplying one takes the first branch in the sampler's reporting
+      # block, which SUPPRESSES both the per-chain console line AND the progress_chain_<id>.txt
+      # heartbeat file. That is why the 2026-09-19 BART fit ran three days with no progress signal
+      # of any kind -- it passed a progressr bar, which future workers cannot draw to anyway, and
+      # silenced the one mechanism that does work. With NULL the sampler writes the heartbeat file
+      # every 100 iterations, which postprocess/check_progress.R reads while the fit is in flight.
+      re_scale_A = 1, chain_id = i, progress_cb = NULL,
       init_state = chain_init_state
     )
     do.call(get(SAMPLER), c(common_args, sampler_extra))
