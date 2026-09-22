@@ -24,7 +24,8 @@
         "flat",
         "project",
         "count"
-      ]
+      ],
+      "label": "Iterations (sweeps)"
     },
     {
       "name": "NBURN",
@@ -36,7 +37,8 @@
       "tasks": [
         "flat"
       ],
-      "blank": "0"
+      "blank": "0",
+      "label": "Burn-in sweeps"
     },
     {
       "name": "THIN",
@@ -48,7 +50,8 @@
       "tasks": [
         "flat"
       ],
-      "blank": "0"
+      "blank": "0",
+      "label": "Thinning"
     },
     {
       "name": "N_CHAINS",
@@ -61,7 +64,8 @@
         "nested",
         "flat",
         "count"
-      ]
+      ],
+      "label": "Chains"
     },
     {
       "name": "SUBSAMPLE",
@@ -72,7 +76,8 @@
       "desc": "0 = every pixel; otherwise cap the pixel count.",
       "tasks": [
         "nested"
-      ]
+      ],
+      "label": "Pixel subsample"
     },
     {
       "name": "CLASSIFICATION",
@@ -91,7 +96,8 @@
       "tasks": [
         "flat",
         "nested"
-      ]
+      ],
+      "label": "Classification"
     },
     {
       "name": "RE_GROUP",
@@ -108,7 +114,8 @@
       "desc": "Grouping the random effects are keyed on.",
       "tasks": [
         "flat"
-      ]
+      ],
+      "label": "RE grouping"
     },
     {
       "name": "RE_VARS",
@@ -120,7 +127,8 @@
       "tasks": [
         "flat"
       ],
-      "blank": "default"
+      "blank": "default",
+      "label": "RE covariates"
     },
     {
       "name": "RE_BLOCK",
@@ -135,7 +143,8 @@
       "desc": "Nested-path RE block. intercept is the documented standard.",
       "tasks": [
         "nested"
-      ]
+      ],
+      "label": "RE block"
     },
     {
       "name": "VARIANT",
@@ -150,7 +159,8 @@
       "desc": "factorized = independent nests; iv = inclusive-value coupling.",
       "tasks": [
         "nested"
-      ]
+      ],
+      "label": "Nested variant"
     },
     {
       "name": "SYMMETRIC_HS",
@@ -165,7 +175,8 @@
       "desc": "Symmetric (zero-sum) horseshoe. TRUE is the standard; the job verifies the sampler carries the fix before fitting.",
       "tasks": [
         "nested"
-      ]
+      ],
+      "label": "Symmetric horseshoe"
     },
     {
       "name": "USE_BART",
@@ -180,7 +191,8 @@
       "desc": "Terrain (and whatever BART_COLS names) enters as a tree ensemble instead of linear terms. FLAT PATH ONLY -- nested_cut has no BART support.",
       "tasks": [
         "flat"
-      ]
+      ],
+      "label": "BART"
     },
     {
       "name": "BART_COLS",
@@ -191,7 +203,8 @@
       "desc": "Which covariates BART takes. Named blocks, combinable with '+': topo, climate, soil, socio, yield (e.g. 'topo' or 'topo+climate'). Empty = every non-focal column; or give an explicit comma-separated column list. Terrain needs ADD_COORDS=TRUE to include lon/lat.",
       "tasks": [
         "flat"
-      ]
+      ],
+      "label": "BART covariate blocks"
     },
     {
       "name": "NTREES_BART",
@@ -202,7 +215,8 @@
       "desc": "Trees per class in the ensemble.",
       "tasks": [
         "flat"
-      ]
+      ],
+      "label": "BART trees"
     },
     {
       "name": "BART_K_PREV",
@@ -217,7 +231,8 @@
       "desc": "Prevalence-scaled leaf shrinkage. Measured super-additive with symmetric BART (+75.4 held-out together vs +38.4 symmetric alone); FALSE restores flat k.",
       "tasks": [
         "flat"
-      ]
+      ],
+      "label": "BART prevalence-scaled shrinkage"
     },
     {
       "name": "ADD_COORDS",
@@ -232,7 +247,8 @@
       "desc": "Add lon/lat as design columns. REQUIRED for BART_COLS=topo to cover coordinates -- without it 'topo' silently resolves to the 4 terrain columns.",
       "tasks": [
         "flat"
-      ]
+      ],
+      "label": "Add lon/lat covariates"
     },
     {
       "name": "COORD_TYPE",
@@ -247,7 +263,8 @@
       "desc": "lonlat = EPSG:4326 degrees (readable); laea = native EPSG:3035 metres.",
       "tasks": [
         "flat"
-      ]
+      ],
+      "label": "Coordinate type"
     },
     {
       "name": "MUNDLAK",
@@ -262,7 +279,8 @@
       "desc": "Group-mean predictors for the RE prior mean. An interpretation fix (removes FE-RE correlation), not an accuracy one.",
       "tasks": [
         "flat"
-      ]
+      ],
+      "label": "Mundlak group means"
     },
     {
       "name": "PROMOTE_NATURAL_OTHER",
@@ -277,7 +295,8 @@
       "desc": "Move Natural_other out of the non-choosable residual.",
       "tasks": [
         "flat"
-      ]
+      ],
+      "label": "Promote Natural_other"
     },
     {
       "name": "N_CORES",
@@ -291,7 +310,8 @@
         "flat",
         "count"
       ],
-      "blank": "0"
+      "blank": "0",
+      "label": "Cores"
     },
     {
       "name": "M",
@@ -302,7 +322,8 @@
       "desc": "Multiple-imputation draws of the inclusive value. Only reaches the model when VARIANT=iv; with factorized nests there is no inclusive value to impute.",
       "tasks": [
         "nested"
-      ]
+      ],
+      "label": "Imputations (M)"
     },
     {
       "name": "BM_NITER",
@@ -314,7 +335,8 @@
       "tasks": [
         "project"
       ],
-      "blank": "0"
+      "blank": "0",
+      "label": "Project fit iterations"
     },
     {
       "name": "PIXEL_RES",
@@ -329,7 +351,8 @@
       "desc": "Grid resolution in km. 10 km is ~48-64k pixels over the EU, 5 km ~180k -- roughly four times the data and the runtime.",
       "tasks": [
         "flat"
-      ]
+      ],
+      "label": "Grid resolution (km)"
     },
     {
       "name": "PIXEL_INTERSECT",
@@ -346,7 +369,8 @@
       "desc": "Split each grid cell where it crosses this boundary, so a cell spanning two regions becomes two observations. NULL = native grid cells, no split. Changes the UNIT OF OBSERVATION, not just the labelling.",
       "tasks": [
         "flat"
-      ]
+      ],
+      "label": "Cell intersection"
     }
   ]
 }

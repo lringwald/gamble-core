@@ -85,15 +85,14 @@ for k in knobs:
     # The applicability goes in the TITLE as well as an if/then block. A renderer that supports
     # draft-07 conditionals narrows the form; one that does not still shows which task a field
     # reaches, instead of offering factorized/iv on a project fit where it does nothing.
-    where = "" if len(applies) >= len(ALL_TASKS) else "  [%s]" % ", ".join(sorted(set(
-        f for f in k.get("tasks", []))))
+    # The task FAMILIES, not the expanded task list: "[flat]" is readable, and naming all fourteen
+    # tasks a knob reaches turns every description into a wall that hides the sentence that matters.
+    where = "" if len(applies) >= len(ALL_TASKS) else "  [%s]" % ", ".join(sorted(k.get("tasks", [])))
+    label = k.get("label", k["name"]) + (" [model spec]" if k["scope"] == "model" else "") + where
     p = {"type": "string" if k["type"] != "integer" else "integer",
-         "title": k["name"].replace("_", " ").title()
-                  + (" [model spec]" if k["scope"] == "model" else "") + where,
-         "description": k["desc"]
-                        + ("  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable."
-                           if k["scope"] == "model" else "")
-                        + ("  Applies to: %s." % ", ".join(applies) if applies else "  Applies to no task."),
+         "title": label,
+         "description": k["desc"] + ("  CHANGES WHAT IS ESTIMATED -- runs differing here are not "
+                                     "comparable with runs at the default." if k["scope"] == "model" else ""),
          "default": int(k["default"]) if (k["type"] == "integer" and k["default"]) else k["default"]}
     if "enum" in k:
         p["enum"] = k["enum"]
@@ -117,9 +116,11 @@ EXTRAS = [
                                       "a fit. 'auto' looks under /data."),
     ("GAMBLE_CASCADE_DATA", "auto", "cascadinggamble-core/data. 'auto' looks under /data."),
 ]
+EXTRA_LABELS = {"DESIGN_PATH": "Design dump path", "PROJECT": "Project (design selection)",
+                "GAMBLE_WORK_DIR": "Mounted drive", "GAMBLE_MASTER_PARQUET": "Master 1 km parquet",
+                "GAMBLE_CASCADE_DATA": "Cascade data directory"}
 for extra, dflt, d in EXTRAS:
-    props[extra] = {"type": "string", "title": extra.replace("_", " ").title(), "description": d,
-                    "default": dflt}
+    props[extra] = {"type": "string", "title": EXTRA_LABELS[extra], "description": d, "default": dflt}
 
 # The form renders `title` above a text input but NOT above a dropdown, so an enum field arrives
 # with no label at all -- "factorized" floating next to "intercept" with nothing naming either.
