@@ -641,8 +641,10 @@ case "$TASK" in
       bm_bridge() {                      # bm_bridge BM_NAME KNOB_VALUE
         local bm="$1" val="$2" cur
         eval "cur=\${$bm:-}"
-        if [ -n "$cur" ] && [ "$cur" != "0" ]; then export "$bm"; return 0; fi
-        if [ -n "$val" ] && [ "$val" != "0" ] && [ "$val" != "default" ]; then
+        if [ -n "$cur" ] && [ "$cur" != "auto" ]; then export "$bm"; return 0; fi
+        # "auto"/"default" are the sentinels meaning UNSET. 0 is NOT one: NBURN=0 is a real
+        # value for a resumed chain, and treating it as absence made it impossible to ask for.
+        if [ -n "$val" ] && [ "$val" != "auto" ] && [ "$val" != "default" ]; then
           export "$bm=$val"
         else
           unset "$bm"

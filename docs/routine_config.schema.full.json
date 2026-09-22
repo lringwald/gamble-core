@@ -55,14 +55,14 @@
       "NBURN": {
         "type": "string",
         "title": "Burn-in sweeps  [flat]",
-        "description": "Burn-in sweeps  [flat] -- Burn-in sweeps; must be < NITER. Empty keeps the driver default.  (0 = leave it to the driver's own default)",
-        "default": "0"
+        "description": "Burn-in sweeps  [flat] -- Burn-in sweeps; must be < NITER. Empty keeps the driver default.  ('auto' = leave it to the driver's own default)",
+        "default": "auto"
       },
       "THIN": {
         "type": "string",
         "title": "Thinning  [flat]",
-        "description": "Thinning  [flat] -- Store every k-th retained draw.  (0 = leave it to the driver's own default)",
-        "default": "0"
+        "description": "Thinning  [flat] -- Store every k-th retained draw.  ('auto' = leave it to the driver's own default)",
+        "default": "auto"
       },
       "N_CHAINS": {
         "type": "string",
@@ -212,8 +212,8 @@
       "N_CORES": {
         "type": "string",
         "title": "Cores  [count, flat, nested]",
-        "description": "Cores  [count, flat, nested] -- Worker processes. Empty follows N_CHAINS; more cores than chains does not help.  (0 = leave it to the driver's own default)",
-        "default": "0"
+        "description": "Cores  [count, flat, nested] -- Worker processes. Empty follows N_CHAINS; more cores than chains does not help.  ('auto' = leave it to the driver's own default)",
+        "default": "auto"
       },
       "M": {
         "type": "string",
@@ -224,8 +224,8 @@
       "BM_NITER": {
         "type": "string",
         "title": "Project fit iterations  [project]",
-        "description": "Project fit iterations  [project] -- Sweeps for a project fit. Empty falls back to NITER, then to the project script's own 5000.  (0 = leave it to the driver's own default)",
-        "default": "0"
+        "description": "Project fit iterations  [project] -- Sweeps for a project fit. Empty falls back to NITER, then to the project script's own 5000.  ('auto' = leave it to the driver's own default)",
+        "default": "auto"
       },
       "PIXEL_RES": {
         "type": "string",
