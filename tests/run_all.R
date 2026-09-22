@@ -48,6 +48,7 @@ preferred <- c(
   "tests/test_config_registry.R",     # knob registry vs its generated shell mirror + routine schema
   "tests/test_nest_tree_auto.R",      # recursive nest assignment from class names
   "tests/test_nsample.R",             # nsample = kept draws; niter stays the total
+  "tests/test_mundlak_decompose.R",   # country total = mu + gamma'xbar_c + u_c, not mu + u_c
   "tests/test_target_class_split.R"   # project target cascade (SKIPs unless the BMLEH build exists)
 )
 long_suites <- c("tests/test_suite_lu_pixel.R", "tests/test_suite_ls_count.R")
@@ -69,6 +70,11 @@ files <- files[file.exists(files)]
 
 cat(sprintf("\n%s\n running %d test file(s)%s\n%s\n", strrep("=", 64), length(files),
             if (FAST) "  [fast: long suites skipped]" else "", strrep("=", 64)))
+# The recovery log is APPEND-only within a run (a crashed test still leaves its rows), so it has
+# to be cleared between runs or yesterday's numbers are presented as today's evidence.
+TV_CSV <- Sys.getenv("TESTVIZ_OUT", "output/report/test_recovery.csv")
+unlink(TV_CSV)
+
 res <- data.frame(file = character(), status = character(), secs = numeric(),
                   npass = integer(), nfail = integer(), note = character(), stringsAsFactors = FALSE)
 fail_lines <- list()
@@ -111,6 +117,8 @@ if (!NO_REPORT) {
   dir.create("output/report", recursive = TRUE, showWarnings = FALSE)
   mode_lab <- if (FAST) "fast (long suites skipped)" else "full"
   png_path <- "output/report/test_suite.png"
+  rec_path <- "output/report/test_recovery.png"
+  ok_rec <- FALSE
   ok_png <- FALSE
   if (requireNamespace("ggplot2", quietly = TRUE)) {
     suppressMessages(library(ggplot2))
@@ -135,6 +143,43 @@ if (!NO_REPORT) {
     ok_png <- tryCatch({
       ggsave(png_path, p, width = 9, height = max(3, 0.42 * nrow(res) + 1.6), dpi = 120)
       TRUE }, error = function(e) { cat("  [warn] could not write PNG: ", conditionMessage(e), "\n"); FALSE })
+    # ---- RECOVERY: the figure that actually shows the features working -------------------------
+    # The bar chart above says which files ran and for how long. It cannot show whether anything
+    # was RECOVERED -- a [PASS] only asserts that somebody's threshold was met. The tests already
+    # compute truth and estimate; helper_recovery.R captures them, and this plots each parameter
+    # against its truth with its interval, so a reader can check the claim instead of the count.
+    if (file.exists(TV_CSV)) {
+      tv <- tryCatch(utils::read.csv(TV_CSV, stringsAsFactors = FALSE), error = function(e) NULL)
+      if (!is.null(tv) && nrow(tv)) {
+        tv$covered <- ifelse(is.na(tv$lo) | is.na(tv$hi), NA,
+                             tv$lo <= tv$truth & tv$truth <= tv$hi)
+        tv$lab <- ifelse(is.na(tv$covered), "no interval",
+                         ifelse(tv$covered, "interval covers truth", "MISSES truth"))
+        rng <- range(c(tv$truth, tv$est, tv$lo, tv$hi), na.rm = TRUE)
+        pr <- ggplot(tv, aes(x = truth, y = est, colour = lab)) +
+          geom_abline(slope = 1, intercept = 0, linetype = 2, colour = "grey50") +
+          { if (any(!is.na(tv$lo))) geom_errorbar(aes(ymin = lo, ymax = hi), width = 0, alpha = .6)
+            else NULL } +
+          geom_point(size = 2.4) +
+          facet_wrap(~ feature, scales = "free") +
+          scale_colour_manual(values = c("interval covers truth" = "#0F7A67",
+                                         "MISSES truth" = "#B2182B", "no interval" = "#5E6E69")) +
+          coord_cartesian(xlim = rng, ylim = rng) +
+          labs(title = "Parameter recovery: estimate vs truth",
+               subtitle = "dashed line = perfect recovery; bars are 95% posterior intervals",
+               x = "true value", y = "posterior estimate", colour = NULL) +
+          theme_minimal(base_size = 11) +
+          theme(plot.title = element_text(face = "bold"), legend.position = "top")
+        ok_rec <- tryCatch({
+          ggsave(rec_path, pr, width = 9,
+                 height = max(3, 2.6 * ceiling(length(unique(tv$feature))/2)), dpi = 120)
+          TRUE }, error = function(e) FALSE)
+        n_cov <- sum(tv$covered, na.rm = TRUE); n_ci <- sum(!is.na(tv$covered))
+        cat(sprintf("  recovery: %d parameter(s) across %d feature(s)%s\n", nrow(tv),
+                    length(unique(tv$feature)),
+                    if (n_ci) sprintf("; %d/%d intervals cover truth", n_cov, n_ci) else ""))
+      }
+    }
   } else cat("  [warn] ggplot2 not available -- HTML written without the figure\n")
 
   esc <- function(s) { s <- gsub("&", "&amp;", s); s <- gsub("<", "&lt;", s); gsub(">", "&gt;", s) }
@@ -199,11 +244,22 @@ tests only run where that build exists).%s</footer>
     format(Sys.time(), "%Y-%m-%d %H:%M"),
     nrow(res), sum(res$status == "PASS"), nf, ns, sum(res$npass) + sum(res$nfail), sum(res$secs) / 60,
     if (ok_png) b64(png_path) else "<p style='color:#6b7280;margin:8px'>figure unavailable</p>",
+    # The recovery figure goes ABOVE the per-file table: a reader looking for evidence that the
+    # features work should meet estimates against truth before a list of green badges, which only
+    # report that assertions passed.
+    if (ok_rec) paste0(
+      "<h2 style='margin:26px 8px 4px'>Parameter recovery</h2>",
+      "<p style='color:#6b7280;margin:0 8px 10px'>Each point is one parameter: its posterior ",
+      "estimate against the value the synthetic data was generated with, with the 95% interval ",
+      "where the test provides one. On the dashed line = recovered. This is the evidence a PASS ",
+      "stands on -- a green badge only says a threshold was met.</p>", b64(rec_path))
+      else "",
     rows,
     if (FAST) " <strong>This was a FAST run - the two long suites did not execute.</strong>" else "")
   writeLines(html, "output/report/test_suite.html")
   cat(sprintf("\n report: output/report/test_suite.html%s\n",
-              if (ok_png) sprintf("  |  figure: %s", png_path) else ""))
+              if (ok_png) sprintf("  |  figures: %s%s", png_path,
+                                  if (ok_rec) sprintf(", %s", rec_path) else "") else ""))
 }
 
 if (nf > 0L) quit(status = 1L)

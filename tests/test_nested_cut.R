@@ -8,6 +8,7 @@
 # =============================================================================
 suppressMessages({library(Rcpp); library(RcppArmadillo)})
 source("codes/mnlogit_rcpp_sym.R")
+source("tests/helper_recovery.R")
 source("codes/mnlogit_nested_iv.R")   # sequential (mean-plug-in) for comparison
 source("codes/nested_cut.R")
 set.seed(42)
@@ -41,6 +42,9 @@ f_seq <- nested_iv_fit(X[tr,], Y[tr,], tree, use_iv = TRUE, niter = 1000, nburn 
 s <- summary_nested_cut(f_iv); lamB <- s[["root"]]$lambda["B",]
 cat(sprintf("\n================= RESULTS =================\n"))
 cat(sprintf("TRUE lambda_B = %.2f\n", LAMBDA_TRUE))
+tv_record("nested lambda", "lambda_B", LAMBDA_TRUE,
+          lamB[["median"]], lamB[["q025"]], lamB[["q975"]],
+          "inclusive-value coupling; the CI must bracket the truth")
 cat(sprintf("CUT   lambda_B = %.3f  [%.3f, %.3f]  (95%% CI, width %.3f)\n", lamB["median"], lamB["q025"], lamB["q975"], lamB["q975"]-lamB["q025"]))
 cat(sprintf("SEQ   lambda_B = %.3f  (point, no CI)\n", f_seq$lambda[["B"]]))
 

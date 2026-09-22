@@ -14,6 +14,7 @@
 # how this block sat broken behind a validation flag. Coverage alone passes a broken sampler.
 # =============================================================================
 suppressMessages(suppressWarnings(source(Sys.getenv("MNL_SRC", "codes/mnlogit_rcpp_sym.R"))))
+source("tests/helper_recovery.R")
 
 # ---------------------------------------------------------------------------
 # alt_spec_Z RECOVERY TEST. Simulate V_ij = x_i'beta_j + delta * z_ij with a KNOWN delta and check
@@ -49,6 +50,8 @@ cat(sprintf("  posterior mean    : %.3f\n", mean(d)))
 cat(sprintf("  posterior 95%% CI  : [%.3f, %.3f]\n", quantile(d, .025), quantile(d, .975)))
 cat(sprintf("  posterior sd      : %.4f   (prior sd %.0f -> a DISCONNECTED delta shows ~the prior)\n", sd(d), alt_prior_sd))
 cat(sprintf("  covers truth      : %s\n", if (quantile(d,.025) <= DELTA_TRUE && DELTA_TRUE <= quantile(d,.975)) "YES" else "NO"))
+tv_record("alt-spec delta", "delta", DELTA_TRUE, mean(d), quantile(d,.025), quantile(d,.975),
+          "conditional-logit offset; a disconnected delta would sit at the prior")
 bm <- apply(fit$postb_pooled, c(1,2), mean)
 cat(sprintf("\n  beta[x1] recovered: %s   (truth %s)\n",
     paste(sprintf("%+.2f", bm[2, ]), collapse=" "), paste(sprintf("%+.2f", beta[2, ] - mean(beta[2, ])), collapse=" ")))

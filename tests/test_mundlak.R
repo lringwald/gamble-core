@@ -4,6 +4,7 @@
 # and part of it leaks into beta -- the classic RE bias Mundlak exists to fix.
 suppressMessages({library(Rcpp); library(RcppArmadillo)})
 sys.source("codes/mnlogit_rcpp_sym.R", environment()); source("codes/mundlak.R")
+source("tests/helper_recovery.R")
 zs <- function(v) v - mean(v)
 set.seed(21)
 G <- 40; npc <- 150; n <- G*npc; K <- 3
@@ -36,6 +37,8 @@ cat(sprintf("\nmean |error| : no-MDL %.3f   with-MDL %.3f\n",
     mean(abs(b_no-be_t)), mean(abs(b_md-be_t))))
 cat("\n=== gamma (group-mean loading) ===\n")
 for (j in 1:K) cat(sprintf("%-10s truth %7.3f   est %7.3f\n", colnames(Y)[j], ga_t[j], g_md[j]))
+tv_record_vec("Mundlak gamma", ga_t, g_md, names = colnames(Y),
+              note = "group-mean loading; the device is an interpretation fix")
 cat(sprintf("mean |error| : %.3f\n", mean(abs(g_md-ga_t))))
 
 ok_g <- mean(abs(g_md - ga_t)) < 0.35
