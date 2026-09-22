@@ -627,8 +627,20 @@ case "$TASK" in
       PROJ_RUN="projects/$PROJ_NAME/gamble_model/run.sh"
       echo ">>> Task: $PROJ_NAME project model ($PROJ_ACTION)"
       require_project "$PROJ_RUN"
+      # BM_NITER sits on its blank sentinel "0" when nobody set it, and ${BM_NITER:-...} KEEPS a
+      # "0" because it is non-empty -- so `export BM_NITER=0` reached estimate_prior.R, which read
+      # NITER 0 against NBURN 2000 and stopped with "niter must be > nburn". A sentinel meaning
+      # "unset" has to be cleared before any :- default can see it.
       case "$PROJ_ACTION" in
-        fit|all|more) export BM_NITER="${BM_NITER:-${NITER:-5000}}" ;;
+        fit|all|more)
+          if [ -n "${BM_NITER:-}" ] && [ "${BM_NITER}" != "0" ]; then
+            export BM_NITER
+          else
+            # Let the project script pick its own default (600 smoke / 6000 fit) rather than
+            # inheriting the generic NITER, which means something different here.
+            unset BM_NITER
+          fi
+          ;;
       esac
       # `bash <script>` rather than `./<script>`: it does not depend on the execute bit, which the
       # runtime user may be unable to set on a root-owned file.
