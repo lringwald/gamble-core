@@ -47,6 +47,7 @@ preferred <- c(
   "tests/test_gamble_paths.R",        # generated-artifact path resolver + legacy lookup
   "tests/test_config_registry.R",     # knob registry vs its generated shell mirror + routine schema
   "tests/test_nest_tree_auto.R",      # recursive nest assignment from class names
+  "tests/test_nsample.R",             # nsample = kept draws; niter stays the total
   "tests/test_target_class_split.R"   # project target cascade (SKIPs unless the BMLEH build exists)
 )
 long_suites <- c("tests/test_suite_lu_pixel.R", "tests/test_suite_ls_count.R")

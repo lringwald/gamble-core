@@ -220,7 +220,7 @@ mncount_rcpp <- function(
     X, Y,
     family         = c("negbin", "poisson"),
     intercept      = FALSE,
-    niter          = 1000,   nburn    = 500,
+    niter          = 1000,   nburn    = 500,   nsample = NULL,
     thin           = 1L,     # store every `thin`-th post-burn draw (RAM: all posterior arrays shrink ~thin x; keeps iterations for ESS but stores fewer). thin << autocorr-time loses ~no ESS.
     A0             = 4.0,
     # --- NB-specific ---
@@ -334,7 +334,20 @@ mncount_rcpp <- function(
   poisson_mode <- (family == "poisson")
 
   # ── 1. VALIDATION ────────────────────────────────────────────────────────
-  if (niter <= nburn) stop("niter must be > nburn.")
+  # --- nsample: the KEPT draws, with niter derived -----------------------------------------------
+  # niter is a TOTAL, so asking for N draws means passing N + nburn and remembering to. Getting it
+  # wrong is not a small error: a caller that passed the total where it meant the sample ran
+  # "0 sweeps (burn 4000)", and the generic symptom is the stop() just below, raised after the
+  # design is already loaded. nsample states the quantity people actually have in mind.
+  # Passing BOTH is refused rather than silently preferring one.
+  if (!is.null(nsample)) {
+    if (!missing(niter))
+      stop("give nsample (kept draws) or niter (total), not both: nsample implies niter = nsample + nburn.",
+           call. = FALSE)
+    if (!is.finite(nsample) || nsample < 1) stop("nsample must be >= 1.", call. = FALSE)
+    niter <- as.integer(nsample) + as.integer(nburn)
+  }
+  if (niter <= nburn) stop(sprintf("niter must be > nburn (niter=%d, nburn=%d). Pass nsample = <kept draws> instead of niter to avoid computing the total.", niter, nburn), call. = FALSE)
   if (any(!is.finite(Y))) stop("Y contains NA/Inf.")
   .count_inert_args(as.list(match.call())[-1])
   if (any(!is.finite(X))) stop("X contains NA/Inf.")

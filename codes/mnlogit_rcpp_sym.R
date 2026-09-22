@@ -150,7 +150,7 @@ draw_beta_symhs_pooled <- function(X, Xt, kappa_w, omega, c_j_mat, prior_P,
 # Main sampler — Rcpp-accelerated (Symmetric Adaptive)
 # =============================================================================
 mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
-                                  niter = 1000, nburn = 500, thin = 1L, A0 = 2.0,
+                                  niter = 1000, nburn = 500, nsample = NULL, thin = 1L, A0 = 2.0,
                                   empirical_intercept_prior = FALSE,
                                   y_weight = NULL, use_re = FALSE, group_idx = NULL,
                                   use_bart = FALSE, bart_idx = 1:ncol(X), n_trees_bart = 50, n_threads_bart = 1,
@@ -430,7 +430,20 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
   # coefficient/likelihood divergence to the storage/expansion step.
   .selfcheck_store <- isTRUE(getOption("mnlogit.selfcheck", FALSE))
   .selfcheck_n     <- as.integer(getOption("mnlogit.selfcheck_n", 3L))
-  if (niter <= nburn) stop("niter must be > nburn.")
+  # --- nsample: the KEPT draws, with niter derived -----------------------------------------------
+  # niter is a TOTAL, so asking for N draws means passing N + nburn and remembering to. Getting it
+  # wrong is not a small error: a caller that passed the total where it meant the sample ran
+  # "0 sweeps (burn 4000)", and the generic symptom is the stop() just below, raised after the
+  # design is already loaded. nsample states the quantity people actually have in mind.
+  # Passing BOTH is refused rather than silently preferring one.
+  if (!is.null(nsample)) {
+    if (!missing(niter))
+      stop("give nsample (kept draws) or niter (total), not both: nsample implies niter = nsample + nburn.",
+           call. = FALSE)
+    if (!is.finite(nsample) || nsample < 1) stop("nsample must be >= 1.", call. = FALSE)
+    niter <- as.integer(nsample) + as.integer(nburn)
+  }
+  if (niter <= nburn) stop(sprintf("niter must be > nburn (niter=%d, nburn=%d). Pass nsample = <kept draws> instead of niter to avoid computing the total.", niter, nburn), call. = FALSE)
   if (use_bart && nrow(X) > 50000 && nburn < 2000) {
     warning("For massive N with BART, consider nburn > 5000.")
   }
