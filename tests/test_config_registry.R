@@ -30,6 +30,11 @@ ok(setequal(reg_names, gen_names),
    sprintf("shell mirror matches the registry (%d vs %d; missing: %s)", length(reg_names), length(gen_names),
            paste(c(setdiff(reg_names, gen_names), setdiff(gen_names, reg_names)), collapse = ", ")))
 
+# The routine renders the form from a "root" key. A schema written at top level is not read at
+# all, and the failure is silent -- an empty form, not an error.
+ok(grepl('"root"\\s*:', sch_txt), "the routine schema is wrapped in its \"root\" envelope")
+ok(grepl('"properties"\\s*:', sch_txt), "root carries a properties object")
+
 miss_schema <- reg_names[!vapply(reg_names, function(n) grepl(sprintf('"%s"\\s*:', n), sch_txt), TRUE)]
 ok(length(miss_schema) == 0,
    sprintf("every registry knob reaches the routine schema%s",

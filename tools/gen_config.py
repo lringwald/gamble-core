@@ -130,11 +130,16 @@ for _n, _p in props.items():
     if not _p["description"].startswith(_lab):
         _p["description"] = "%s -- %s" % (_lab, _p["description"])
 
-schema = {"$schema": "http://json-schema.org/draft-07/schema#",
-          "title": "gamble-core routine configuration",
-          "description": "GENERATED from config/knobs.json by tools/gen_config.py. Field names are the "
-                         "environment variable names entrypoint.sh reads.",
-          "type": "object", "required": ["TASK"], "properties": props}
+# THE PLATFORM EXPECTS THE SCHEMA UNDER A "root" KEY, and no $schema sibling -- the form is
+# rendered from root, so a schema written at top level is simply not read. That envelope is the
+# routine's contract, not JSON Schema's, which is exactly why it has to be generated rather than
+# remembered.
+schema = {"root": {"type": "object",
+                   "title": "gamble-core routine configuration",
+                   "description": "GENERATED from config/knobs.json by tools/gen_config.py. Field "
+                                  "names are the environment variable names entrypoint.sh reads.",
+                   "required": ["TASK"],
+                   "properties": props}}
 (ROOT / "docs/routine_config.schema.json").write_text(json.dumps(schema, indent=2) + "\n")
 print("wrote config/knobs.generated.sh (%d knobs) and docs/routine_config.schema.json (%d fields, %d tasks)"
       % (len(knobs), len(props), len(props["TASK"]["enum"])))
