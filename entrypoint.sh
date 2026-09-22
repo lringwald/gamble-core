@@ -458,8 +458,20 @@ echo " Output Dir:      $OUTPUT_DIR"
 echo "======================================================================"
 
 # Master Parquet resolution (env override -> /data auto-detect)
-[ "${GAMBLE_MASTER_PARQUET:-}" = "auto" ] && GAMBLE_MASTER_PARQUET=""
-[ "${GAMBLE_CASCADE_DATA:-}" = "auto" ] && GAMBLE_CASCADE_DATA=""
+# UNSET, NOT EMPTY. Sys.getenv(x, default) in R returns the default only when x is UNSET -- an
+# exported-but-empty variable wins and yields "". The drivers then compute
+# file.path("", "aux_files") = "/aux_files" and die with "No mapping file found in /aux_files",
+# which is what happened to job 8770: the form sends "auto", this normalised it to "", and the
+# driver's own fallback to ../cascadinggamble-core/data never got a chance to apply.
+[ "${GAMBLE_MASTER_PARQUET:-}" = "auto" ] && unset GAMBLE_MASTER_PARQUET
+[ "${GAMBLE_CASCADE_DATA:-}" = "auto" ] && unset GAMBLE_CASCADE_DATA
+# Same trap for anything else the platform may inject as an empty string: to us an empty GAMBLE_*
+# is indistinguishable from "not configured", but to R it is a value. Clear them properly.
+for gv in GAMBLE_MASTER_PARQUET GAMBLE_CASCADE_DATA GAMBLE_GRIDWORK_DIR GAMBLE_AUXDATA_DIR GAMBLE_INPUT_DIR; do
+  eval "gval=\${$gv-__UNSET__}"
+  [ "$gval" = "" ] && unset "$gv"
+done
+unset gv gval
 if [ -n "${GAMBLE_MASTER_PARQUET:-}" ]; then
   echo ">>> Master Parquet: $GAMBLE_MASTER_PARQUET"
   export GAMBLE_MASTER_PARQUET
