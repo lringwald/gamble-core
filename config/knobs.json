@@ -49,7 +49,8 @@
       "scope": "operational",
       "desc": "Store every k-th retained draw.  ('auto' = leave it to the driver's own default)",
       "tasks": [
-        "flat"
+        "flat",
+        "recover"
       ],
       "blank": "auto",
       "label": "Thinning"
@@ -372,6 +373,19 @@
         "flat"
       ],
       "label": "Cell intersection"
+    },
+    {
+      "name": "BATCH_DIR",
+      "env": "GAMBLE_BATCH_DIR",
+      "type": "string",
+      "default": "auto",
+      "blank": "auto",
+      "scope": "operational",
+      "label": "Posterior batch directory",
+      "desc": "The saved_model_outputs/<label>/ directory holding the fit's posterior batches. 'auto' takes the newest one under output/saved_model_outputs.",
+      "tasks": [
+        "recover"
+      ]
     }
   ]
 }

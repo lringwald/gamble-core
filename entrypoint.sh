@@ -15,7 +15,7 @@ cd "$(dirname "$0")"
 # The knob registry, generated from config/knobs.json (tools/gen_config.py).
 [ -f config/knobs.generated.sh ] && . config/knobs.generated.sh
 
-GAMBLE_TASKS="bmleh bmleh_all bmleh_smoke bmleh_design bmleh_fit nested flat_design flat_fit count report test"
+GAMBLE_TASKS="bmleh bmleh_all bmleh_smoke bmleh_design bmleh_fit nested flat_design flat_fit count report recover_bart test"
 is_task() { case " $GAMBLE_TASKS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
 # =============================================================================
@@ -610,6 +610,39 @@ case "$TASK" in
     export DRIVER_NITER="$NITER"
 
     Rscript drivers/run_ls_count_model.R
+    ;;
+
+  recover_bart)
+    # Report a BART fit whose own post-fit stage never ran. Refits NOTHING: it reads the saved
+    # posterior batches and a design rebuilt through the driver, and predicts through the stored
+    # slim trees. See postprocess/recover_bart_fit.R for why engine.R cannot do this.
+    echo ">>> Task: recover a BART fit's reporting from its saved batches"
+    BD="${BATCH_DIR:-auto}"
+    if [ "$BD" = "auto" ] || [ -z "$BD" ]; then
+      BD=$(find "$OUTPUT_DIR/saved_model_outputs" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -1)
+      [ -n "$BD" ] && echo ">>> Auto-detected batch directory: $BD"
+    fi
+    if [ -z "$BD" ] || [ ! -d "$BD" ]; then
+      echo "------------------------------------------------------------------"
+      echo "ERROR: no posterior batch directory."
+      echo "  looked under: $OUTPUT_DIR/saved_model_outputs"
+      echo "  Set BATCH_DIR, or stage the fit's saved_model_outputs/<label>/ on the drive."
+      ls -1 "$OUTPUT_DIR/saved_model_outputs" 2>/dev/null | sed 's/^/    /' | head -10
+      echo "------------------------------------------------------------------"
+      exit 1
+    fi
+    if [ ! -f "$DESIGN_PATH" ]; then
+      echo "ERROR: no design dump at $DESIGN_PATH."
+      echo "  The recovery needs the design the fit USED -- rebuild it with the same driver"
+      echo "  settings (ADD_COORDS especially) via TASK=flat_design, or stage it on the drive."
+      exit 1
+    fi
+    # THIN rests on "auto" when unset; the script wants a number. 30 gives 50 draws per chain.
+    RTHIN="${THIN:-auto}"; [ "$RTHIN" = "auto" ] && RTHIN=30
+    echo "    batches : $BD"
+    echo "    design  : $DESIGN_PATH"
+    echo "    thin    : $RTHIN"
+    Rscript postprocess/recover_bart_fit.R "$BD" "$DESIGN_PATH" "$RTHIN"
     ;;
 
   report)

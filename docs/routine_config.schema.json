@@ -28,6 +28,7 @@
           "flat_fit",
           "count",
           "report",
+          "recover_bart",
           "test"
         ]
       },

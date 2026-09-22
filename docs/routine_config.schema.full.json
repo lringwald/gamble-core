@@ -28,6 +28,7 @@
           "flat_fit",
           "count",
           "report",
+          "recover_bart",
           "test"
         ]
       },
@@ -60,8 +61,8 @@
       },
       "THIN": {
         "type": "string",
-        "title": "Thinning  [flat]",
-        "description": "Thinning  [flat] -- Store every k-th retained draw.  ('auto' = leave it to the driver's own default)",
+        "title": "Thinning  [flat, recover]",
+        "description": "Thinning  [flat, recover] -- Store every k-th retained draw.  ('auto' = leave it to the driver's own default)",
         "default": "auto"
       },
       "N_CHAINS": {
@@ -248,6 +249,12 @@
           "CAPRI_NUTS",
           "NULL"
         ]
+      },
+      "BATCH_DIR": {
+        "type": "string",
+        "title": "Posterior batch directory  [recover]",
+        "description": "Posterior batch directory  [recover] -- The saved_model_outputs/<label>/ directory holding the fit's posterior batches. 'auto' takes the newest one under output/saved_model_outputs.",
+        "default": "auto"
       },
       "DESIGN_PATH": {
         "type": "string",
