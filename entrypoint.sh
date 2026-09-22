@@ -106,6 +106,7 @@ resolve_registry() {
     eval "def=\$KNOB_DEFAULT_$kn"; eval "envvar=\$KNOB_ENV_$kn"; eval "scope=\$KNOB_SCOPE_$kn"
     cur="${!kn-}"
     if   [ -n "$cur" ];         then src="environment"
+    elif extra_has "$kn";       then cur="$(extra_get "$kn")";   src="EXTRA override"
     elif profile_has "$kn";     then cur="$(profile_get "$kn")"; src="profile:$PROFILE"
     else cur="$def";                 src="default"
     fi
@@ -227,10 +228,45 @@ if ! is_task "$TASK" && ! resolve_project_task "$TASK"; then
   exit 1
 fi
 knob_record TASK "$TASK" "$TASK_SRC"
+knob EXTRA "none"
+# EXTRA is the escape hatch that keeps the routine form small: "NITER=8000, USE_BART=TRUE" instead
+# of declaring twenty-five fields that would each have to hold a value and would then outrank the
+# profile they were meant to inherit from. A key that is not a declared knob is REJECTED -- typing
+# NITTER=8000 into a free-text box and having it silently ignored is the worst of both worlds.
+EXTRA_KEYS=""
+extra_set() { printf -v "EXTRA_VAL_$1" '%s' "$2"; EXTRA_KEYS="$EXTRA_KEYS $1"; }
+extra_has() { case " $EXTRA_KEYS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+extra_get() { eval "printf '%s' \"\${EXTRA_VAL_$1}\""; }
+parse_extra() {
+  local item k v
+  [ -n "$EXTRA" ] && [ "$EXTRA" != "none" ] || return 0
+  # A here-string, not a pipe: the loop must run in THIS shell or extra_set writes into a subshell
+  # and every override is silently lost. It also supplies the trailing newline that `read` needs --
+  # without it the LAST item of "A=1, B=2" is never read, which is how B=2 went missing.
+  while IFS= read -r item || [ -n "$item" ]; do
+    item="$(printf '%s' "$item" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [ -n "$item" ] || continue
+    case "$item" in
+      *=*) ;;
+      *) echo "ERROR: EXTRA item '$item' is not KEY=VALUE."; exit 1 ;;
+    esac
+    k="${item%%=*}"; v="${item#*=}"
+    k="$(printf '%s' "$k" | tr -d '[:space:]')"
+    if ! in_registry "$k"; then
+      echo "ERROR: EXTRA sets '$k', which is not a declared knob (config/knobs.json)."
+      echo "  Declared: ${KNOB_REGISTRY[*]}"
+      exit 1
+    fi
+    extra_set "$k" "$v"
+    echo ">>> override: $k=$v  (EXTRA)"
+  done <<< "$(printf '%s' "$EXTRA" | tr ',;' '\n\n')"
+}
+
 knob PROFILE "none"
 # "none"/"auto" are how the form expresses "not set" -- normalise them back to empty before use.
 [ "$PROFILE" = "none" ] && PROFILE=""
 load_profile
+parse_extra
 resolve_registry
 # PROJECT names the project-specific build (e.g. BMLEH_Los1_CAPRI). It is the FIRST thing
 # consulted when picking a staged design dump, because a project build and a classification

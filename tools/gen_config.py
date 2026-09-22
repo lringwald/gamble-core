@@ -89,11 +89,14 @@ for k in knobs:
     # tasks a knob reaches turns every description into a wall that hides the sentence that matters.
     where = "" if len(applies) >= len(ALL_TASKS) else "  [%s]" % ", ".join(sorted(k.get("tasks", [])))
     label = k.get("label", k["name"]) + (" [model spec]" if k["scope"] == "model" else "") + where
-    p = {"type": "string" if k["type"] != "integer" else "integer",
+    # TYPE IS ALWAYS "string": the form applies `default` to a text field but NOT to a numeric
+    # one, so an integer knob renders blank and fails its required check however good its default
+    # is. Every value reaches the drivers through the environment as a string in any case.
+    p = {"type": "string",
          "title": label,
          "description": k["desc"] + ("  CHANGES WHAT IS ESTIMATED -- runs differing here are not "
                                      "comparable with runs at the default." if k["scope"] == "model" else ""),
-         "default": int(k["default"]) if (k["type"] == "integer" and k["default"]) else k["default"]}
+         "default": str(k["default"])}
     if "enum" in k:
         p["enum"] = k["enum"]
     props[k["name"]] = p
@@ -140,6 +143,31 @@ schema = {"root": {"type": "object",
                                   "names are the environment variable names entrypoint.sh reads.",
                    "required": ["TASK"],
                    "properties": props}}
+# TWO SCHEMAS. The form cannot narrow itself by task -- conditionals do not hide a declared field
+# -- so the only way to stop showing twenty-five irrelevant controls is to declare fewer.
+#
+#   lean (routine_config.schema.json)  what a routine normally needs: pick a task, pick a profile,
+#                                      and override the odd thing through EXTRA. A field is absent
+#                                      rather than set to a default, so it cannot quietly beat the
+#                                      profile it was supposed to inherit from.
+#   full (routine_config.schema.full.json)  every knob, for when a one-off really wants the lot.
+LEAN = ["TASK", "PROFILE", "EXTRA", "DESIGN_PATH", "GAMBLE_WORK_DIR",
+        "GAMBLE_MASTER_PARQUET", "GAMBLE_CASCADE_DATA"]
+props["EXTRA"] = {
+    "type": "string", "title": "Overrides",
+    "description": "Overrides -- one-off settings as KEY=VALUE, comma separated, e.g. "
+                   "'NITER=8000, USE_BART=TRUE'. Applied on top of the profile, and rejected if a "
+                   "key is not a declared knob. 'none' for no overrides.",
+    "default": "none"}
+
+lean_props = {k: props[k] for k in LEAN if k in props}
+schema["root"]["properties"] = lean_props
 (ROOT / "docs/routine_config.schema.json").write_text(json.dumps(schema, indent=2) + "\n")
+
+full = json.loads(json.dumps(schema))
+full["root"]["properties"] = props
+full["root"]["description"] += "  FULL variant: every knob. The lean one is usually what you want."
+(ROOT / "docs/routine_config.schema.full.json").write_text(json.dumps(full, indent=2) + "\n")
+print("lean: %d fields | full: %d fields" % (len(lean_props), len(props)))
 print("wrote config/knobs.generated.sh (%d knobs) and docs/routine_config.schema.json (%d fields, %d tasks)"
       % (len(knobs), len(props), len(props["TASK"]["enum"])))
