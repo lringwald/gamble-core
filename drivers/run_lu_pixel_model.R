@@ -1821,6 +1821,25 @@ linear_cols <- 1:ncol(X_mat)
 # BMLEH_Los1 standard: horseshoe_idx = setdiff(seq_len(ncol(X)), icpt).
 horseshoe_idx_pixel <- setdiff(linear_cols, which(colnames(X_mat) == "intercept"))
 
+# --- named BART covariate blocks ----------------------------------------------------------------
+# DRIVER_BART_COLS takes a family name, families joined with "+", or an explicit column list.
+# Families are matched by PREFIX where a block is a set of horizons or levels (soil), and by exact
+# name otherwise, so OC_TOP_s1..s5 and a future OC_TOP_s6 both land in `soil` without an edit here.
+BART_BLOCKS <- list(
+  topo    = list(exact = c("Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean",
+                           "lon", "lat", "coord_X", "coord_Y")),
+  climate = list(exact = c("Growing_Degree_Days_gdd5", "Precipitation_Seasonality_bio15",
+                           "Annual_Precipitation_bio12", "spei48")),
+  soil    = list(prefix = c("OC_TOP_", "ROO_", "AWC_TOP_", "VS_")),
+  socio   = list(exact = c("log1p_Pop", "log1p_GDP", "GHM_HI", "GHM_TI", "CISI", "allPA_share")),
+  yield   = list(exact = c("yield_level", "yield_response"))
+)
+bart_block_cols <- function(fam, cols) {
+  b <- BART_BLOCKS[[fam]]; if (is.null(b)) return(character(0))
+  c(intersect(b$exact %||% character(0), cols),
+    if (length(b$prefix)) cols[Reduce(`|`, lapply(b$prefix, function(p) startsWith(cols, p)))] else character(0))
+}
+
 # --- BART covariate partition + AUTOMATIC support screen (gated; validated non-focal design) ---
 # When use_bart: the non-focal continuous/share drivers (topo/climate/soil/socioecon/accessibility/
 # yields) go to BART; linear keeps intercept + focal LU-lags (autoregressive -> must stay linear).
@@ -1840,10 +1859,20 @@ if (isTRUE(use_bart)) {
   .bsel <- trimws(Sys.getenv("DRIVER_BART_COLS", ""))
   bart_cols <- if (!nzchar(.bsel)) {
     setdiff(seq_len(ncol(X_mat)), c(.icpt, .focal))
-  } else if (identical(tolower(.bsel), "topo")) {
-    .topo <- c("Slope_rad", "Elevation", "Aspect_cos_mean", "Aspect_sin_mean", "lon", "lat", "coord_X", "coord_Y")
-    .hit  <- which(colnames(X_mat) %in% .topo)
-    if (!length(.hit)) stop("DRIVER_BART_COLS=topo but none of ", paste(.topo, collapse=", "), " are in the design.")
+  } else if (all(trimws(strsplit(tolower(.bsel), "+", fixed = TRUE)[[1]]) %in% names(BART_BLOCKS))) {
+    # NAMED COVARIATE BLOCKS, combinable with "+": "topo", "topo+climate", "soil+socio".
+    # Selecting by family rather than by listing columns means a design that gains a soil horizon or
+    # a climate index does not silently leave it linear because nobody updated a hand-written list.
+    .fams <- trimws(strsplit(tolower(.bsel), "+", fixed = TRUE)[[1]])
+    .want <- unique(unlist(lapply(.fams, function(f) bart_block_cols(f, colnames(X_mat)))))
+    .hit  <- which(colnames(X_mat) %in% .want)
+    if (!length(.hit))
+      stop("DRIVER_BART_COLS=", .bsel, " matched no column in the design. Blocks resolve to: ",
+           paste(sprintf("%s(%d)", .fams,
+                         vapply(.fams, function(f) length(bart_block_cols(f, colnames(X_mat))), 0L)),
+                 collapse = ", "),
+           ". For the terrain block, lon/lat need DRIVER_ADD_COORDS=TRUE.")
+    cat(sprintf(">>> BART blocks %s -> %d column(s)\n", paste(.fams, collapse = "+"), length(.hit)))
     setdiff(.hit, c(.icpt, .focal))
   } else {
     .want <- trimws(strsplit(.bsel, ",")[[1]])

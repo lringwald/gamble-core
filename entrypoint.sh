@@ -110,6 +110,16 @@ resolve_registry() {
     else cur="$def";                 src="default"
     fi
     printf -v "$kn" '%s' "$cur"
+    # A knob resting on its BLANK SENTINEL means "not set". The routine form marks every declared
+    # property required and refuses an empty string, so an optional knob needs a value the form can
+    # hold; not exporting it here is what makes the driver fall back to its own default, exactly as
+    # if the field had been left empty.
+    eval "blank=\$KNOB_BLANK_$kn"
+    if [ -n "$blank" ] && [ "$cur" = "$blank" ]; then
+      src="$src (unset: '$blank')"
+      KNOB_NAMES+=("$kn"); KNOB_VALUES+=("$cur"); KNOB_SOURCES+=("$src")
+      continue
+    fi
     KNOB_NAMES+=("$kn"); KNOB_VALUES+=("$cur"); KNOB_SOURCES+=("$src")
     [ -n "$cur" ] && export "$envvar=$cur"
     if [ "$scope" = "model" ] && [ "$cur" != "$def" ]; then
@@ -217,17 +227,19 @@ if ! is_task "$TASK" && ! resolve_project_task "$TASK"; then
   exit 1
 fi
 knob_record TASK "$TASK" "$TASK_SRC"
-knob PROFILE ""
+knob PROFILE "none"
+# "none"/"auto" are how the form expresses "not set" -- normalise them back to empty before use.
+[ "$PROFILE" = "none" ] && PROFILE=""
 load_profile
 resolve_registry
 # PROJECT names the project-specific build (e.g. BMLEH_Los1_CAPRI). It is the FIRST thing
 # consulted when picking a staged design dump, because a project build and a classification
 # are not the same axis: pixel_model_inputs_BMLEH_Los1_CAPRI.rds is selected by project, while
 # pixel_model_inputs_GLOBIOM_subclass.rds is selected by classification.
-knob PROJECT ""
-knob M "25"
-knob N_CORES "$N_CHAINS"
-knob DESIGN_PATH "output/designs/pixel_model_inputs.rds"
+# "auto" is how the form says "not set" -- see the blank-sentinel note above.
+knob PROJECT "auto"; [ "$PROJECT" = "auto" ] && PROJECT=""
+knob DESIGN_PATH "auto"
+[ "$DESIGN_PATH" = "auto" ] && DESIGN_PATH="output/designs/pixel_model_inputs.rds"
 knob OUTPUT_DIR "output"
 
 # --- Redirect output/ and results/ to the mounted drive -------------------------
@@ -346,6 +358,8 @@ echo " Output Dir:      $OUTPUT_DIR"
 echo "======================================================================"
 
 # Master Parquet resolution (env override -> /data auto-detect)
+[ "${GAMBLE_MASTER_PARQUET:-}" = "auto" ] && GAMBLE_MASTER_PARQUET=""
+[ "${GAMBLE_CASCADE_DATA:-}" = "auto" ] && GAMBLE_CASCADE_DATA=""
 if [ -n "${GAMBLE_MASTER_PARQUET:-}" ]; then
   echo ">>> Master Parquet: $GAMBLE_MASTER_PARQUET"
   export GAMBLE_MASTER_PARQUET

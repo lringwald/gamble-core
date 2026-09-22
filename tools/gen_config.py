@@ -46,6 +46,7 @@ for k in knobs:
     lines.append(f"KNOB_ENV_{n}={sh_quote(k['env'])}")
     lines.append(f"KNOB_DEFAULT_{n}={sh_quote(k['default'])}")
     lines.append(f"KNOB_SCOPE_{n}={sh_quote(k['scope'])}")
+    lines.append(f"KNOB_BLANK_{n}={sh_quote(k.get('blank', ''))}")
 (ROOT / "config/knobs.generated.sh").write_text("\n".join(lines) + "\n")
 
 # ---- routine schema -----------------------------------------------------------------------
@@ -62,8 +63,8 @@ props = {
                 "description": "A named settings file in config/profiles/. Individual fields below "
                                "still override it. Recorded in the manifest, so a run is reproducible "
                                "from its profile name.",
-                "default": "",
-                "enum": [""] + sorted(p.stem for p in (ROOT / "config/profiles").glob("*.env"))},
+                "default": "none",
+                "enum": ["none"] + sorted(p.stem for p in (ROOT / "config/profiles").glob("*.env"))},
 }
 FAMILY_TASKS = {"nested": ["nested"],
                 "flat": ["flat_design", "flat_fit"],
@@ -100,20 +101,36 @@ for k in knobs:
     if applies and len(applies) < len(ALL_TASKS):
         conditionals.append({"if": {"properties": {"TASK": {"enum": applies}}, "required": ["TASK"]},
                              "then": {"properties": {k["name"]: {}}}})
-for extra, d in (("DESIGN_PATH", "Absolute path to a pixel_model_inputs*.rds. Set to remove all ambiguity; "
-                                 "empty auto-detects on the drive and logs what it searched."),
-                 ("PROJECT", "Selects between staged design dumps for the generic tasks. Project tasks carry their own."),
-                 ("GAMBLE_WORK_DIR", "FUSE mount results are collected from; output/ and results/ are symlinked here."),
-                 ("GAMBLE_MASTER_PARQUET", "Covariate parquet for design builds. Auto-detected under /data when empty."),
-                 ("GAMBLE_CASCADE_DATA", "cascadinggamble-core/data. Auto-detected under /data when empty.")):
+# The routine form marks EVERY declared property required and rejects a blank, so an optional
+# field needs a sentinel it can hold. "auto" means the job works it out and logs what it did.
+EXTRAS = [
+    ("DESIGN_PATH", "auto", "Path to a pixel_model_inputs*.rds. 'auto' detects one on the drive or "
+                            "/data and logs what it searched; set a path to remove all ambiguity."),
+    ("PROJECT", "auto", "Chooses between staged design dumps for the generic tasks (nested, flat_*). "
+                        "Project tasks carry their own project, so 'auto' is right for them."),
+    ("GAMBLE_WORK_DIR", "/mnt/wdrv", "The FUSE mount results are collected from. output/ and results/ "
+                                     "are symlinked here before the run."),
+    ("GAMBLE_MASTER_PARQUET", "auto", "Covariate parquet, needed by a *_design task and irrelevant to "
+                                      "a fit. 'auto' looks under /data."),
+    ("GAMBLE_CASCADE_DATA", "auto", "cascadinggamble-core/data. 'auto' looks under /data."),
+]
+for extra, dflt, d in EXTRAS:
     props[extra] = {"type": "string", "title": extra.replace("_", " ").title(), "description": d,
-                    "default": "/mnt/wdrv" if extra == "GAMBLE_WORK_DIR" else ""}
+                    "default": dflt}
 
 DESIGN_TASKS = sorted(t for t in ALL_TASKS if t.endswith("_design") or t.endswith("_all") or t == "flat_fit")
 conditionals.append({
     "if": {"properties": {"TASK": {"enum": DESIGN_TASKS}}, "required": ["TASK"]},
     "then": {"description": "A design build reads the 1 km covariate parquet; without it there is "
                             "nothing to assemble a design from. Auto-detected under /data when empty."}})
+
+# The form renders `title` above a text input but NOT above a dropdown, so an enum field arrives
+# with no label at all -- "factorized" floating next to "intercept" with nothing naming either.
+# Lead every description with the label so it is present whichever control the renderer picks.
+for _n, _p in props.items():
+    _lab = _p.get("title", _n)
+    if not _p["description"].startswith(_lab):
+        _p["description"] = "%s -- %s" % (_lab, _p["description"])
 
 schema = {"$schema": "http://json-schema.org/draft-07/schema#",
           "title": "gamble-core routine configuration",

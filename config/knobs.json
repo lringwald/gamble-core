@@ -8,7 +8,8 @@
     "              docs/sampler_model_specification.md. Deviating is legitimate; doing so unknowingly",
     "              is not, so the run log and manifest flag every model knob set away from standard.",
     "  operational changes where things go, how long they run, how many cores. Never affects results.",
-    "'tasks' is which task FAMILY a knob reaches: nested | flat | project | count. It is not cosmetic -- a nested-only knob offered on a project task is a control that does nothing, and a control that does nothing is indistinguishable from one that is broken."
+    "'tasks' is which task FAMILY a knob reaches: nested | flat | project | count. It is not cosmetic -- a nested-only knob offered on a project task is a control that does nothing, and a control that does nothing is indistinguishable from one that is broken.",
+    "'blank' is the value that MEANS UNSET for this knob. The routine form marks every declared property required and refuses an empty string, so a knob that is legitimately optional needs a sentinel the form can hold. entrypoint.sh does not export a knob sitting on its blank value, so the driver falls back to its own default exactly as if nothing had been set."
   ],
   "knobs": [
     {
@@ -29,23 +30,25 @@
       "name": "NBURN",
       "env": "DRIVER_NBURN",
       "type": "integer",
-      "default": "",
+      "default": "0",
       "scope": "operational",
-      "desc": "Burn-in sweeps; must be < NITER. Empty keeps the driver default.",
+      "desc": "Burn-in sweeps; must be < NITER. Empty keeps the driver default.  (0 = leave it to the driver's own default)",
       "tasks": [
         "flat"
-      ]
+      ],
+      "blank": "0"
     },
     {
       "name": "THIN",
       "env": "DRIVER_THIN",
       "type": "integer",
-      "default": "",
+      "default": "0",
       "scope": "operational",
-      "desc": "Store every k-th retained draw.",
+      "desc": "Store every k-th retained draw.  (0 = leave it to the driver's own default)",
       "tasks": [
         "flat"
-      ]
+      ],
+      "blank": "0"
     },
     {
       "name": "N_CHAINS",
@@ -111,12 +114,13 @@
       "name": "RE_VARS",
       "env": "DRIVER_RE_VARS",
       "type": "string",
-      "default": "",
+      "default": "default",
       "scope": "model",
-      "desc": "Covariates carrying a random effect. Empty = intercept only (the standard; measured to converge better than random slopes). 'all' = every linear covariate; or a comma-separated list.",
+      "desc": "Covariates carrying a random effect. Empty = intercept only (the standard; measured to converge better than random slopes). 'all' = every linear covariate; or a comma-separated list.  (default = leave it to the driver's own default)",
       "tasks": [
         "flat"
-      ]
+      ],
+      "blank": "default"
     },
     {
       "name": "RE_BLOCK",
@@ -184,7 +188,7 @@
       "type": "string",
       "default": "topo",
       "scope": "model",
-      "desc": "'topo' = the terrain block plus lon/lat when ADD_COORDS; '' = every non-focal column; or an explicit comma-separated list.",
+      "desc": "Which covariates BART takes. Named blocks, combinable with '+': topo, climate, soil, socio, yield (e.g. 'topo' or 'topo+climate'). Empty = every non-focal column; or give an explicit comma-separated column list. Terrain needs ADD_COORDS=TRUE to include lon/lat.",
       "tasks": [
         "flat"
       ]
@@ -279,14 +283,15 @@
       "name": "N_CORES",
       "env": "DRIVER_NCORES",
       "type": "integer",
-      "default": "",
+      "default": "0",
       "scope": "operational",
-      "desc": "Worker processes. Empty follows N_CHAINS; more cores than chains does not help.",
+      "desc": "Worker processes. Empty follows N_CHAINS; more cores than chains does not help.  (0 = leave it to the driver's own default)",
       "tasks": [
         "nested",
         "flat",
         "count"
-      ]
+      ],
+      "blank": "0"
     },
     {
       "name": "M",
@@ -303,11 +308,44 @@
       "name": "BM_NITER",
       "env": "BM_NITER",
       "type": "integer",
-      "default": "",
+      "default": "0",
       "scope": "operational",
-      "desc": "Sweeps for a project fit. Empty falls back to NITER, then to the project script's own 5000.",
+      "desc": "Sweeps for a project fit. Empty falls back to NITER, then to the project script's own 5000.  (0 = leave it to the driver's own default)",
       "tasks": [
         "project"
+      ],
+      "blank": "0"
+    },
+    {
+      "name": "PIXEL_RES",
+      "env": "DRIVER_PIXEL_RES",
+      "type": "integer",
+      "default": "10",
+      "scope": "model",
+      "enum": [
+        5,
+        10
+      ],
+      "desc": "Grid resolution in km. 10 km is ~48-64k pixels over the EU, 5 km ~180k -- roughly four times the data and the runtime.",
+      "tasks": [
+        "flat"
+      ]
+    },
+    {
+      "name": "PIXEL_INTERSECT",
+      "env": "DRIVER_PIXEL_INTERSECT",
+      "type": "string",
+      "default": "NUTS3",
+      "scope": "model",
+      "enum": [
+        "NUTS3",
+        "NUTS2",
+        "CAPRI_NUTS",
+        "NULL"
+      ],
+      "desc": "Split each grid cell where it crosses this boundary, so a cell spanning two regions becomes two observations. NULL = native grid cells, no split. Changes the UNIT OF OBSERVATION, not just the labelling.",
+      "tasks": [
+        "flat"
       ]
     }
   ]

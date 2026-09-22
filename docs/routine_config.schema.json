@@ -10,7 +10,7 @@
     "TASK": {
       "type": "string",
       "title": "Workflow / Task",
-      "description": "Which workflow to run. A default set here is NOT enough: the platform must pass the value into the container, as a command argument or in the environment. The run log names the source it arrived from.",
+      "description": "Workflow / Task -- Which workflow to run. A default set here is NOT enough: the platform must pass the value into the container, as a command argument or in the environment. The run log names the source it arrived from.",
       "default": "BMLEH_Los1_CAPRI_smoke",
       "enum": [
         "BMLEH_Los1_CAPRI_smoke",
@@ -34,10 +34,10 @@
     "PROFILE": {
       "type": "string",
       "title": "Profile",
-      "description": "A named settings file in config/profiles/. Individual fields below still override it. Recorded in the manifest, so a run is reproducible from its profile name.",
-      "default": "",
+      "description": "Profile -- A named settings file in config/profiles/. Individual fields below still override it. Recorded in the manifest, so a run is reproducible from its profile name.",
+      "default": "none",
       "enum": [
-        "",
+        "none",
         "globiom_bart_topo",
         "globiom_nested_prod",
         "globiom_nested_smoke"
@@ -46,37 +46,37 @@
     "NITER": {
       "type": "integer",
       "title": "Niter  [count, flat, nested, project]",
-      "description": "Total MCMC sweeps.  Applies to: BMLEH_Los1_CAPRI_all, BMLEH_Los1_CAPRI_design, BMLEH_Los1_CAPRI_fit, BMLEH_Los1_CAPRI_more, BMLEH_Los1_CAPRI_smoke, GLOBIOM_subclass_all, GLOBIOM_subclass_design, GLOBIOM_subclass_fit, GLOBIOM_subclass_more, GLOBIOM_subclass_smoke, count, flat_design, flat_fit, nested.",
+      "description": "Niter  [count, flat, nested, project] -- Total MCMC sweeps.  Applies to: BMLEH_Los1_CAPRI_all, BMLEH_Los1_CAPRI_design, BMLEH_Los1_CAPRI_fit, BMLEH_Los1_CAPRI_more, BMLEH_Los1_CAPRI_smoke, GLOBIOM_subclass_all, GLOBIOM_subclass_design, GLOBIOM_subclass_fit, GLOBIOM_subclass_more, GLOBIOM_subclass_smoke, count, flat_design, flat_fit, nested.",
       "default": 1000
     },
     "NBURN": {
       "type": "integer",
       "title": "Nburn  [flat]",
-      "description": "Burn-in sweeps; must be < NITER. Empty keeps the driver default.  Applies to: flat_design, flat_fit.",
-      "default": ""
+      "description": "Nburn  [flat] -- Burn-in sweeps; must be < NITER. Empty keeps the driver default.  (0 = leave it to the driver's own default)  Applies to: flat_design, flat_fit.",
+      "default": 0
     },
     "THIN": {
       "type": "integer",
       "title": "Thin  [flat]",
-      "description": "Store every k-th retained draw.  Applies to: flat_design, flat_fit.",
-      "default": ""
+      "description": "Thin  [flat] -- Store every k-th retained draw.  (0 = leave it to the driver's own default)  Applies to: flat_design, flat_fit.",
+      "default": 0
     },
     "N_CHAINS": {
       "type": "integer",
       "title": "N Chains  [count, flat, nested]",
-      "description": "Chains fitted in parallel; Rhat needs at least 2.  Applies to: count, flat_design, flat_fit, nested.",
+      "description": "N Chains  [count, flat, nested] -- Chains fitted in parallel; Rhat needs at least 2.  Applies to: count, flat_design, flat_fit, nested.",
       "default": 1
     },
     "SUBSAMPLE": {
       "type": "integer",
       "title": "Subsample  [nested]",
-      "description": "0 = every pixel; otherwise cap the pixel count.  Applies to: nested.",
+      "description": "Subsample  [nested] -- 0 = every pixel; otherwise cap the pixel count.  Applies to: nested.",
       "default": 0
     },
     "CLASSIFICATION": {
       "type": "string",
       "title": "Classification [model spec]  [flat, nested]",
-      "description": "Class column(s) the model predicts -- decides what the outcome IS.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit, nested.",
+      "description": "Classification [model spec]  [flat, nested] -- Class column(s) the model predicts -- decides what the outcome IS.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit, nested.",
       "default": "GLOBIOM_subclass",
       "enum": [
         "GLOBIOM_subclass",
@@ -89,7 +89,7 @@
     "RE_GROUP": {
       "type": "string",
       "title": "Re Group [model spec]  [flat]",
-      "description": "Grouping the random effects are keyed on.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
+      "description": "Re Group [model spec]  [flat] -- Grouping the random effects are keyed on.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": "GLOB_country",
       "enum": [
         "GLOB_country",
@@ -101,13 +101,13 @@
     "RE_VARS": {
       "type": "string",
       "title": "Re Vars [model spec]  [flat]",
-      "description": "Covariates carrying a random effect. Empty = intercept only (the standard; measured to converge better than random slopes). 'all' = every linear covariate; or a comma-separated list.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
-      "default": ""
+      "description": "Re Vars [model spec]  [flat] -- Covariates carrying a random effect. Empty = intercept only (the standard; measured to converge better than random slopes). 'all' = every linear covariate; or a comma-separated list.  (default = leave it to the driver's own default)  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
+      "default": "default"
     },
     "RE_BLOCK": {
       "type": "string",
       "title": "Re Block [model spec]  [nested]",
-      "description": "Nested-path RE block. intercept is the documented standard.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: nested.",
+      "description": "Re Block [model spec]  [nested] -- Nested-path RE block. intercept is the documented standard.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: nested.",
       "default": "intercept",
       "enum": [
         "intercept",
@@ -117,7 +117,7 @@
     "VARIANT": {
       "type": "string",
       "title": "Variant [model spec]  [nested]",
-      "description": "factorized = independent nests; iv = inclusive-value coupling.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: nested.",
+      "description": "Variant [model spec]  [nested] -- factorized = independent nests; iv = inclusive-value coupling.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: nested.",
       "default": "factorized",
       "enum": [
         "factorized",
@@ -127,7 +127,7 @@
     "SYMMETRIC_HS": {
       "type": "string",
       "title": "Symmetric Hs [model spec]  [nested]",
-      "description": "Symmetric (zero-sum) horseshoe. TRUE is the standard; the job verifies the sampler carries the fix before fitting.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: nested.",
+      "description": "Symmetric Hs [model spec]  [nested] -- Symmetric (zero-sum) horseshoe. TRUE is the standard; the job verifies the sampler carries the fix before fitting.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: nested.",
       "default": "TRUE",
       "enum": [
         "TRUE",
@@ -137,7 +137,7 @@
     "USE_BART": {
       "type": "string",
       "title": "Use Bart [model spec]  [flat]",
-      "description": "Terrain (and whatever BART_COLS names) enters as a tree ensemble instead of linear terms. FLAT PATH ONLY -- nested_cut has no BART support.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
+      "description": "Use Bart [model spec]  [flat] -- Terrain (and whatever BART_COLS names) enters as a tree ensemble instead of linear terms. FLAT PATH ONLY -- nested_cut has no BART support.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": "FALSE",
       "enum": [
         "TRUE",
@@ -147,19 +147,19 @@
     "BART_COLS": {
       "type": "string",
       "title": "Bart Cols [model spec]  [flat]",
-      "description": "'topo' = the terrain block plus lon/lat when ADD_COORDS; '' = every non-focal column; or an explicit comma-separated list.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
+      "description": "Bart Cols [model spec]  [flat] -- Which covariates BART takes. Named blocks, combinable with '+': topo, climate, soil, socio, yield (e.g. 'topo' or 'topo+climate'). Empty = every non-focal column; or give an explicit comma-separated column list. Terrain needs ADD_COORDS=TRUE to include lon/lat.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": "topo"
     },
     "NTREES_BART": {
       "type": "integer",
       "title": "Ntrees Bart [model spec]  [flat]",
-      "description": "Trees per class in the ensemble.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
+      "description": "Ntrees Bart [model spec]  [flat] -- Trees per class in the ensemble.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": 25
     },
     "BART_K_PREV": {
       "type": "string",
       "title": "Bart K Prev [model spec]  [flat]",
-      "description": "Prevalence-scaled leaf shrinkage. Measured super-additive with symmetric BART (+75.4 held-out together vs +38.4 symmetric alone); FALSE restores flat k.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
+      "description": "Bart K Prev [model spec]  [flat] -- Prevalence-scaled leaf shrinkage. Measured super-additive with symmetric BART (+75.4 held-out together vs +38.4 symmetric alone); FALSE restores flat k.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": "TRUE",
       "enum": [
         "TRUE",
@@ -169,7 +169,7 @@
     "ADD_COORDS": {
       "type": "string",
       "title": "Add Coords [model spec]  [flat]",
-      "description": "Add lon/lat as design columns. REQUIRED for BART_COLS=topo to cover coordinates -- without it 'topo' silently resolves to the 4 terrain columns.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
+      "description": "Add Coords [model spec]  [flat] -- Add lon/lat as design columns. REQUIRED for BART_COLS=topo to cover coordinates -- without it 'topo' silently resolves to the 4 terrain columns.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": "FALSE",
       "enum": [
         "TRUE",
@@ -179,7 +179,7 @@
     "COORD_TYPE": {
       "type": "string",
       "title": "Coord Type [model spec]  [flat]",
-      "description": "lonlat = EPSG:4326 degrees (readable); laea = native EPSG:3035 metres.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
+      "description": "Coord Type [model spec]  [flat] -- lonlat = EPSG:4326 degrees (readable); laea = native EPSG:3035 metres.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": "lonlat",
       "enum": [
         "lonlat",
@@ -189,7 +189,7 @@
     "MUNDLAK": {
       "type": "string",
       "title": "Mundlak [model spec]  [flat]",
-      "description": "Group-mean predictors for the RE prior mean. An interpretation fix (removes FE-RE correlation), not an accuracy one.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
+      "description": "Mundlak [model spec]  [flat] -- Group-mean predictors for the RE prior mean. An interpretation fix (removes FE-RE correlation), not an accuracy one.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": "FALSE",
       "enum": [
         "TRUE",
@@ -199,7 +199,7 @@
     "PROMOTE_NATURAL_OTHER": {
       "type": "string",
       "title": "Promote Natural Other [model spec]  [flat]",
-      "description": "Move Natural_other out of the non-choosable residual.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
+      "description": "Promote Natural Other [model spec]  [flat] -- Move Natural_other out of the non-choosable residual.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": "TRUE",
       "enum": [
         "TRUE",
@@ -209,50 +209,72 @@
     "N_CORES": {
       "type": "integer",
       "title": "N Cores  [count, flat, nested]",
-      "description": "Worker processes. Empty follows N_CHAINS; more cores than chains does not help.  Applies to: count, flat_design, flat_fit, nested.",
-      "default": ""
+      "description": "N Cores  [count, flat, nested] -- Worker processes. Empty follows N_CHAINS; more cores than chains does not help.  (0 = leave it to the driver's own default)  Applies to: count, flat_design, flat_fit, nested.",
+      "default": 0
     },
     "M": {
       "type": "integer",
       "title": "M [model spec]  [nested]",
-      "description": "Multiple-imputation draws of the inclusive value. Only reaches the model when VARIANT=iv; with factorized nests there is no inclusive value to impute.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: nested.",
+      "description": "M [model spec]  [nested] -- Multiple-imputation draws of the inclusive value. Only reaches the model when VARIANT=iv; with factorized nests there is no inclusive value to impute.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: nested.",
       "default": 25
     },
     "BM_NITER": {
       "type": "integer",
       "title": "Bm Niter  [project]",
-      "description": "Sweeps for a project fit. Empty falls back to NITER, then to the project script's own 5000.  Applies to: BMLEH_Los1_CAPRI_all, BMLEH_Los1_CAPRI_design, BMLEH_Los1_CAPRI_fit, BMLEH_Los1_CAPRI_more, BMLEH_Los1_CAPRI_smoke, GLOBIOM_subclass_all, GLOBIOM_subclass_design, GLOBIOM_subclass_fit, GLOBIOM_subclass_more, GLOBIOM_subclass_smoke.",
-      "default": ""
+      "description": "Bm Niter  [project] -- Sweeps for a project fit. Empty falls back to NITER, then to the project script's own 5000.  (0 = leave it to the driver's own default)  Applies to: BMLEH_Los1_CAPRI_all, BMLEH_Los1_CAPRI_design, BMLEH_Los1_CAPRI_fit, BMLEH_Los1_CAPRI_more, BMLEH_Los1_CAPRI_smoke, GLOBIOM_subclass_all, GLOBIOM_subclass_design, GLOBIOM_subclass_fit, GLOBIOM_subclass_more, GLOBIOM_subclass_smoke.",
+      "default": 0
+    },
+    "PIXEL_RES": {
+      "type": "integer",
+      "title": "Pixel Res [model spec]  [flat]",
+      "description": "Pixel Res [model spec]  [flat] -- Grid resolution in km. 10 km is ~48-64k pixels over the EU, 5 km ~180k -- roughly four times the data and the runtime.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
+      "default": 10,
+      "enum": [
+        5,
+        10
+      ]
+    },
+    "PIXEL_INTERSECT": {
+      "type": "string",
+      "title": "Pixel Intersect [model spec]  [flat]",
+      "description": "Pixel Intersect [model spec]  [flat] -- Split each grid cell where it crosses this boundary, so a cell spanning two regions becomes two observations. NULL = native grid cells, no split. Changes the UNIT OF OBSERVATION, not just the labelling.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
+      "default": "NUTS3",
+      "enum": [
+        "NUTS3",
+        "NUTS2",
+        "CAPRI_NUTS",
+        "NULL"
+      ]
     },
     "DESIGN_PATH": {
       "type": "string",
       "title": "Design Path",
-      "description": "Absolute path to a pixel_model_inputs*.rds. Set to remove all ambiguity; empty auto-detects on the drive and logs what it searched.",
-      "default": ""
+      "description": "Design Path -- Path to a pixel_model_inputs*.rds. 'auto' detects one on the drive or /data and logs what it searched; set a path to remove all ambiguity.",
+      "default": "auto"
     },
     "PROJECT": {
       "type": "string",
       "title": "Project",
-      "description": "Selects between staged design dumps for the generic tasks. Project tasks carry their own.",
-      "default": ""
+      "description": "Project -- Chooses between staged design dumps for the generic tasks (nested, flat_*). Project tasks carry their own project, so 'auto' is right for them.",
+      "default": "auto"
     },
     "GAMBLE_WORK_DIR": {
       "type": "string",
       "title": "Gamble Work Dir",
-      "description": "FUSE mount results are collected from; output/ and results/ are symlinked here.",
+      "description": "Gamble Work Dir -- The FUSE mount results are collected from. output/ and results/ are symlinked here before the run.",
       "default": "/mnt/wdrv"
     },
     "GAMBLE_MASTER_PARQUET": {
       "type": "string",
       "title": "Gamble Master Parquet",
-      "description": "Covariate parquet for design builds. Auto-detected under /data when empty.",
-      "default": ""
+      "description": "Gamble Master Parquet -- Covariate parquet, needed by a *_design task and irrelevant to a fit. 'auto' looks under /data.",
+      "default": "auto"
     },
     "GAMBLE_CASCADE_DATA": {
       "type": "string",
       "title": "Gamble Cascade Data",
-      "description": "cascadinggamble-core/data. Auto-detected under /data when empty.",
-      "default": ""
+      "description": "Gamble Cascade Data -- cascadinggamble-core/data. 'auto' looks under /data.",
+      "default": "auto"
     }
   },
   "allOf": [
@@ -713,6 +735,46 @@
       "then": {
         "properties": {
           "BM_NITER": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "flat_design",
+              "flat_fit"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "PIXEL_RES": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "flat_design",
+              "flat_fit"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "PIXEL_INTERSECT": {}
         }
       }
     },
