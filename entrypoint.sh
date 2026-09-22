@@ -333,6 +333,27 @@ if [ -d "$GAMBLE_WORK_DIR" ]; then
   echo ">>> Mounted drive: $GAMBLE_WORK_DIR  (all model output lands here)"
 fi
 
+# THE DESIGN BEING FOUND SOMEWHERE ELSE IS A SIGNAL, NOT A CONVENIENCE.
+# The search goes four levels deep, so it happily finds a dump under a project subdirectory of the
+# mount while output/ is symlinked to the mount ROOT -- two different trees. Job 8766 hit exactly
+# that: the dump resolved under /mnt/wdrv/gamble-core/output/designs/ while output/ pointed at an
+# empty /mnt/wdrv/output, so run.sh could not find its share table and stopped. The design is the
+# only input with a SEARCH behind it; everything else is addressed relative to output/, so this
+# mismatch means every other path is looking in the wrong tree.
+warn_work_dir_mismatch() {
+  local found="$1" want="$GAMBLE_WORK_DIR/output/"
+  case "$found" in "$want"*) return 0 ;; esac
+  local root="${found%%/output/*}"
+  echo "----------------------------------------------------------------------"
+  echo "NOTE: the design was found OUTSIDE the mounted working directory."
+  echo "  design found : $found"
+  echo "  output/  ->  : $GAMBLE_WORK_DIR/output"
+  echo "  Everything except the design resolves under output/, so share tables,"
+  echo "  results and reports are being looked for in the wrong tree."
+  echo "  If your data lives under $root, set GAMBLE_WORK_DIR=$root"
+  echo "----------------------------------------------------------------------"
+}
+
 # --- Design-dump resolution -----------------------------------------------------
 # A cold container has no design: output/ ships with nothing but .gitkeep, and TASK=nested is the
 # routine's default, so the preflight fires before any work happens. If a dump is already staged on
@@ -351,6 +372,7 @@ if [ ! -f "$DESIGN_PATH" ]; then
   if [ "${n_cand:-0}" -eq 1 ]; then
     DESIGN_PATH="$cands"
     echo ">>> Auto-detected design dump: $DESIGN_PATH"
+    warn_work_dir_mismatch "$DESIGN_PATH"
   elif [ "${n_cand:-0}" -gt 1 ]; then
     # NEVER GUESS BETWEEN DESIGNS. Alphabetical order would hand a GLOBIOM run the BMLEH dump and
     # fit it without a word -- a wrong answer is worse than a failed job. Match the classification
@@ -367,6 +389,7 @@ if [ ! -f "$DESIGN_PATH" ]; then
     if [ -n "$match" ]; then
       DESIGN_PATH="$match"
       echo ">>> Auto-detected design dump for $sel: $DESIGN_PATH"
+      warn_work_dir_mismatch "$DESIGN_PATH"
       knob_update DESIGN_PATH "$DESIGN_PATH" "auto-detected, matched $sel"
       echo ">>>   ($n_cand dumps on the drive; the others were ignored)"
     else
