@@ -426,7 +426,12 @@ fi
 # session after a non-existent commit step; say the checkable thing instead.
 require_project() {
   BM_RUN="$1"
-  [ -f "$BM_RUN" ] && { chmod +x "$BM_RUN"; return 0; }
+  # chmod needs OWNERSHIP, not write permission: a job running as uid 1000 cannot chmod a file
+  # COPYed into the image as root, even in a world-writable directory, and under `set -e` that
+  # killed the run one line after the task was dispatched. The bit is not needed anyway -- run.sh
+  # is committed 100755, and it is invoked through `bash` below, which ignores the execute bit
+  # entirely. So: try, and never fail on it.
+  [ -f "$BM_RUN" ] && { [ -x "$BM_RUN" ] || chmod +x "$BM_RUN" 2>/dev/null || true; return 0; }
   echo "------------------------------------------------------------------"
   echo "ERROR: $BM_RUN not found in this image."
   echo
@@ -547,7 +552,9 @@ case "$TASK" in
       case "$PROJ_ACTION" in
         fit|all|more) export BM_NITER="${BM_NITER:-${NITER:-5000}}" ;;
       esac
-      "./$PROJ_RUN" "$PROJ_ACTION"
+      # `bash <script>` rather than `./<script>`: it does not depend on the execute bit, which the
+      # runtime user may be unable to set on a root-owned file.
+      bash "$PROJ_RUN" "$PROJ_ACTION"
     else
       echo "ERROR: Unknown TASK: '$TASK' (from $TASK_SRC)"
       echo "  Core tasks:    $GAMBLE_TASKS"
