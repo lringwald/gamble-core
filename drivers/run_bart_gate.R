@@ -73,6 +73,18 @@ inp <- readRDS(INPUT)
 X <- as.matrix(inp$X_mat); X[!is.finite(X)] <- 0
 pts <- sf::st_transform(sf::st_as_sf(data.frame(x=inp$coord_X, y=inp$coord_Y), coords=c("x","y"), crs=3035), 4326)
 cc <- sf::st_coordinates(pts)
+# THE DESIGN MUST NOT ALREADY CARRY COORDINATES. This appends lon/lat unconditionally, so a dump
+# built with DRIVER_ADD_COORDS=TRUE arrives with a SECOND, scaled pair already in it: the scaled
+# pair then sits in the LINEAR block and the raw pair in BART, giving the "linear terrain" arm a
+# planar lon/lat trend the comparison was never meant to include -- silently, over a 32-hour run.
+# Use a design WITHOUT coordinates (the gate supplies its own); the ADD_COORDS dumps exist for
+# fitting BART directly, not for this.
+if (any(c("lon", "lat", "coord_X", "coord_Y") %in% colnames(X)))
+  stop("BG_INPUT already contains coordinate columns (",
+       paste(intersect(c("lon","lat","coord_X","coord_Y"), colnames(X)), collapse = ", "),
+       ").\n  The gate adds its own lon/lat, so this would duplicate them and put the scaled pair",
+       "\n  into the LINEAR arm. Point BG_INPUT at a design built WITHOUT DRIVER_ADD_COORDS.",
+       call. = FALSE)
 X <- cbind(X, lon=cc[,1], lat=cc[,2])          # RAW degrees: BART splits on raw inputs
 Y <- as.matrix(inp$Y_pixel); g <- inp$group_idx_vec; w <- inp$weights_pixel
 if (NPIX > 0 && NPIX < nrow(X)) { set.seed(1); s <- sort(sample(nrow(X), NPIX))
