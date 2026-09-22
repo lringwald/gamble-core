@@ -15,7 +15,7 @@ cd "$(dirname "$0")"
 # The knob registry, generated from config/knobs.json (tools/gen_config.py).
 [ -f config/knobs.generated.sh ] && . config/knobs.generated.sh
 
-GAMBLE_TASKS="bmleh bmleh_all bmleh_smoke bmleh_design bmleh_fit nested flat_design flat_fit count report recover_bart test"
+GAMBLE_TASKS="bmleh bmleh_all bmleh_smoke bmleh_design bmleh_fit nested flat_design flat_fit count report recover_bart bart_gate test"
 is_task() { case " $GAMBLE_TASKS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
 # =============================================================================
@@ -610,6 +610,43 @@ case "$TASK" in
     export DRIVER_NITER="$NITER"
 
     Rscript drivers/run_ls_count_model.R
+    ;;
+
+  bart_gate)
+    # The held-out comparison: fits a LINEAR-terrain arm and a BART-terrain arm on the same data,
+    # split and seeds, and scores both on one held-out set. This is the run that answers whether
+    # BART on terrain generalises; an in-sample gap cannot, because a tree ensemble always fits
+    # better in sample. The gate adds lon/lat itself from the dump's coordinates, so it does NOT
+    # need an ADD_COORDS design.
+    echo ">>> Task: BART gate -- linear vs BART on terrain, common held-out set"
+    if [ ! -f "$DESIGN_PATH" ]; then
+      echo "ERROR: no design dump at $DESIGN_PATH (build one with TASK=flat_design)."; exit 1
+    fi
+    bg_bridge() {                     # bg_bridge BG_NAME KNOB_VALUE
+      local bg="$1" val="$2" cur
+      eval "cur=\${$bg:-}"
+      if [ -n "$cur" ] && [ "$cur" != "auto" ]; then export "$bg"; return 0; fi
+      if [ -n "$val" ] && [ "$val" != "auto" ] && [ "$val" != "default" ]; then export "$bg=$val"
+      else unset "$bg"; fi
+    }
+    bg_bridge BG_NITER    "${NITER:-}"
+    bg_bridge BG_NBURN    "${NBURN:-}"
+    bg_bridge BG_THIN     "${THIN:-}"
+    bg_bridge BG_CHAINS   "${N_CHAINS:-}"
+    bg_bridge BG_CORES    "${N_CORES:-}"
+    bg_bridge BG_NPIX     "${SUBSAMPLE:-}"
+    bg_bridge BG_TESTFRAC "${TESTFRAC:-}"
+    bg_bridge BG_SPLIT    "${SPLIT:-}"
+    bg_bridge BG_ARMS     "${ARMS:-}"
+    export BG_INPUT="$DESIGN_PATH"
+    # A STABLE output directory, not the script's timestamped default. This run is measured in
+    # DAYS and the gate is resumable per arm -- but only into the same folder, and a fresh stamp
+    # each dispatch would silently restart from nothing after a kill.
+    export BG_OUT="${GATE_OUT:-$OUTPUT_DIR/bart_gate_resumable}"
+    echo "    design  : $BG_INPUT"
+    echo "    arms    : ${BG_ARMS:-linear,bart}   split: ${BG_SPLIT:-random}   held out: ${BG_TESTFRAC:-0.2}"
+    echo "    store   : $BG_OUT  (resumable -- re-dispatch to continue)"
+    Rscript drivers/run_bart_gate.R
     ;;
 
   recover_bart)

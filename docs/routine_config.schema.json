@@ -29,6 +29,7 @@
           "count",
           "report",
           "recover_bart",
+          "bart_gate",
           "test"
         ]
       },
@@ -41,6 +42,7 @@
           "none",
           "bmleh_los1_fit",
           "bmleh_los1_smoke",
+          "globiom_bart_gate",
           "globiom_bart_topo",
           "globiom_flat_bart",
           "globiom_nested_prod",

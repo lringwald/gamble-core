@@ -24,7 +24,8 @@
         "nested",
         "flat",
         "project",
-        "count"
+        "count",
+        "gate"
       ],
       "label": "Iterations (sweeps)"
     },
@@ -36,7 +37,8 @@
       "scope": "operational",
       "desc": "Burn-in sweeps; must be < NITER. Empty keeps the driver default.  ('auto' = leave it to the driver's own default)",
       "tasks": [
-        "flat"
+        "flat",
+        "gate"
       ],
       "blank": "auto",
       "label": "Burn-in sweeps"
@@ -50,7 +52,8 @@
       "desc": "Store every k-th retained draw.  ('auto' = leave it to the driver's own default)",
       "tasks": [
         "flat",
-        "recover"
+        "recover",
+        "gate"
       ],
       "blank": "auto",
       "label": "Thinning"
@@ -65,7 +68,8 @@
       "tasks": [
         "nested",
         "flat",
-        "count"
+        "count",
+        "gate"
       ],
       "label": "Chains"
     },
@@ -77,7 +81,8 @@
       "scope": "operational",
       "desc": "0 = every pixel; otherwise cap the pixel count.",
       "tasks": [
-        "nested"
+        "nested",
+        "gate"
       ],
       "label": "Pixel subsample"
     },
@@ -310,7 +315,8 @@
       "tasks": [
         "nested",
         "flat",
-        "count"
+        "count",
+        "gate"
       ],
       "blank": "auto",
       "label": "Cores"
@@ -385,6 +391,46 @@
       "desc": "The saved_model_outputs/<label>/ directory holding the fit's posterior batches. 'auto' takes the newest one under output/saved_model_outputs.",
       "tasks": [
         "recover"
+      ]
+    },
+    {
+      "name": "TESTFRAC",
+      "env": "BG_TESTFRAC",
+      "type": "string",
+      "default": "0.2",
+      "scope": "model",
+      "label": "Held-out fraction",
+      "desc": "Fraction of pixels held out and scored. This is the measurement the gate exists for: both arms are scored on the SAME held-out set.",
+      "tasks": [
+        "gate"
+      ]
+    },
+    {
+      "name": "SPLIT",
+      "env": "BG_SPLIT",
+      "type": "string",
+      "default": "random",
+      "scope": "model",
+      "enum": [
+        "random",
+        "country"
+      ],
+      "label": "Held-out split",
+      "desc": "random = scattered pixels; country = whole countries held out. Random is ~20x more optimistic, because a country RE carries most of the skill and a random split never tests an unseen region.",
+      "tasks": [
+        "gate"
+      ]
+    },
+    {
+      "name": "ARMS",
+      "env": "BG_ARMS",
+      "type": "string",
+      "default": "linear,bart",
+      "scope": "model",
+      "label": "Arms to fit",
+      "desc": "Which arms to fit, comma separated. Both is the point; one arm alone tells you nothing, since the comparison IS the result. Resumable, so a killed run keeps the arm it finished.",
+      "tasks": [
+        "gate"
       ]
     }
   ]

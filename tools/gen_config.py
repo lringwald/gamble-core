@@ -28,7 +28,7 @@ def project_tasks():
     return out
 
 
-CORE_TASKS = ["nested", "flat_design", "flat_fit", "count", "report", "recover_bart", "test"]
+CORE_TASKS = ["nested", "flat_design", "flat_fit", "count", "report", "recover_bart", "bart_gate", "test"]
 ALL_TASKS = None  # set once project_tasks() is callable
 
 
@@ -70,7 +70,8 @@ FAMILY_TASKS = {"nested": ["nested"],
                 "flat": ["flat_design", "flat_fit"],
                 "project": project_tasks(),
                 "count": ["count"],
-                "recover": ["recover_bart"]}
+                "recover": ["recover_bart"],
+                "gate": ["bart_gate"]}
 
 
 def tasks_for(k):

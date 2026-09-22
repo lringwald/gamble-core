@@ -29,6 +29,7 @@
           "count",
           "report",
           "recover_bart",
+          "bart_gate",
           "test"
         ]
       },
@@ -41,6 +42,7 @@
           "none",
           "bmleh_los1_fit",
           "bmleh_los1_smoke",
+          "globiom_bart_gate",
           "globiom_bart_topo",
           "globiom_flat_bart",
           "globiom_nested_prod",
@@ -49,32 +51,32 @@
       },
       "NITER": {
         "type": "string",
-        "title": "Iterations (sweeps)  [count, flat, nested, project]",
-        "description": "Iterations (sweeps)  [count, flat, nested, project] -- Total MCMC sweeps.",
+        "title": "Iterations (sweeps)  [count, flat, gate, nested, project]",
+        "description": "Iterations (sweeps)  [count, flat, gate, nested, project] -- Total MCMC sweeps.",
         "default": "1000"
       },
       "NBURN": {
         "type": "string",
-        "title": "Burn-in sweeps  [flat]",
-        "description": "Burn-in sweeps  [flat] -- Burn-in sweeps; must be < NITER. Empty keeps the driver default.  ('auto' = leave it to the driver's own default)",
+        "title": "Burn-in sweeps  [flat, gate]",
+        "description": "Burn-in sweeps  [flat, gate] -- Burn-in sweeps; must be < NITER. Empty keeps the driver default.  ('auto' = leave it to the driver's own default)",
         "default": "auto"
       },
       "THIN": {
         "type": "string",
-        "title": "Thinning  [flat, recover]",
-        "description": "Thinning  [flat, recover] -- Store every k-th retained draw.  ('auto' = leave it to the driver's own default)",
+        "title": "Thinning  [flat, gate, recover]",
+        "description": "Thinning  [flat, gate, recover] -- Store every k-th retained draw.  ('auto' = leave it to the driver's own default)",
         "default": "auto"
       },
       "N_CHAINS": {
         "type": "string",
-        "title": "Chains  [count, flat, nested]",
-        "description": "Chains  [count, flat, nested] -- Chains fitted in parallel; Rhat needs at least 2.",
+        "title": "Chains  [count, flat, gate, nested]",
+        "description": "Chains  [count, flat, gate, nested] -- Chains fitted in parallel; Rhat needs at least 2.",
         "default": "1"
       },
       "SUBSAMPLE": {
         "type": "string",
-        "title": "Pixel subsample  [nested]",
-        "description": "Pixel subsample  [nested] -- 0 = every pixel; otherwise cap the pixel count.",
+        "title": "Pixel subsample  [gate, nested]",
+        "description": "Pixel subsample  [gate, nested] -- 0 = every pixel; otherwise cap the pixel count.",
         "default": "0"
       },
       "CLASSIFICATION": {
@@ -212,8 +214,8 @@
       },
       "N_CORES": {
         "type": "string",
-        "title": "Cores  [count, flat, nested]",
-        "description": "Cores  [count, flat, nested] -- Worker processes. Empty follows N_CHAINS; more cores than chains does not help.  ('auto' = leave it to the driver's own default)",
+        "title": "Cores  [count, flat, gate, nested]",
+        "description": "Cores  [count, flat, gate, nested] -- Worker processes. Empty follows N_CHAINS; more cores than chains does not help.  ('auto' = leave it to the driver's own default)",
         "default": "auto"
       },
       "M": {
@@ -255,6 +257,28 @@
         "title": "Posterior batch directory  [recover]",
         "description": "Posterior batch directory  [recover] -- The saved_model_outputs/<label>/ directory holding the fit's posterior batches. 'auto' takes the newest one under output/saved_model_outputs.",
         "default": "auto"
+      },
+      "TESTFRAC": {
+        "type": "string",
+        "title": "Held-out fraction [model spec]  [gate]",
+        "description": "Held-out fraction [model spec]  [gate] -- Fraction of pixels held out and scored. This is the measurement the gate exists for: both arms are scored on the SAME held-out set.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable with runs at the default.",
+        "default": "0.2"
+      },
+      "SPLIT": {
+        "type": "string",
+        "title": "Held-out split [model spec]  [gate]",
+        "description": "Held-out split [model spec]  [gate] -- random = scattered pixels; country = whole countries held out. Random is ~20x more optimistic, because a country RE carries most of the skill and a random split never tests an unseen region.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable with runs at the default.",
+        "default": "random",
+        "enum": [
+          "random",
+          "country"
+        ]
+      },
+      "ARMS": {
+        "type": "string",
+        "title": "Arms to fit [model spec]  [gate]",
+        "description": "Arms to fit [model spec]  [gate] -- Which arms to fit, comma separated. Both is the point; one arm alone tells you nothing, since the comparison IS the result. Resumable, so a killed run keeps the arm it finished.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable with runs at the default.",
+        "default": "linear,bart"
       },
       "DESIGN_PATH": {
         "type": "string",
