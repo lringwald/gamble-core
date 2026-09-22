@@ -41,7 +41,25 @@ Ym<-as.matrix(d[,..cats]); d<-d[rowSums(Ym)>0]; Ym<-as.matrix(d[,..cats]); d<-d[
 # group set: metadata's group_levels if recorded (clean re-fits), else data-driven pixel-count filter.
 # The recovered betas have a FIXED group dimension -> assert the reconstructed set reproduces it.
 n_grp_fit <- dim(qs_read(list.files(cfg$dir, "posterior_batch_1_chain_1.qs", full.names=TRUE)[1])[[1]]$beta)[3]
-keep_g <- if (!is.null(meta$group_levels)) meta$group_levels else { gt<-table(d$Grouping_Key); names(gt)[gt>=RECON_MIN_GROUP_PIXELS] }
+# group_levels is only usable here when it holds LABELS. The pixel driver records the sampler's
+# appearance-order integer ids instead -- and as CHARACTER ("22","27",...) -- so using it directly
+# matches no Grouping_Key at all and the run aborts claiming a 0-group reconstruction. Ids cannot be
+# translated back without the fit's own filtered factor, which the dump does not carry, so fall
+# through to the pixel-count filter, which reproduces the group SET exactly (30 of 39 at >=100).
+# Prefer the driver's own group_labels.qs, written beside the batches before fitting. It is the
+# only record that survives a crashed run AND names the groups; metadata's group_levels cannot.
+.glab_f <- file.path(cfg$dir, "group_labels.qs")
+.gl <- if (file.exists(.glab_f)) {
+  .g <- qs_read(.glab_f)
+  cat(sprintf(">>> group labels from group_labels.qs (%d groups, key %s)\n",
+              length(.g$labels_in_appearance_order), .g$re_group_col))
+  .g$labels_in_appearance_order
+} else meta$group_levels
+.gl_are_labels <- !is.null(.gl) && !all(grepl("^[0-9]+$", as.character(.gl)))
+keep_g <- if (.gl_are_labels) .gl else {
+  if (!is.null(.gl)) cat(">>> group_levels holds integer ids, not labels -- using the pixel-count filter\n")
+  gt <- table(d$Grouping_Key); names(gt)[gt >= RECON_MIN_GROUP_PIXELS]
+}
 d <- d[Grouping_Key %in% keep_g]
 if (length(unique(d$Grouping_Key)) != n_grp_fit)
   stop(sprintf("engine: reconstructed group set (%d) != fitted batches' groups (%d) — the auto filter can't reproduce the fit's coverage. Supply the exact group list, or use a clean re-fit whose metadata carries group_levels.",

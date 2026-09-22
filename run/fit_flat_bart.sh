@@ -66,6 +66,25 @@ cat <<EOF
     log         : $LOG
 EOF
 
+# RUN FROM A SNAPSHOT, NOT THE WORKING TREE.
+# Rscript parses a script expression by expression AS IT EXECUTES, so a multi-day run is still
+# reading its sources off disk hours later. Editing them mid-run shifts the bytes under the reader:
+# the 2026-09-19 BART fit finished all 30 batches and then died in its post-fit stage with
+# `Error: unexpected ',' in "      X = X_mat,"`, because the driver was edited while it ran. The
+# draws survived; the reporting stage did not.
+#
+# The CODE is copied and the DATA is symlinked, then we work from the copy -- the drivers source
+# "codes/..." relative to the working directory, so snapshotting the driver alone would still have
+# left the samplers exposed. A few hundred kB buys immunity from every later edit.
+SNAP="$PWD/_local/run_snapshots/${MODE}_${TS}"
+mkdir -p "$SNAP"
+cp -R codes drivers postprocess prep composition "$SNAP"/ 2>/dev/null
+for d in output results input aux_files projects config run tests docs; do
+  [ -e "$d" ] && ln -sfn "$PWD/$d" "$SNAP/$d"
+done
+echo "    snapshot    : ${SNAP#$PWD/}  (later edits to the working tree cannot reach this run)"
+cd "$SNAP"
+
 DRIVER_CLASS_COLS=GLOBIOM_subclass \
 DRIVER_PROMOTE_NATURAL_OTHER=TRUE \
 DRIVER_MODEL_YEARS=2018 DRIVER_FOCAL_YEARS=2010 DRIVER_COV_YEARS=2020 \

@@ -1912,6 +1912,16 @@ if (use_re) {
   group_idx_vec <- as.integer(re_groups)
   re_group_names <- levels(re_groups)
   cat(sprintf(">>> RE Model: Detected %d groups using key: %s\n", length(re_group_names), RE_GROUP_COL))
+  # RECORD THE GROUP LABELS NEXT TO THE BATCHES, BEFORE FITTING.
+  # model_metadata.qs carries `group_levels` as the sampler's APPEARANCE-ORDER INTEGER IDS (and as
+  # character), which cannot be turned back into country names without this fit's own filtered
+  # factor. Any later reconstruction therefore cannot name -- or even count -- the groups: the
+  # 2026-09-19 BART run could not be reported at all for exactly this reason. Written before the
+  # sampler starts, so a run that dies mid-way still leaves its keying behind.
+  .glab <- list(group_labels = re_group_names,
+                group_idx_appearance = unique(as.integer(group_idx_vec)),
+                labels_in_appearance_order = re_group_names[unique(as.integer(group_idx_vec))],
+                n_rows_fitted = length(group_idx_vec), re_group_col = RE_GROUP_COL)
 } else {
   group_idx_vec <- NULL
 }
@@ -2064,6 +2074,12 @@ if (isTRUE(as.logical(Sys.getenv("DRIVER_DUMP_INPUTS", "FALSE")))) {
 
 # Determine steps for progress bar and identify hot-starting chains
 model_disk_path <- file.path("output/saved_model_outputs", paste0(MODEL_LABEL, if (use_re) "_RE_" else "_pooled_", RE_GROUP_COL))
+dir.create(model_disk_path, recursive = TRUE, showWarnings = FALSE)
+# Written BEFORE the sampler starts: a run that dies still leaves its keying behind. See the note
+# where .glab is built -- model_metadata.qs records integer ids, which cannot be turned back into
+# labels afterwards, and that is what made the 2026-09-19 BART fit unreportable.
+if (exists(".glab")) qs2::qs_save(.glab, file.path(model_disk_path, "group_labels.qs"))
+
 # Test runs start clean so stale batches/state never poison hot-start or recovery
 # (this is what the old REvNN bumping was for). Production persists to allow resume.
 if (RUN_MODE == "test" && dir.exists(model_disk_path)) {
