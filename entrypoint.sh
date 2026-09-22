@@ -147,6 +147,18 @@ resolve_registry() {
     fi
   done
 }
+
+# Guardrail: ensure nburn scales with niter if nburn >= niter
+if [ -n "${NBURN:-}" ] && [ -n "${NITER:-}" ]; then
+  if [ "$NITER" -le "$NBURN" ]; then
+    echo "WARNING: NITER ($NITER) <= NBURN ($NBURN). Adjusting NBURN to $(( NITER / 2 ))."
+    NBURN=$(( NITER / 2 ))
+    export DRIVER_NBURN="$NBURN"
+    export NCUT_NBURN="$NBURN"
+    knob_update NBURN "$NBURN" "auto-scaled to NITER/2"
+  fi
+fi
+
 print_spec_deviations() {
   [ ${#SPEC_DEVIATIONS[@]} -eq 0 ] && { echo " Model spec: STANDARD (every model knob at its validated default)"; return 0; }
   echo "----------------------------------------------------------------------"
@@ -251,7 +263,7 @@ knob EXTRA "none"
 # EXTRA is the escape hatch that keeps the routine form small: "NITER=8000, USE_BART=TRUE" instead
 # of declaring twenty-five fields that would each have to hold a value and would then outrank the
 # profile they were meant to inherit from. A key that is not a declared knob is REJECTED -- typing
-# NITTER=8000 into a free-text box and having it silently ignored is the worst of both worlds.
+# NITER=8000 into a free-text box and having it silently ignored is the worst of both worlds.
 EXTRA_KEYS=""
 extra_set() { printf -v "EXTRA_VAL_$1" '%s' "$2"; EXTRA_KEYS="$EXTRA_KEYS $1"; }
 extra_has() { case " $EXTRA_KEYS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
