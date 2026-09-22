@@ -45,38 +45,38 @@
     },
     "NITER": {
       "type": "integer",
-      "title": "Niter",
-      "description": "Total MCMC sweeps.",
+      "title": "Niter  [count, flat, nested, project]",
+      "description": "Total MCMC sweeps.  Applies to: BMLEH_Los1_CAPRI_all, BMLEH_Los1_CAPRI_design, BMLEH_Los1_CAPRI_fit, BMLEH_Los1_CAPRI_more, BMLEH_Los1_CAPRI_smoke, GLOBIOM_subclass_all, GLOBIOM_subclass_design, GLOBIOM_subclass_fit, GLOBIOM_subclass_more, GLOBIOM_subclass_smoke, count, flat_design, flat_fit, nested.",
       "default": 1000
     },
     "NBURN": {
       "type": "integer",
-      "title": "Nburn",
-      "description": "Burn-in sweeps; must be < NITER. Empty keeps the driver default.",
+      "title": "Nburn  [flat]",
+      "description": "Burn-in sweeps; must be < NITER. Empty keeps the driver default.  Applies to: flat_design, flat_fit.",
       "default": ""
     },
     "THIN": {
       "type": "integer",
-      "title": "Thin",
-      "description": "Store every k-th retained draw.",
+      "title": "Thin  [flat]",
+      "description": "Store every k-th retained draw.  Applies to: flat_design, flat_fit.",
       "default": ""
     },
     "N_CHAINS": {
       "type": "integer",
-      "title": "N Chains",
-      "description": "Chains fitted in parallel; Rhat needs at least 2.",
+      "title": "N Chains  [count, flat, nested]",
+      "description": "Chains fitted in parallel; Rhat needs at least 2.  Applies to: count, flat_design, flat_fit, nested.",
       "default": 1
     },
     "SUBSAMPLE": {
       "type": "integer",
-      "title": "Subsample",
-      "description": "0 = every pixel; otherwise cap the pixel count.",
+      "title": "Subsample  [nested]",
+      "description": "0 = every pixel; otherwise cap the pixel count.  Applies to: nested.",
       "default": 0
     },
     "CLASSIFICATION": {
       "type": "string",
-      "title": "Classification [model spec]",
-      "description": "Class column(s) the model predicts -- decides what the outcome IS.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.",
+      "title": "Classification [model spec]  [flat, nested]",
+      "description": "Class column(s) the model predicts -- decides what the outcome IS.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit, nested.",
       "default": "GLOBIOM_subclass",
       "enum": [
         "GLOBIOM_subclass",
@@ -88,8 +88,8 @@
     },
     "RE_GROUP": {
       "type": "string",
-      "title": "Re Group [model spec]",
-      "description": "Grouping the random effects are keyed on.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.",
+      "title": "Re Group [model spec]  [flat]",
+      "description": "Grouping the random effects are keyed on.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": "GLOB_country",
       "enum": [
         "GLOB_country",
@@ -100,14 +100,14 @@
     },
     "RE_VARS": {
       "type": "string",
-      "title": "Re Vars [model spec]",
-      "description": "Covariates carrying a random effect. Empty = intercept only (the standard; measured to converge better than random slopes). 'all' = every linear covariate; or a comma-separated list.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.",
+      "title": "Re Vars [model spec]  [flat]",
+      "description": "Covariates carrying a random effect. Empty = intercept only (the standard; measured to converge better than random slopes). 'all' = every linear covariate; or a comma-separated list.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": ""
     },
     "RE_BLOCK": {
       "type": "string",
-      "title": "Re Block [model spec]",
-      "description": "Nested-path RE block. intercept is the documented standard.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.",
+      "title": "Re Block [model spec]  [nested]",
+      "description": "Nested-path RE block. intercept is the documented standard.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: nested.",
       "default": "intercept",
       "enum": [
         "intercept",
@@ -116,8 +116,8 @@
     },
     "VARIANT": {
       "type": "string",
-      "title": "Variant [model spec]",
-      "description": "factorized = independent nests; iv = inclusive-value coupling.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.",
+      "title": "Variant [model spec]  [nested]",
+      "description": "factorized = independent nests; iv = inclusive-value coupling.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: nested.",
       "default": "factorized",
       "enum": [
         "factorized",
@@ -126,8 +126,8 @@
     },
     "SYMMETRIC_HS": {
       "type": "string",
-      "title": "Symmetric Hs [model spec]",
-      "description": "Symmetric (zero-sum) horseshoe. TRUE is the standard; the job verifies the sampler carries the fix before fitting.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.",
+      "title": "Symmetric Hs [model spec]  [nested]",
+      "description": "Symmetric (zero-sum) horseshoe. TRUE is the standard; the job verifies the sampler carries the fix before fitting.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: nested.",
       "default": "TRUE",
       "enum": [
         "TRUE",
@@ -136,8 +136,8 @@
     },
     "USE_BART": {
       "type": "string",
-      "title": "Use Bart [model spec]",
-      "description": "Terrain (and whatever BART_COLS names) enters as a tree ensemble instead of linear terms. FLAT PATH ONLY -- nested_cut has no BART support.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.",
+      "title": "Use Bart [model spec]  [flat]",
+      "description": "Terrain (and whatever BART_COLS names) enters as a tree ensemble instead of linear terms. FLAT PATH ONLY -- nested_cut has no BART support.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": "FALSE",
       "enum": [
         "TRUE",
@@ -146,20 +146,20 @@
     },
     "BART_COLS": {
       "type": "string",
-      "title": "Bart Cols [model spec]",
-      "description": "'topo' = the terrain block plus lon/lat when ADD_COORDS; '' = every non-focal column; or an explicit comma-separated list.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.",
+      "title": "Bart Cols [model spec]  [flat]",
+      "description": "'topo' = the terrain block plus lon/lat when ADD_COORDS; '' = every non-focal column; or an explicit comma-separated list.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": "topo"
     },
     "NTREES_BART": {
       "type": "integer",
-      "title": "Ntrees Bart [model spec]",
-      "description": "Trees per class in the ensemble.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.",
+      "title": "Ntrees Bart [model spec]  [flat]",
+      "description": "Trees per class in the ensemble.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": 25
     },
     "BART_K_PREV": {
       "type": "string",
-      "title": "Bart K Prev [model spec]",
-      "description": "Prevalence-scaled leaf shrinkage. Measured super-additive with symmetric BART (+75.4 held-out together vs +38.4 symmetric alone); FALSE restores flat k.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.",
+      "title": "Bart K Prev [model spec]  [flat]",
+      "description": "Prevalence-scaled leaf shrinkage. Measured super-additive with symmetric BART (+75.4 held-out together vs +38.4 symmetric alone); FALSE restores flat k.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": "TRUE",
       "enum": [
         "TRUE",
@@ -168,8 +168,8 @@
     },
     "ADD_COORDS": {
       "type": "string",
-      "title": "Add Coords [model spec]",
-      "description": "Add lon/lat as design columns. REQUIRED for BART_COLS=topo to cover coordinates -- without it 'topo' silently resolves to the 4 terrain columns.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.",
+      "title": "Add Coords [model spec]  [flat]",
+      "description": "Add lon/lat as design columns. REQUIRED for BART_COLS=topo to cover coordinates -- without it 'topo' silently resolves to the 4 terrain columns.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": "FALSE",
       "enum": [
         "TRUE",
@@ -178,8 +178,8 @@
     },
     "COORD_TYPE": {
       "type": "string",
-      "title": "Coord Type [model spec]",
-      "description": "lonlat = EPSG:4326 degrees (readable); laea = native EPSG:3035 metres.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.",
+      "title": "Coord Type [model spec]  [flat]",
+      "description": "lonlat = EPSG:4326 degrees (readable); laea = native EPSG:3035 metres.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": "lonlat",
       "enum": [
         "lonlat",
@@ -188,8 +188,8 @@
     },
     "MUNDLAK": {
       "type": "string",
-      "title": "Mundlak [model spec]",
-      "description": "Group-mean predictors for the RE prior mean. An interpretation fix (removes FE-RE correlation), not an accuracy one.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.",
+      "title": "Mundlak [model spec]  [flat]",
+      "description": "Group-mean predictors for the RE prior mean. An interpretation fix (removes FE-RE correlation), not an accuracy one.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": "FALSE",
       "enum": [
         "TRUE",
@@ -198,13 +198,31 @@
     },
     "PROMOTE_NATURAL_OTHER": {
       "type": "string",
-      "title": "Promote Natural Other [model spec]",
-      "description": "Move Natural_other out of the non-choosable residual.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.",
+      "title": "Promote Natural Other [model spec]  [flat]",
+      "description": "Move Natural_other out of the non-choosable residual.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: flat_design, flat_fit.",
       "default": "TRUE",
       "enum": [
         "TRUE",
         "FALSE"
       ]
+    },
+    "N_CORES": {
+      "type": "integer",
+      "title": "N Cores  [count, flat, nested]",
+      "description": "Worker processes. Empty follows N_CHAINS; more cores than chains does not help.  Applies to: count, flat_design, flat_fit, nested.",
+      "default": ""
+    },
+    "M": {
+      "type": "integer",
+      "title": "M [model spec]  [nested]",
+      "description": "Multiple-imputation draws of the inclusive value. Only reaches the model when VARIANT=iv; with factorized nests there is no inclusive value to impute.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable.  Applies to: nested.",
+      "default": 25
+    },
+    "BM_NITER": {
+      "type": "integer",
+      "title": "Bm Niter  [project]",
+      "description": "Sweeps for a project fit. Empty falls back to NITER, then to the project script's own 5000.  Applies to: BMLEH_Los1_CAPRI_all, BMLEH_Los1_CAPRI_design, BMLEH_Los1_CAPRI_fit, BMLEH_Los1_CAPRI_more, BMLEH_Los1_CAPRI_smoke, GLOBIOM_subclass_all, GLOBIOM_subclass_design, GLOBIOM_subclass_fit, GLOBIOM_subclass_more, GLOBIOM_subclass_smoke.",
+      "default": ""
     },
     "DESIGN_PATH": {
       "type": "string",
@@ -236,5 +254,489 @@
       "description": "cascadinggamble-core/data. Auto-detected under /data when empty.",
       "default": ""
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "BMLEH_Los1_CAPRI_all",
+              "BMLEH_Los1_CAPRI_design",
+              "BMLEH_Los1_CAPRI_fit",
+              "BMLEH_Los1_CAPRI_more",
+              "BMLEH_Los1_CAPRI_smoke",
+              "GLOBIOM_subclass_all",
+              "GLOBIOM_subclass_design",
+              "GLOBIOM_subclass_fit",
+              "GLOBIOM_subclass_more",
+              "GLOBIOM_subclass_smoke",
+              "count",
+              "flat_design",
+              "flat_fit",
+              "nested"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "NITER": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "flat_design",
+              "flat_fit"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "NBURN": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "flat_design",
+              "flat_fit"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "THIN": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "count",
+              "flat_design",
+              "flat_fit",
+              "nested"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "N_CHAINS": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "nested"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "SUBSAMPLE": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "flat_design",
+              "flat_fit",
+              "nested"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "CLASSIFICATION": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "flat_design",
+              "flat_fit"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "RE_GROUP": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "flat_design",
+              "flat_fit"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "RE_VARS": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "nested"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "RE_BLOCK": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "nested"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "VARIANT": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "nested"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "SYMMETRIC_HS": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "flat_design",
+              "flat_fit"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "USE_BART": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "flat_design",
+              "flat_fit"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "BART_COLS": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "flat_design",
+              "flat_fit"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "NTREES_BART": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "flat_design",
+              "flat_fit"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "BART_K_PREV": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "flat_design",
+              "flat_fit"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "ADD_COORDS": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "flat_design",
+              "flat_fit"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "COORD_TYPE": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "flat_design",
+              "flat_fit"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "MUNDLAK": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "flat_design",
+              "flat_fit"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "PROMOTE_NATURAL_OTHER": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "count",
+              "flat_design",
+              "flat_fit",
+              "nested"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "N_CORES": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "nested"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "M": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "BMLEH_Los1_CAPRI_all",
+              "BMLEH_Los1_CAPRI_design",
+              "BMLEH_Los1_CAPRI_fit",
+              "BMLEH_Los1_CAPRI_more",
+              "BMLEH_Los1_CAPRI_smoke",
+              "GLOBIOM_subclass_all",
+              "GLOBIOM_subclass_design",
+              "GLOBIOM_subclass_fit",
+              "GLOBIOM_subclass_more",
+              "GLOBIOM_subclass_smoke"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "properties": {
+          "BM_NITER": {}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "TASK": {
+            "enum": [
+              "BMLEH_Los1_CAPRI_all",
+              "BMLEH_Los1_CAPRI_design",
+              "GLOBIOM_subclass_all",
+              "GLOBIOM_subclass_design",
+              "flat_design",
+              "flat_fit"
+            ]
+          }
+        },
+        "required": [
+          "TASK"
+        ]
+      },
+      "then": {
+        "description": "A design build reads the 1 km covariate parquet; without it there is nothing to assemble a design from. Auto-detected under /data when empty."
+      }
+    }
+  ]
 }

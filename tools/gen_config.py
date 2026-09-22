@@ -29,6 +29,7 @@ def project_tasks():
 
 
 CORE_TASKS = ["nested", "flat_design", "flat_fit", "count", "report", "test"]
+ALL_TASKS = None  # set once project_tasks() is callable
 
 
 def sh_quote(s):
@@ -48,6 +49,8 @@ for k in knobs:
 (ROOT / "config/knobs.generated.sh").write_text("\n".join(lines) + "\n")
 
 # ---- routine schema -----------------------------------------------------------------------
+ALL_TASKS = project_tasks() + CORE_TASKS
+
 props = {
     "TASK": {"type": "string", "title": "Workflow / Task",
              "description": "Which workflow to run. A default set here is NOT enough: the platform "
@@ -62,15 +65,41 @@ props = {
                 "default": "",
                 "enum": [""] + sorted(p.stem for p in (ROOT / "config/profiles").glob("*.env"))},
 }
+FAMILY_TASKS = {"nested": ["nested"],
+                "flat": ["flat_design", "flat_fit"],
+                "project": project_tasks(),
+                "count": ["count"]}
+
+
+def tasks_for(k):
+    out = []
+    for fam in k.get("tasks", []):
+        out += FAMILY_TASKS.get(fam, [])
+    return sorted(set(out))
+
+
+conditionals = []
 for k in knobs:
+    applies = tasks_for(k)
+    # The applicability goes in the TITLE as well as an if/then block. A renderer that supports
+    # draft-07 conditionals narrows the form; one that does not still shows which task a field
+    # reaches, instead of offering factorized/iv on a project fit where it does nothing.
+    where = "" if len(applies) >= len(ALL_TASKS) else "  [%s]" % ", ".join(sorted(set(
+        f for f in k.get("tasks", []))))
     p = {"type": "string" if k["type"] != "integer" else "integer",
-         "title": k["name"].replace("_", " ").title() + (" [model spec]" if k["scope"] == "model" else ""),
-         "description": k["desc"] + ("  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable."
-                                     if k["scope"] == "model" else ""),
+         "title": k["name"].replace("_", " ").title()
+                  + (" [model spec]" if k["scope"] == "model" else "") + where,
+         "description": k["desc"]
+                        + ("  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable."
+                           if k["scope"] == "model" else "")
+                        + ("  Applies to: %s." % ", ".join(applies) if applies else "  Applies to no task."),
          "default": int(k["default"]) if (k["type"] == "integer" and k["default"]) else k["default"]}
     if "enum" in k:
         p["enum"] = k["enum"]
     props[k["name"]] = p
+    if applies and len(applies) < len(ALL_TASKS):
+        conditionals.append({"if": {"properties": {"TASK": {"enum": applies}}, "required": ["TASK"]},
+                             "then": {"properties": {k["name"]: {}}}})
 for extra, d in (("DESIGN_PATH", "Absolute path to a pixel_model_inputs*.rds. Set to remove all ambiguity; "
                                  "empty auto-detects on the drive and logs what it searched."),
                  ("PROJECT", "Selects between staged design dumps for the generic tasks. Project tasks carry their own."),
@@ -80,11 +109,18 @@ for extra, d in (("DESIGN_PATH", "Absolute path to a pixel_model_inputs*.rds. Se
     props[extra] = {"type": "string", "title": extra.replace("_", " ").title(), "description": d,
                     "default": "/mnt/wdrv" if extra == "GAMBLE_WORK_DIR" else ""}
 
+DESIGN_TASKS = sorted(t for t in ALL_TASKS if t.endswith("_design") or t.endswith("_all") or t == "flat_fit")
+conditionals.append({
+    "if": {"properties": {"TASK": {"enum": DESIGN_TASKS}}, "required": ["TASK"]},
+    "then": {"description": "A design build reads the 1 km covariate parquet; without it there is "
+                            "nothing to assemble a design from. Auto-detected under /data when empty."}})
+
 schema = {"$schema": "http://json-schema.org/draft-07/schema#",
           "title": "gamble-core routine configuration",
           "description": "GENERATED from config/knobs.json by tools/gen_config.py. Field names are the "
                          "environment variable names entrypoint.sh reads.",
-          "type": "object", "required": ["TASK"], "properties": props}
+          "type": "object", "required": ["TASK"], "properties": props,
+          "allOf": conditionals}
 (ROOT / "docs/routine_config.schema.json").write_text(json.dumps(schema, indent=2) + "\n")
 print("wrote config/knobs.generated.sh (%d knobs) and docs/routine_config.schema.json (%d fields, %d tasks)"
       % (len(knobs), len(props), len(props["TASK"]["enum"])))
