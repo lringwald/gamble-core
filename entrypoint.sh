@@ -631,17 +631,34 @@ case "$TASK" in
       # "0" because it is non-empty -- so `export BM_NITER=0` reached estimate_prior.R, which read
       # NITER 0 against NBURN 2000 and stopped with "niter must be > nburn". A sentinel meaning
       # "unset" has to be cleared before any :- default can see it.
-      case "$PROJ_ACTION" in
-        fit|all|more)
-          if [ -n "${BM_NITER:-}" ] && [ "${BM_NITER}" != "0" ]; then
-            export BM_NITER
-          else
-            # Let the project script pick its own default (600 smoke / 6000 fit) rather than
-            # inheriting the generic NITER, which means something different here.
-            unset BM_NITER
-          fi
-          ;;
-      esac
+      # BRIDGE THE REGISTRY KNOBS TO THE BM_* NAMES THIS PATH READS.
+      # run.sh and estimate_prior.R read BM_NITER / BM_NBURN / BM_THIN / BM_CHAINS / BM_CORES /
+      # BM_NPIX, while the registry maps each knob to the DRIVER_*/NCUT_* name the flat and nested
+      # drivers use. Without this bridge a setting the form RESOLVED reaches nothing: job 8807
+      # printed "NITER 8000 <- EXTRA override" in its settings table and then fitted "0 sweeps",
+      # because BM_NITER still held the sentinel and ${BM_NITER:-5000} keeps a "0".
+      # An explicitly-set BM_* still wins; the sentinel "0" counts as unset.
+      bm_bridge() {                      # bm_bridge BM_NAME KNOB_VALUE
+        local bm="$1" val="$2" cur
+        eval "cur=\${$bm:-}"
+        if [ -n "$cur" ] && [ "$cur" != "0" ]; then export "$bm"; return 0; fi
+        if [ -n "$val" ] && [ "$val" != "0" ] && [ "$val" != "default" ]; then
+          export "$bm=$val"
+        else
+          unset "$bm"
+        fi
+      }
+      bm_bridge BM_NITER  "${NITER:-}"
+      bm_bridge BM_NBURN  "${NBURN:-}"
+      bm_bridge BM_THIN   "${THIN:-}"
+      bm_bridge BM_CHAINS "${N_CHAINS:-}"
+      bm_bridge BM_CORES  "${N_CORES:-}"
+      bm_bridge BM_NPIX   "${SUBSAMPLE:-}"
+      # Catch the impossible combination HERE, not two minutes into a design load.
+      if [ -n "${BM_NITER:-}" ] && [ -n "${BM_NBURN:-}" ] && [ "$BM_NBURN" -ge "$BM_NITER" ] 2>/dev/null; then
+        echo "ERROR: NBURN ($BM_NBURN) must be < NITER ($BM_NITER); the sampler refuses otherwise."
+        exit 1
+      fi
       # `bash <script>` rather than `./<script>`: it does not depend on the execute bit, which the
       # runtime user may be unable to set on a root-owned file.
       bash "$PROJ_RUN" "$PROJ_ACTION"
