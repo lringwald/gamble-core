@@ -22,6 +22,7 @@ message(">>> [init.R] Checking and installing gamble-core dependencies...")
 #
 # Only when nothing is configured do we choose: Posit Package Manager for the running distribution
 # (binaries), and source CRAN as the last resort.
+.distro_code <- NA_character_
 .repos <- getOption("repos")
 .configured <- !is.null(.repos) && "CRAN" %in% names(.repos) &&
                nzchar(.repos[["CRAN"]]) && !identical(unname(.repos[["CRAN"]]), "@CRAN@")
@@ -31,10 +32,16 @@ if (!.configured) {
     sub("^VERSION_CODENAME=", "", grep("^VERSION_CODENAME=", os, value = TRUE)[1])
   }, error = function(e) NA_character_)
   .code <- if (length(.code) && !is.na(.code)) gsub('"', "", .code) else NA_character_
+  .distro_code <- .code
   options(repos = if (!is.na(.code) && nzchar(.code) && .Platform$OS.type == "unix")
                     c(CRAN = sprintf("https://packagemanager.posit.co/cran/__linux__/%s/latest", .code))
                   else c(CRAN = "https://cloud.r-project.org/"))
 }
+if (is.na(.distro_code)) .distro_code <- tryCatch({
+  os <- readLines("/etc/os-release", warn = FALSE)
+  gsub('"', "", sub("^VERSION_CODENAME=", "", grep("^VERSION_CODENAME=", os, value = TRUE)[1]))
+}, error = function(e) NA_character_)
+
 # bspm asks for this in a container; without it the apt route falls back to source silently.
 if (requireNamespace("bspm", quietly = TRUE)) options(bspm.sudo = TRUE)
 message(">>> [init.R] repository: ", getOption("repos")[["CRAN"]],
@@ -70,10 +77,31 @@ if (length(missing)) {
 # sf, the Arrow C++ runtime for arrow) reports a clean init and then fails hours
 # later inside a routine, with an error that points at the model instead of the image.
 still <- setdiff(pkgs, rownames(installed.packages()))
+
+# A PINNED SNAPSHOT CAN PREDATE A PACKAGE. rocker/geospatial:4.4.0 points at
+# p3m.dev/cran/__linux__/jammy/2024-06-13 -- deliberately frozen, which is good -- and qs2 first
+# reached CRAN after that date, so the build failed with "not available for this version of R".
+# The image's pin is kept for everything it CAN supply; only what it cannot is fetched from a
+# later repository, so one late package does not cost the reproducibility of the other 28.
+if (length(still)) {
+  .fallbacks <- c(if (!is.na(.distro_code) && nzchar(.distro_code))
+                    sprintf("https://packagemanager.posit.co/cran/__linux__/%s/latest", .distro_code),
+                  "https://cloud.r-project.org/")
+  for (.fb in .fallbacks) {
+    message(">>> [init.R] not in the pinned repository: ", paste(still, collapse = ", "),
+            " -- retrying from ", .fb)
+    try(install.packages(still, repos = .fb, Ncpus = max(1L, parallel::detectCores())), silent = TRUE)
+    still <- setdiff(pkgs, rownames(installed.packages()))
+    if (!length(still)) break
+  }
+}
+
 if (length(still)) {
   stop("[init.R] these packages could not be installed: ", paste(still, collapse = ", "),
-       "\n  Usually a missing SYSTEM library rather than a missing R package.",
-       "\n  The Dockerfile apt-installs the ones this repo needs (arrow/parquet, BLAS/LAPACK);",
-       "\n  a predefined stack has to supply them itself.", call. = FALSE)
+       "\n  The image's repository was: ", getOption("repos")[["CRAN"]],
+       "\n  Fallbacks were tried and also failed. Two usual causes:",
+       "\n    * a missing SYSTEM library (arrow/parquet, BLAS/LAPACK, GDAL) -- the Dockerfile",
+       "\n      apt-installs the ones this repo needs; a predefined stack must supply its own;",
+       "\n    * the package genuinely does not build on this R version.", call. = FALSE)
 }
 message(">>> [init.R] ", length(pkgs), " package(s) present.")
