@@ -42,8 +42,14 @@ RUN Rscript /app/init.R
 # Copy repository code
 COPY . /app
 
-# Ensure entrypoint is executable
-RUN chmod +x /app/entrypoint.sh
+# Ensure entrypoint is executable, and make /app WRITABLE BY THE RUNTIME USER.
+# COPY runs as root, while the job runs as an unprivileged uid (1000 on this platform). entrypoint.sh
+# has to replace output/ and results/ with symlinks into the mounted drive before anything runs, and
+# in a root-owned /app that fails with
+#   ln: failed to create symbolic link 'output': Permission denied
+# which is how job 8762 died one step after a successful build. a+rwX -- capital X, so directories
+# become traversable without marking every file executable.
+RUN chmod +x /app/entrypoint.sh && chmod -R a+rwX /app
 
 # Default entrypoint for DeepOrigin / WKUBE routines
 ENTRYPOINT ["./entrypoint.sh"]

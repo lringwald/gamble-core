@@ -287,20 +287,30 @@ knob OUTPUT_DIR "output"
 # ephemeral filesystem and is lost at job end ("No files found to upload").
 knob GAMBLE_WORK_DIR "/mnt/wdrv"
 if [ -d "$GAMBLE_WORK_DIR" ]; then
-  if [ ! -L output ]; then
-    mkdir -p "$GAMBLE_WORK_DIR/output"
-    [ -d output ] && cp -a output/. "$GAMBLE_WORK_DIR/output/" 2>/dev/null || true
-    rm -rf output
-    ln -s "$GAMBLE_WORK_DIR/output" output
-    echo ">>> output/  -> $GAMBLE_WORK_DIR/output"
-  fi
-  if [ ! -L results ]; then
-    mkdir -p "$GAMBLE_WORK_DIR/results"
-    [ -d results ] && cp -a results/. "$GAMBLE_WORK_DIR/results/" 2>/dev/null || true
-    rm -rf results
-    ln -s "$GAMBLE_WORK_DIR/results" results
-    echo ">>> results/ -> $GAMBLE_WORK_DIR/results"
-  fi
+  # A bare `ln` failure under `set -e` kills the job with one cryptic line. Say what is actually
+  # wrong: the working directory has to be writable by the RUNTIME user, and a root-owned /app in a
+  # container started as uid 1000 is not.
+  redirect_dir() {                       # redirect_dir <name>
+    local n="$1"
+    [ -L "$n" ] && return 0
+    mkdir -p "$GAMBLE_WORK_DIR/$n"
+    [ -d "$n" ] && cp -a "$n/." "$GAMBLE_WORK_DIR/$n/" 2>/dev/null || true
+    rm -rf "$n" 2>/dev/null || true
+    if ln -s "$GAMBLE_WORK_DIR/$n" "$n" 2>/dev/null; then
+      echo ">>> $n/  -> $GAMBLE_WORK_DIR/$n"
+    else
+      echo "------------------------------------------------------------------"
+      echo "ERROR: cannot redirect $n/ to the mounted drive."
+      echo "  $PWD is not writable by this user (uid $(id -u)), so the symlink cannot be created."
+      echo "  Everything the model writes would stay in the container and be lost at job end."
+      echo "  The image must make its working directory writable: the Dockerfile does"
+      echo "  'chmod -R a+rwX /app' after COPY. Rebuild if that is missing."
+      echo "------------------------------------------------------------------"
+      exit 1
+    fi
+  }
+  redirect_dir output
+  redirect_dir results
   echo ">>> Mounted drive: $GAMBLE_WORK_DIR  (all model output lands here)"
 fi
 
