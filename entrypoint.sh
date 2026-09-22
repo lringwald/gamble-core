@@ -48,6 +48,25 @@ knob_update() {                # a knob decided LATER (the design auto-detect) c
   knob_record "$1" "$2" "$3"
 }
 json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+# A DIAGNOSTIC MUST NEVER KILL THE RUN. Job 8764 died writing this file -- "Operation not
+# permitted" from the redirect -- one run after job 8763 wrote and uploaded the same path happily;
+# the uploader deletes what it collects, and the mount does not always allow the path to be
+# recreated. Losing the manifest is a nuisance; losing the job for want of one is absurd. So: try
+# the mount, fall back to /tmp, and carry on either way.
+write_manifest_safe() {
+  local want="$1"
+  if write_manifest "$want" 2>/dev/null; then
+    echo ">>> settings manifest: $want"
+    return 0
+  fi
+  local alt="/tmp/run_manifest.json"
+  if write_manifest "$alt" 2>/dev/null; then
+    echo ">>> settings manifest: $alt  (could not write $want -- it will NOT be collected)"
+    return 0
+  fi
+  echo ">>> settings manifest: could not be written anywhere; continuing without it"
+  return 0
+}
 write_manifest() {
   local out="$1" i n v src sep=""
   { printf '{\n'
@@ -380,10 +399,22 @@ mkdir -p "$OUTPUT_DIR"
 
 # Written BEFORE any work: a job that dies mid-run still leaves a complete record of how it was
 # configured. OUTPUT_DIR is the symlink to the mounted drive by this point, so it is uploaded.
+# Prove the output directory can actually be written, before a task spends hours finding out.
+# The redirect only shows the symlink was CREATED; it says nothing about whether the mount behind
+# it accepts writes from this user.
+if ! ( : > "$OUTPUT_DIR/.write_probe" ) 2>/dev/null; then
+  echo "------------------------------------------------------------------"
+  echo "WARNING: $OUTPUT_DIR is not writable by uid $(id -u)."
+  echo "  The run will continue, but anything the model writes there will fail."
+  echo "  $OUTPUT_DIR -> $(readlink "$OUTPUT_DIR" 2>/dev/null || echo '<not a symlink>')"
+  echo "------------------------------------------------------------------"
+else
+  rm -f "$OUTPUT_DIR/.write_probe" 2>/dev/null || true
+fi
+
 print_settings
 print_spec_deviations
-write_manifest "$OUTPUT_DIR/run_manifest.json"
-echo ">>> settings manifest: $OUTPUT_DIR/run_manifest.json"
+write_manifest_safe "$OUTPUT_DIR/run_manifest.json"
 
 # DRY_RUN resolves and reports the configuration, then stops before dispatch. It answers "what
 # would this routine actually do" without spending a job to find out -- which, for a workflow whose
