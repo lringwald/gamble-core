@@ -98,9 +98,12 @@ for k in knobs:
     if "enum" in k:
         p["enum"] = k["enum"]
     props[k["name"]] = p
-    if applies and len(applies) < len(ALL_TASKS):
-        conditionals.append({"if": {"properties": {"TASK": {"enum": applies}}, "required": ["TASK"]},
-                             "then": {"properties": {k["name"]: {}}}})
+    # NO if/then BLOCK IS EMITTED. An earlier version added one per knob to narrow the form by task,
+    # but a field declared in top-level `properties` cannot be hidden by a `then` branch -- then
+    # only applies ADDITIONAL schema. Hiding would mean declaring the field ONLY inside the branch,
+    # which in a renderer that ignores conditionals makes it vanish entirely: less clutter, and no
+    # way to set it. Applicability therefore lives in the title and description, which every
+    # renderer shows, and 25 inert blocks are not added to a file people have to read.
 # The routine form marks EVERY declared property required and rejects a blank, so an optional
 # field needs a sentinel it can hold. "auto" means the job works it out and logs what it did.
 EXTRAS = [
@@ -118,12 +121,6 @@ for extra, dflt, d in EXTRAS:
     props[extra] = {"type": "string", "title": extra.replace("_", " ").title(), "description": d,
                     "default": dflt}
 
-DESIGN_TASKS = sorted(t for t in ALL_TASKS if t.endswith("_design") or t.endswith("_all") or t == "flat_fit")
-conditionals.append({
-    "if": {"properties": {"TASK": {"enum": DESIGN_TASKS}}, "required": ["TASK"]},
-    "then": {"description": "A design build reads the 1 km covariate parquet; without it there is "
-                            "nothing to assemble a design from. Auto-detected under /data when empty."}})
-
 # The form renders `title` above a text input but NOT above a dropdown, so an enum field arrives
 # with no label at all -- "factorized" floating next to "intercept" with nothing naming either.
 # Lead every description with the label so it is present whichever control the renderer picks.
@@ -136,8 +133,7 @@ schema = {"$schema": "http://json-schema.org/draft-07/schema#",
           "title": "gamble-core routine configuration",
           "description": "GENERATED from config/knobs.json by tools/gen_config.py. Field names are the "
                          "environment variable names entrypoint.sh reads.",
-          "type": "object", "required": ["TASK"], "properties": props,
-          "allOf": conditionals}
+          "type": "object", "required": ["TASK"], "properties": props}
 (ROOT / "docs/routine_config.schema.json").write_text(json.dumps(schema, indent=2) + "\n")
 print("wrote config/knobs.generated.sh (%d knobs) and docs/routine_config.schema.json (%d fields, %d tasks)"
       % (len(knobs), len(props), len(props["TASK"]["enum"])))
