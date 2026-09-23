@@ -58,8 +58,8 @@
       "NITER": {
         "type": "string",
         "title": "Total sweeps (burn-in + kept)  [count, flat, gate, nested, project]",
-        "description": "Total sweeps (burn-in + kept)  [count, flat, gate, nested, project] -- TOTAL sweeps, burn-in included. Leave it alone if you set NSAMPLE, which derives this. Setting both is an error rather than a silent preference.",
-        "default": "1000"
+        "description": "Total sweeps (burn-in + kept)  [count, flat, gate, nested, project] -- TOTAL sweeps, burn-in included. 'auto' uses the validated preset default (e.g. 5000 for BMLEH production). Set a number for a custom sampler run.",
+        "default": "auto"
       },
       "NBURN": {
         "type": "string",
@@ -75,15 +75,15 @@
       },
       "N_CHAINS": {
         "type": "string",
-        "title": "Chains  [count, flat, gate, nested]",
-        "description": "Chains  [count, flat, gate, nested] -- Chains fitted in parallel; Rhat needs at least 2.",
-        "default": "1"
+        "title": "Chains  [count, flat, gate, nested, project]",
+        "description": "Chains  [count, flat, gate, nested, project] -- Chains fitted in parallel; 'auto' uses the preset default (e.g. 4 for BMLEH production, 1 for smoke). Set a number for custom multi-chain runs.",
+        "default": "auto"
       },
       "SUBSAMPLE": {
         "type": "string",
-        "title": "Pixel subsample  [gate, nested]",
-        "description": "Pixel subsample  [gate, nested] -- 0 = every pixel; otherwise cap the pixel count.",
-        "default": "0"
+        "title": "Pixel subsample  [gate, nested, project]",
+        "description": "Pixel subsample  [gate, nested, project] -- Pixel subsample size. 'auto' uses preset default (0/all for production, 5000 for smoke). Set a number to cap pixels for custom tests.",
+        "default": "auto"
       },
       "CLASSIFICATION": {
         "type": "string",
@@ -286,34 +286,68 @@
         "description": "Arms to fit [model spec]  [gate] -- Which arms to fit, comma separated. Both is the point; one arm alone tells you nothing, since the comparison IS the result. Resumable, so a killed run keeps the arm it finished.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable with runs at the default.",
         "default": "linear,bart"
       },
+      "RUN_ID": {
+        "type": "string",
+        "title": "Run identifier / tag  [count, flat, gate, nested, project]",
+        "description": "Run identifier / tag  [count, flat, gate, nested, project] -- Tag appended to output directories to isolate runs (e.g. 'run1', 'exp_v2'). 'auto' uses the cluster job ID or timestamp.",
+        "default": "auto"
+      },
+      "RE_ASIS": {
+        "type": "string",
+        "title": "RE-scale ASIS [model spec]  [project]",
+        "description": "RE-scale ASIS [model spec]  [project] -- RE-scale ASIS interweaving. 'auto' uses preset default (TRUE for BMLEH, where sigma_re Rhat requires it).  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable with runs at the default.",
+        "default": "auto",
+        "enum": [
+          "auto",
+          "TRUE",
+          "FALSE"
+        ]
+      },
+      "SLAB_C2": {
+        "type": "string",
+        "title": "Estimate RE slab c2 [model spec]  [project]",
+        "description": "Estimate RE slab c2 [model spec]  [project] -- Whether to estimate c2 (TRUE) or fix it (FALSE). 'auto' uses preset default (FALSE/fixed at 14.69 for BMLEH).  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable with runs at the default.",
+        "default": "auto",
+        "enum": [
+          "auto",
+          "TRUE",
+          "FALSE"
+        ]
+      },
+      "SLAB_C2_VAL": {
+        "type": "string",
+        "title": "Fixed RE slab c2 value [model spec]  [project]",
+        "description": "Fixed RE slab c2 value [model spec]  [project] -- Value for c2 when SLAB_C2 is FALSE. 'auto' uses preset default (14.69 for BMLEH).  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable with runs at the default.",
+        "default": "auto"
+      },
       "DESIGN_PATH": {
         "type": "string",
-        "title": "Design dump path",
-        "description": "Design dump path -- Path to a pixel_model_inputs*.rds. 'auto' detects one on the drive or /data and logs what it searched; set a path to remove all ambiguity.",
+        "title": "Design dump path  [gate, nested, project, recover]",
+        "description": "Design dump path  [gate, nested, project, recover] -- Path to pixel_model_inputs*.rds. 'auto' detects one on the drive or /data matching the chosen project/task.",
         "default": "auto"
       },
       "PROJECT": {
         "type": "string",
-        "title": "Project (design selection)",
-        "description": "Project (design selection) -- Chooses between staged design dumps for the generic tasks (nested, flat_*). Project tasks carry their own project, so 'auto' is right for them.",
+        "title": "Project selector  [flat, nested, project]",
+        "description": "Project selector  [flat, nested, project] -- Project directory name (e.g. 'BMLEH_Los1_CAPRI'). 'auto' resolves automatically from the selected task.",
         "default": "auto"
       },
       "GAMBLE_WORK_DIR": {
         "type": "string",
-        "title": "Mounted drive",
-        "description": "Mounted drive -- The FUSE mount results are collected from. output/ and results/ are symlinked here before the run.",
+        "title": "Mounted drive  [count, flat, gate, nested, project, recover]",
+        "description": "Mounted drive  [count, flat, gate, nested, project, recover] -- The FUSE mount where outputs and results are symlinked so the platform collects them.",
         "default": "/mnt/wdrv"
       },
       "GAMBLE_MASTER_PARQUET": {
         "type": "string",
-        "title": "Master 1 km parquet",
-        "description": "Master 1 km parquet -- Covariate parquet, needed by a *_design task and irrelevant to a fit. 'auto' looks under /data.",
+        "title": "Master 1 km parquet  [flat, project]",
+        "description": "Master 1 km parquet  [flat, project] -- Covariate parquet, needed by design tasks and irrelevant to fits. 'auto' detects under /data or /mnt/wdrv.",
         "default": "auto"
       },
       "GAMBLE_CASCADE_DATA": {
         "type": "string",
-        "title": "Cascade data directory",
-        "description": "Cascade data directory -- cascadinggamble-core/data. 'auto' looks under /data.",
+        "title": "Cascade data directory  [flat, project]",
+        "description": "Cascade data directory  [flat, project] -- Path to cascadinggamble-core/data. 'auto' detects under /data.",
         "default": "auto"
       },
       "EXTRA": {

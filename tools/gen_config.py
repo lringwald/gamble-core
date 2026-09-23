@@ -102,34 +102,17 @@ for k in knobs:
     if "enum" in k:
         p["enum"] = k["enum"]
     props[k["name"]] = p
-    # NO if/then BLOCK IS EMITTED. An earlier version added one per knob to narrow the form by task,
-    # but a field declared in top-level `properties` cannot be hidden by a `then` branch -- then
-    # only applies ADDITIONAL schema. Hiding would mean declaring the field ONLY inside the branch,
-    # which in a renderer that ignores conditionals makes it vanish entirely: less clutter, and no
-    # way to set it. Applicability therefore lives in the title and description, which every
-    # renderer shows, and 25 inert blocks are not added to a file people have to read.
-# The routine form marks EVERY declared property required and rejects a blank, so an optional
-# field needs a sentinel it can hold. "auto" means the job works it out and logs what it did.
-EXTRAS = [
-    ("DESIGN_PATH", "auto", "Path to a pixel_model_inputs*.rds. 'auto' detects one on the drive or "
-                            "/data and logs what it searched; set a path to remove all ambiguity."),
-    ("PROJECT", "auto", "Chooses between staged design dumps for the generic tasks (nested, flat_*). "
-                        "Project tasks carry their own project, so 'auto' is right for them."),
-    ("GAMBLE_WORK_DIR", "/mnt/wdrv", "The FUSE mount results are collected from. output/ and results/ "
-                                     "are symlinked here before the run."),
-    ("GAMBLE_MASTER_PARQUET", "auto", "Covariate parquet, needed by a *_design task and irrelevant to "
-                                      "a fit. 'auto' looks under /data."),
-    ("GAMBLE_CASCADE_DATA", "auto", "cascadinggamble-core/data. 'auto' looks under /data."),
-]
-EXTRA_LABELS = {"DESIGN_PATH": "Design dump path", "PROJECT": "Project (design selection)",
-                "GAMBLE_WORK_DIR": "Mounted drive", "GAMBLE_MASTER_PARQUET": "Master 1 km parquet",
-                "GAMBLE_CASCADE_DATA": "Cascade data directory"}
-for extra, dflt, d in EXTRAS:
-    props[extra] = {"type": "string", "title": EXTRA_LABELS[extra], "description": d, "default": dflt}
 
-# The form renders `title` above a text input but NOT above a dropdown, so an enum field arrives
+# The routine form renders `title` above a text input but NOT above a dropdown, so an enum field arrives
 # with no label at all -- "factorized" floating next to "intercept" with nothing naming either.
 # Lead every description with the label so it is present whichever control the renderer picks.
+props["EXTRA"] = {
+    "type": "string", "title": "Overrides",
+    "description": "Overrides -- one-off settings as KEY=VALUE, comma separated, e.g. "
+                   "'NITER=8000, USE_BART=TRUE'. Applied on top of the profile, and rejected if a "
+                   "key is not a declared knob. 'none' for no overrides.",
+    "default": "none"}
+
 for _n, _p in props.items():
     _lab = _p.get("title", _n)
     if not _p["description"].startswith(_lab):
@@ -153,16 +136,16 @@ schema = {"root": {"type": "object",
 #                                      rather than set to a default, so it cannot quietly beat the
 #                                      profile it was supposed to inherit from.
 #   full (routine_config.schema.full.json)  every knob, for when a one-off really wants the lot.
-LEAN = ["TASK", "PROFILE", "EXTRA", "DESIGN_PATH", "GAMBLE_WORK_DIR",
-        "GAMBLE_MASTER_PARQUET", "GAMBLE_CASCADE_DATA"]
-props["EXTRA"] = {
-    "type": "string", "title": "Overrides",
-    "description": "Overrides -- one-off settings as KEY=VALUE, comma separated, e.g. "
-                   "'NITER=8000, USE_BART=TRUE'. Applied on top of the profile, and rejected if a "
-                   "key is not a declared knob. 'none' for no overrides.",
-    "default": "none"}
+LEAN = ["TASK", "GAMBLE_WORK_DIR", "RUN_ID", "NITER", "N_CHAINS", "EXTRA"]
 
-lean_props = {k: props[k] for k in LEAN if k in props}
+lean_props = {}
+for k in LEAN:
+    if k in props:
+        p_copy = dict(props[k])
+        if k == "GAMBLE_WORK_DIR":
+            p_copy["default"] = "/mnt/wdrv/gamble-core"
+        lean_props[k] = p_copy
+
 schema["root"]["properties"] = lean_props
 (ROOT / "docs/routine_config.schema.json").write_text(json.dumps(schema, indent=2) + "\n")
 

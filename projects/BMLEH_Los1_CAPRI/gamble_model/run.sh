@@ -94,7 +94,7 @@ RES=results/gamble_model/BMLEH_Los1_CAPRI
 # draw-to-draw floor, with per-chain identity preserved 4/4 on the parameter state. So there is no
 # reason to guess the budget up front: take 500, look at the diagnostics, extend if kappa is ragged.
 fit()  { echo ">>> fit: flat MNL, no BART, RE-ASIS on"
-         BM_INPUT="$DUMP" BM_RE_ASIS="${BM_RE_ASIS:-TRUE}" \
+         BM_INPUT="${BM_INPUT:-${DESIGN_PATH:-$DUMP}}" BM_RE_ASIS="${BM_RE_ASIS:-TRUE}" \
          BM_SLAB_C2="${BM_SLAB_C2:-FALSE}" BM_SLAB_C2_VAL="${BM_SLAB_C2_VAL:-14.69}" \
          BM_NITER="${BM_NITER:-5000}" BM_NBURN="${BM_NBURN:-4000}" BM_THIN="${BM_THIN:-1}" \
          Rscript "$P/estimate_prior.R" "$@"; }
@@ -122,9 +122,9 @@ more() {
     exit 1
   fi
   echo ">>> continuing from $from"
-  BM_INPUT="$DUMP" BM_RESUME="$from" BM_RE_ASIS="${BM_RE_ASIS:-TRUE}" \
+  BM_INPUT="${BM_INPUT:-${DESIGN_PATH:-$DUMP}}" BM_RESUME="$from" BM_RE_ASIS="${BM_RE_ASIS:-TRUE}" \
     BM_SLAB_C2="${BM_SLAB_C2:-FALSE}" BM_SLAB_C2_VAL="${BM_SLAB_C2_VAL:-14.69}" \
-    BM_NITER="${BM_NITER:-500}" BM_THIN="${BM_THIN:-1}" Rscript "$P/estimate_prior.R"
+    BM_NITER="${BM_NITER:-5000}" BM_THIN="${BM_THIN:-1}" Rscript "$P/estimate_prior.R"
 }
 
 case "${1:-all}" in

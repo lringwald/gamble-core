@@ -34,9 +34,10 @@
       "name": "NITER",
       "env": "DRIVER_NITER",
       "type": "integer",
-      "default": "1000",
+      "default": "auto",
+      "blank": "auto",
       "scope": "operational",
-      "desc": "TOTAL sweeps, burn-in included. Leave it alone if you set NSAMPLE, which derives this. Setting both is an error rather than a silent preference.",
+      "desc": "TOTAL sweeps, burn-in included. 'auto' uses the validated preset default (e.g. 5000 for BMLEH production). Set a number for a custom sampler run.",
       "tasks": [
         "nested",
         "flat",
@@ -79,12 +80,14 @@
       "name": "N_CHAINS",
       "env": "DRIVER_NCHAINS",
       "type": "integer",
-      "default": "1",
+      "default": "auto",
+      "blank": "auto",
       "scope": "operational",
-      "desc": "Chains fitted in parallel; Rhat needs at least 2.",
+      "desc": "Chains fitted in parallel; 'auto' uses the preset default (e.g. 4 for BMLEH production, 1 for smoke). Set a number for custom multi-chain runs.",
       "tasks": [
         "nested",
         "flat",
+        "project",
         "count",
         "gate"
       ],
@@ -94,11 +97,13 @@
       "name": "SUBSAMPLE",
       "env": "NCUT_SUB",
       "type": "integer",
-      "default": "0",
+      "default": "auto",
+      "blank": "auto",
       "scope": "operational",
-      "desc": "0 = every pixel; otherwise cap the pixel count.",
+      "desc": "Pixel subsample size. 'auto' uses preset default (0/all for production, 5000 for smoke). Set a number to cap pixels for custom tests.",
       "tasks": [
         "nested",
+        "project",
         "gate"
       ],
       "label": "Pixel subsample"
@@ -448,6 +453,149 @@
       "desc": "Which arms to fit, comma separated. Both is the point; one arm alone tells you nothing, since the comparison IS the result. Resumable, so a killed run keeps the arm it finished.",
       "tasks": [
         "gate"
+      ]
+    },
+    {
+      "name": "RUN_ID",
+      "env": "RUN_ID",
+      "type": "string",
+      "default": "auto",
+      "blank": "auto",
+      "scope": "operational",
+      "label": "Run identifier / tag",
+      "desc": "Tag appended to output directories to isolate runs (e.g. 'run1', 'exp_v2'). 'auto' uses the cluster job ID or timestamp.",
+      "tasks": [
+        "nested",
+        "flat",
+        "project",
+        "count",
+        "gate"
+      ]
+    },
+    {
+      "name": "RE_ASIS",
+      "env": "BM_RE_ASIS",
+      "type": "string",
+      "default": "auto",
+      "blank": "auto",
+      "scope": "model",
+      "enum": [
+        "auto",
+        "TRUE",
+        "FALSE"
+      ],
+      "label": "RE-scale ASIS",
+      "desc": "RE-scale ASIS interweaving. 'auto' uses preset default (TRUE for BMLEH, where sigma_re Rhat requires it).",
+      "tasks": [
+        "project"
+      ]
+    },
+    {
+      "name": "SLAB_C2",
+      "env": "BM_SLAB_C2",
+      "type": "string",
+      "default": "auto",
+      "blank": "auto",
+      "scope": "model",
+      "enum": [
+        "auto",
+        "TRUE",
+        "FALSE"
+      ],
+      "label": "Estimate RE slab c2",
+      "desc": "Whether to estimate c2 (TRUE) or fix it (FALSE). 'auto' uses preset default (FALSE/fixed at 14.69 for BMLEH).",
+      "tasks": [
+        "project"
+      ]
+    },
+    {
+      "name": "SLAB_C2_VAL",
+      "env": "BM_SLAB_C2_VAL",
+      "type": "string",
+      "default": "auto",
+      "blank": "auto",
+      "scope": "model",
+      "label": "Fixed RE slab c2 value",
+      "desc": "Value for c2 when SLAB_C2 is FALSE. 'auto' uses preset default (14.69 for BMLEH).",
+      "tasks": [
+        "project"
+      ]
+    },
+    {
+      "name": "DESIGN_PATH",
+      "env": "DESIGN_PATH",
+      "type": "string",
+      "default": "auto",
+      "blank": "auto",
+      "scope": "operational",
+      "label": "Design dump path",
+      "desc": "Path to pixel_model_inputs*.rds. 'auto' detects one on the drive or /data matching the chosen project/task.",
+      "tasks": [
+        "nested",
+        "project",
+        "recover",
+        "gate"
+      ]
+    },
+    {
+      "name": "PROJECT",
+      "env": "PROJECT",
+      "type": "string",
+      "default": "auto",
+      "blank": "auto",
+      "scope": "operational",
+      "label": "Project selector",
+      "desc": "Project directory name (e.g. 'BMLEH_Los1_CAPRI'). 'auto' resolves automatically from the selected task.",
+      "tasks": [
+        "nested",
+        "flat",
+        "project"
+      ]
+    },
+    {
+      "name": "GAMBLE_WORK_DIR",
+      "env": "GAMBLE_WORK_DIR",
+      "type": "string",
+      "default": "/mnt/wdrv",
+      "blank": "",
+      "scope": "operational",
+      "label": "Mounted drive",
+      "desc": "The FUSE mount where outputs and results are symlinked so the platform collects them.",
+      "tasks": [
+        "nested",
+        "flat",
+        "project",
+        "count",
+        "recover",
+        "gate"
+      ]
+    },
+    {
+      "name": "GAMBLE_MASTER_PARQUET",
+      "env": "GAMBLE_MASTER_PARQUET",
+      "type": "string",
+      "default": "auto",
+      "blank": "auto",
+      "scope": "operational",
+      "label": "Master 1 km parquet",
+      "desc": "Covariate parquet, needed by design tasks and irrelevant to fits. 'auto' detects under /data or /mnt/wdrv.",
+      "tasks": [
+        "flat",
+        "project"
+      ]
+    },
+    {
+      "name": "GAMBLE_CASCADE_DATA",
+      "env": "GAMBLE_CASCADE_DATA",
+      "type": "string",
+      "default": "auto",
+      "blank": "auto",
+      "scope": "operational",
+      "label": "Cascade data directory",
+      "desc": "Path to cascadinggamble-core/data. 'auto' detects under /data.",
+      "tasks": [
+        "flat",
+        "project"
       ]
     }
   ]

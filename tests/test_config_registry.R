@@ -43,8 +43,7 @@ ok(grepl('"root"\\s*:', full_txt), "the FULL schema carries the envelope too")
 # The lean form must stay lean, and must not declare a knob whose default would beat the profile.
 lean_fields <- regmatches(sch_txt, gregexpr('"[A-Z_]+"\\s*:\\s*\\{', sch_txt))[[1]]
 lean_fields <- unique(sub('"([A-Z_]+)".*', "\\1", lean_fields))
-ok(length(setdiff(lean_fields, c("TASK","PROFILE","EXTRA","DESIGN_PATH","GAMBLE_WORK_DIR",
-                                 "GAMBLE_MASTER_PARQUET","GAMBLE_CASCADE_DATA"))) == 0,
+ok(length(setdiff(lean_fields, c("TASK","GAMBLE_WORK_DIR","RUN_ID","NITER","N_CHAINS","EXTRA","PROFILE","DESIGN_PATH","GAMBLE_MASTER_PARQUET","GAMBLE_CASCADE_DATA"))) == 0,
    sprintf("the lean schema declares only the lean fields (%d)", length(lean_fields)))
 
 miss_schema <- reg_names[!vapply(reg_names, function(n) grepl(sprintf('"%s"\\s*:', n), full_txt), TRUE)]

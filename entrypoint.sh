@@ -315,10 +315,30 @@ resolve_registry
 # are not the same axis: pixel_model_inputs_BMLEH_Los1_CAPRI.rds is selected by project, while
 # pixel_model_inputs_GLOBIOM_subclass.rds is selected by classification.
 # "auto" is how the form says "not set" -- see the blank-sentinel note above.
-knob PROJECT "auto"; [ "$PROJECT" = "auto" ] && PROJECT=""
-knob DESIGN_PATH "auto"
+[ "$PROJECT" = "auto" ] && PROJECT=""
+if [ -z "$PROJECT" ] && [ -n "${PROJ_NAME:-}" ]; then
+  PROJECT="$PROJ_NAME"
+  knob_update PROJECT "$PROJECT" "inferred from task"
+fi
+
 [ "$DESIGN_PATH" = "auto" ] && DESIGN_PATH="output/designs/pixel_model_inputs.rds"
 knob OUTPUT_DIR "output"
+
+# RUN_ID isolates output directories across successive or concurrent runs
+if [ "${RUN_ID:-auto}" = "auto" ] || [ -z "${RUN_ID:-}" ]; then
+  if [ -n "${JOB_ID:-}" ]; then
+    RUN_TAG="job_${JOB_ID}"
+  elif [ -n "${WKUBE_JOB_ID:-}" ]; then
+    RUN_TAG="job_${WKUBE_JOB_ID}"
+  else
+    RUN_TAG="$(date -u '+%Y%m%d_%H%M%S')"
+  fi
+else
+  RUN_TAG="$RUN_ID"
+fi
+export RUN_TAG
+export RUN_ID="$RUN_TAG"
+knob_update RUN_ID "$RUN_TAG" "resolved run tag"
 
 # --- Redirect output/ and results/ to the mounted drive -------------------------
 # The platform uploads only what appears under the FUSE mount. Two directories
@@ -327,7 +347,9 @@ knob OUTPUT_DIR "output"
 #   results/ — posterior batches and chain states (estimate_prior.R writes here)
 # Without the results/ symlink every posterior draw lands in the container's
 # ephemeral filesystem and is lost at job end ("No files found to upload").
-knob GAMBLE_WORK_DIR "/mnt/wdrv"
+if [ -d "$GAMBLE_WORK_DIR/gamble-core" ] && [ ! -d "$GAMBLE_WORK_DIR/output" ]; then
+  GAMBLE_WORK_DIR="$GAMBLE_WORK_DIR/gamble-core"
+fi
 if [ -d "$GAMBLE_WORK_DIR" ]; then
   # A bare `ln` failure under `set -e` kills the job with one cryptic line. Say what is actually
   # wrong: the working directory has to be writable by the RUNTIME user, and a root-owned /app in a
@@ -438,6 +460,10 @@ if [ ! -f "$DESIGN_PATH" ]; then
       [ -z "$(find "$cand_dir" -maxdepth 4 -name '*.rds' 2>/dev/null | head -1)" ] && echo ">>>     (none)"
     done
   fi
+fi
+
+if [ -n "$DESIGN_PATH" ] && [ -f "$DESIGN_PATH" ]; then
+  export BM_INPUT="$DESIGN_PATH"
 fi
 
 # Ensure output directories exist
@@ -600,7 +626,7 @@ case "$TASK" in
     fi
 
     USE_IV_VAL=$([ "$VARIANT" = "iv" ] && echo "TRUE" || echo "FALSE")
-    STORE_DIR="${OUTPUT_DIR}/ncut_store_${VARIANT}_${RE_BLOCK//+/_}"
+    STORE_DIR="${NCUT_STORE_DIR:-${OUTPUT_DIR}/ncut_store_${VARIANT}_${RE_BLOCK//+/_}_${RUN_TAG}}"
 
     export NCUT_USE_IV="$USE_IV_VAL"
     export NCUT_RE_COLS="$RE_BLOCK"
@@ -768,6 +794,11 @@ case "$TASK" in
       bm_bridge BM_CHAINS "${N_CHAINS:-}"
       bm_bridge BM_CORES  "${N_CORES:-}"
       bm_bridge BM_NPIX   "${SUBSAMPLE:-}"
+      bm_bridge BM_RE_ASIS "${RE_ASIS:-}"
+      bm_bridge BM_SLAB_C2 "${SLAB_C2:-}"
+      bm_bridge BM_SLAB_C2_VAL "${SLAB_C2_VAL:-}"
+      [ -n "${DESIGN_PATH:-}" ] && [ "$DESIGN_PATH" != "auto" ] && export BM_INPUT="$DESIGN_PATH"
+      export RUN_ID="${RUN_TAG:-}"
       # Catch the impossible combination HERE, not two minutes into a design load.
       if [ -n "${BM_NITER:-}" ] && [ -n "${BM_NBURN:-}" ] && [ "$BM_NBURN" -ge "$BM_NITER" ] 2>/dev/null; then
         echo "ERROR: NBURN ($BM_NBURN) must be < NITER ($BM_NITER); the sampler refuses otherwise."

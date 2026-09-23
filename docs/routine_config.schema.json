@@ -33,51 +33,35 @@
           "test"
         ]
       },
-      "PROFILE": {
+      "GAMBLE_WORK_DIR": {
         "type": "string",
-        "title": "Profile",
-        "description": "Profile -- A named settings file in config/profiles/. Individual fields below still override it. Recorded in the manifest, so a run is reproducible from its profile name.",
-        "default": "none",
-        "enum": [
-          "none",
-          "bmleh_los1_fit",
-          "bmleh_los1_smoke",
-          "globiom_bart_gate",
-          "globiom_bart_topo",
-          "globiom_flat_bart",
-          "globiom_nested_prod",
-          "globiom_nested_smoke"
-        ]
+        "title": "Mounted drive  [count, flat, gate, nested, project, recover]",
+        "description": "Mounted drive  [count, flat, gate, nested, project, recover] -- The FUSE mount where outputs and results are symlinked so the platform collects them.",
+        "default": "/mnt/wdrv/gamble-core"
+      },
+      "RUN_ID": {
+        "type": "string",
+        "title": "Run identifier / tag  [count, flat, gate, nested, project]",
+        "description": "Run identifier / tag  [count, flat, gate, nested, project] -- Tag appended to output directories to isolate runs (e.g. 'run1', 'exp_v2'). 'auto' uses the cluster job ID or timestamp.",
+        "default": "auto"
+      },
+      "NITER": {
+        "type": "string",
+        "title": "Total sweeps (burn-in + kept)  [count, flat, gate, nested, project]",
+        "description": "Total sweeps (burn-in + kept)  [count, flat, gate, nested, project] -- TOTAL sweeps, burn-in included. 'auto' uses the validated preset default (e.g. 5000 for BMLEH production). Set a number for a custom sampler run.",
+        "default": "auto"
+      },
+      "N_CHAINS": {
+        "type": "string",
+        "title": "Chains  [count, flat, gate, nested, project]",
+        "description": "Chains  [count, flat, gate, nested, project] -- Chains fitted in parallel; 'auto' uses the preset default (e.g. 4 for BMLEH production, 1 for smoke). Set a number for custom multi-chain runs.",
+        "default": "auto"
       },
       "EXTRA": {
         "type": "string",
         "title": "Overrides",
         "description": "Overrides -- one-off settings as KEY=VALUE, comma separated, e.g. 'NITER=8000, USE_BART=TRUE'. Applied on top of the profile, and rejected if a key is not a declared knob. 'none' for no overrides.",
         "default": "none"
-      },
-      "DESIGN_PATH": {
-        "type": "string",
-        "title": "Design dump path",
-        "description": "Design dump path -- Path to a pixel_model_inputs*.rds. 'auto' detects one on the drive or /data and logs what it searched; set a path to remove all ambiguity.",
-        "default": "auto"
-      },
-      "GAMBLE_WORK_DIR": {
-        "type": "string",
-        "title": "Mounted drive",
-        "description": "Mounted drive -- The FUSE mount results are collected from. output/ and results/ are symlinked here before the run.",
-        "default": "/mnt/wdrv"
-      },
-      "GAMBLE_MASTER_PARQUET": {
-        "type": "string",
-        "title": "Master 1 km parquet",
-        "description": "Master 1 km parquet -- Covariate parquet, needed by a *_design task and irrelevant to a fit. 'auto' looks under /data.",
-        "default": "auto"
-      },
-      "GAMBLE_CASCADE_DATA": {
-        "type": "string",
-        "title": "Cascade data directory",
-        "description": "Cascade data directory -- cascadinggamble-core/data. 'auto' looks under /data.",
-        "default": "auto"
       }
     }
   }

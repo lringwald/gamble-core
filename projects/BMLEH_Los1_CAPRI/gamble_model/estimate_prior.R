@@ -62,9 +62,12 @@ TESTF <- as.numeric(Sys.getenv("BM_TESTFRAC", "0.2"))
 NCORES<- as.integer(Sys.getenv("BM_CORES", as.character(max(1L, parallel::detectCores() - 2L))))
 # Per-chain progress heartbeat, in seconds. 0 silences it. One throttled line per chain, because
 # four txtProgressBars cannot share a terminal line.
-PROG_SEC <- as.numeric(Sys.getenv("BM_PROGRESS_SEC", "30"))
-OUT   <- Sys.getenv("BM_OUT", file.path("results/gamble_model/BMLEH_Los1_CAPRI",
-                                        format(Sys.time(), "prior_%Y-%m-%d_%H%M")))
+run_tag <- Sys.getenv("RUN_ID", Sys.getenv("RUN_TAG", ""))
+default_tag <- format(Sys.time(), "prior_%Y-%m-%d_%H%M")
+if (nzchar(run_tag) && run_tag != "auto" && run_tag != "none") {
+  default_tag <- paste0(default_tag, "_", run_tag)
+}
+OUT   <- Sys.getenv("BM_OUT", file.path("results/gamble_model/BMLEH_Los1_CAPRI", default_tag))
 INPUT <- Sys.getenv("BM_INPUT", "output/designs/pixel_model_inputs_BMLEH_Los1_CAPRI.rds")
 # SPLIT (ported from GLOBIOM 2026-09-17). Hybrid: half the hold-out is country-stratified random
 # (interpolation), half is whole 150 km spatial blocks with a 1-cell buffer (transfer). Both are
