@@ -160,7 +160,7 @@ resolve_registry() {
 }
 
 # Guardrail: ensure nburn scales with niter if nburn >= niter
-if [ -n "${NBURN:-}" ] && [ -n "${NITER:-}" ]; then
+if [[ "${NBURN:-}" =~ ^[0-9]+$ ]] && [[ "${NITER:-}" =~ ^[0-9]+$ ]]; then
   if [ "$NITER" -le "$NBURN" ]; then
     echo "WARNING: NITER ($NITER) <= NBURN ($NBURN). Adjusting NBURN to $(( NITER / 2 ))."
     NBURN=$(( NITER / 2 ))

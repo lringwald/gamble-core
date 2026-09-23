@@ -62,6 +62,7 @@ TESTF <- as.numeric(Sys.getenv("BM_TESTFRAC", "0.2"))
 NCORES<- as.integer(Sys.getenv("BM_CORES", as.character(max(1L, parallel::detectCores() - 2L))))
 # Per-chain progress heartbeat, in seconds. 0 silences it. One throttled line per chain, because
 # four txtProgressBars cannot share a terminal line.
+PROG_SEC <- as.numeric(Sys.getenv("BM_PROGRESS_SEC", "30"))
 run_tag <- Sys.getenv("RUN_ID", Sys.getenv("RUN_TAG", ""))
 default_tag <- format(Sys.time(), "prior_%Y-%m-%d_%H%M")
 if (nzchar(run_tag) && run_tag != "auto" && run_tag != "none") {
@@ -172,6 +173,20 @@ pv <- sort(colMeans(Y)); cat(sprintf("  rarest 5 classes: %s\n", paste(sprintf("
     100*pv[1:min(5,J)]), collapse=" | ")))
 cat(sprintf("  classes below 0.1%% of area: %d of %d\n\n", sum(pv < 0.001), J))
 
+# Segment lineage has to be known BEFORE fit_one() runs: SEG_ID offsets the per-chain seed, and a
+# seed that is computed after the fit would leave every segment replaying the same random stream.
+SEG_ID <- as.integer(Sys.getenv("BM_SEG", if (nzchar(RESUME_DIR)) "0" else "1"))
+if (SEG_ID == 0L) {  # derive from the parent's lineage when not given
+  pl <- file.path(dirname(RESUME_DIR), "lineage.txt")
+  if (!file.exists(pl)) pl <- file.path(RESUME_DIR, "lineage.txt")
+  SEG_ID <- 2L
+  if (file.exists(pl)) {
+    .pn <- suppressWarnings(as.integer(sub("^segment\\s+", "",
+             grep("^segment", readLines(pl), value = TRUE)[1])))
+    if (!is.na(.pn)) SEG_ID <- .pn + 1L
+  }
+}
+
 fit_one <- function(ci, dpath) {
   # Segment-dependent seed: reusing the cold seed would make a resumed segment replay the previous
   # one's random numbers, which looks like sampling but adds no information.
@@ -214,21 +229,6 @@ dp <- file.path(OUT, "posterior"); dir.create(dp, recursive = TRUE, showWarnings
   if (dir.exists(dp) && !length(list.files(dp, "\\.qs$"))) unlink(OUT, recursive = TRUE)
 }
 on.exit(.clean_husk(), add = TRUE)
-# Record the lineage so a chain of segments stays traceable: which design, which parent.
-SEG_ID <- as.integer(Sys.getenv("BM_SEG", if (nzchar(RESUME_DIR)) "0" else "1"))
-if (SEG_ID == 0L) {  # derive from the parent's lineage when not given
-  pl <- file.path(dirname(RESUME_DIR), "lineage.txt")
-  if (!file.exists(pl)) pl <- file.path(RESUME_DIR, "lineage.txt")
-  # Read the parent's segment NUMBER and add one. Counting "^segment" lines instead always gives 1,
-  # so every segment past the second was numbered 2 -- and because SEG_ID offsets the seed, those
-  # segments reused each other's random stream, which is the very thing the offset exists to stop.
-  SEG_ID <- 2L
-  if (file.exists(pl)) {
-    .pn <- suppressWarnings(as.integer(sub("^segment\\s+", "",
-             grep("^segment", readLines(pl), value = TRUE)[1])))
-    if (!is.na(.pn)) SEG_ID <- .pn + 1L
-  }
-}
 if (!SCORE_ONLY) writeLines(c(sprintf("segment %d", SEG_ID), sprintf("design  %s", INPUT),
              sprintf("parent  %s", if (nzchar(RESUME_DIR)) RESUME_DIR else "(cold start)"),
              sprintf("sweeps  %d (burn %d, thin %d) x %d chains", NITER, NBURN, THIN, NCH),
