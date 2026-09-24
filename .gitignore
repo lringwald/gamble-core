@@ -37,7 +37,9 @@ input/
 
 # Project-specific code lives in cascadinggamble (GitLab), not in the public model repo.
 # See cascadinggamble-core/scripts/<PROJECT>/gamble_model/.
-projects/
+projects/*
+!projects/BMLEH_Los1_CAPRI/
+!projects/GLOBIOM_subclass/
 
 # --- reading shelf, not code -------------------------------------------------
 # Papers and books (116 MB of PDF/EPUB at the time this was added). Binaries never

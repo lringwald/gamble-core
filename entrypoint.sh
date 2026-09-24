@@ -805,10 +805,27 @@ case "$TASK" in
       bm_bridge BM_SLAB_C2 "${SLAB_C2:-}"
       bm_bridge BM_SLAB_C2_VAL "${SLAB_C2_VAL:-}"
       [ -n "${DESIGN_PATH:-}" ] && [ "$DESIGN_PATH" != "auto" ] && export BM_INPUT="$DESIGN_PATH"
+
+      bm_bridge GB_NITER  "${NITER:-}"
+      bm_bridge GB_NBURN  "${NBURN:-}"
+      bm_bridge GB_THIN   "${THIN:-}"
+      bm_bridge GB_CHAINS "${N_CHAINS:-}"
+      bm_bridge GB_CORES  "${N_CORES:-}"
+      bm_bridge GB_NPIX   "${SUBSAMPLE:-}"
+      bm_bridge GB_RE_ASIS "${RE_ASIS:-}"
+      bm_bridge GB_SLAB_C2 "${SLAB_C2:-}"
+      bm_bridge GB_SLAB_C2_VAL "${SLAB_C2_VAL:-}"
+      bm_bridge GB_BART   "${USE_BART:-}"
+      [ -n "${DESIGN_PATH:-}" ] && [ "$DESIGN_PATH" != "auto" ] && export GB_INPUT="$DESIGN_PATH"
+
       export RUN_ID="${RUN_TAG:-}"
       # Catch the impossible combination HERE, not two minutes into a design load.
       if [ -n "${BM_NITER:-}" ] && [ -n "${BM_NBURN:-}" ] && [ "$BM_NBURN" -ge "$BM_NITER" ] 2>/dev/null; then
         echo "ERROR: NBURN ($BM_NBURN) must be < NITER ($BM_NITER); the sampler refuses otherwise."
+        exit 1
+      fi
+      if [ -n "${GB_NITER:-}" ] && [ -n "${GB_NBURN:-}" ] && [ "$GB_NBURN" -ge "$GB_NITER" ] 2>/dev/null; then
+        echo "ERROR: NBURN ($GB_NBURN) must be < NITER ($GB_NITER); the sampler refuses otherwise."
         exit 1
       fi
       # `bash <script>` rather than `./<script>`: it does not depend on the execute bit, which the
