@@ -364,8 +364,10 @@ make_progress_cb <- function(label, every_sec = 30, niter = NA_integer_) {
     # ETA from the observed rate so far; only meaningful once niter is known.
     eta <- if (is.finite(niter) && niter > 0 && e$n > 0) max(0, el / e$n * (niter - e$n)) else NA_real_
     txt <- if (is.null(message)) sprintf("iteration %d", e$n) else sub("^Chain [^:]*: ", "", message)
-    base::message(sprintf("[%-8s] %-38s elapsed %5.1fm%s", label, txt, el,
-                          if (is.finite(eta)) sprintf(" | ~ETA %5.1fm", eta) else ""))
+    cat(sprintf("[%-8s] %-38s elapsed %5.1fm%s\n", label, txt, el,
+                if (is.finite(eta)) sprintf(" | ~ETA %5.1fm", eta) else ""),
+        file = stderr())
+    flush(stderr())
     invisible()
   }
 }

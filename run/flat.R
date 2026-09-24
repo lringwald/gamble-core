@@ -24,76 +24,74 @@ CLASSIFICATION <- "GLOBIOM_subclass"
   # "AgMIP_label"                 crop-type target (auto-enables the HRL crop split)
   # "BIOCLIMA_DS_reporting"       BIOCLIMA reporting classes
 
-BUILD_DESIGN_ONLY <- TRUE   # TRUE = write the design dump and stop (what run/nested.R consumes)
+BUILD_DESIGN_ONLY <- TRUE   # TRUE = write design dump (output/designs/pixel_model_inputs.rds) and stop.
+                            # FALSE = fit the flat MNL model (using existing design dump or building it).
+REBUILD_DESIGN    <- FALSE  # When FALSE and fitting: reuse existing design dump if available.
+DESIGN_PATH       <- "output/designs/pixel_model_inputs.rds" # path to design dump
+
 PROMOTE_NATURAL_OTHER <- TRUE   # move Natural_other out of the non-choosable residual
 MODEL_YEARS  <- "2018"      # target year(s) of the land-use map
 FOCAL_YEARS  <- "2010"      # year the focal (neighbourhood composition) covariate is taken from
 COV_YEARS    <- "2020"      # exogenous covariate year (spei48_2018 is renamed _2020 upstream)
 MASTER_PARQUET <- "/Users/leopoldringwald/gamble_local_data/prior_model_1km_master_inputs.parquet"
-  # Local copy of the 1 km covariate parquet. Reading it straight off Google Drive intermittently
-  # fails with `IOError ... [errno 60] Operation timed out` under arrow's parallel reads.
-  # Set to "" to use the newest copy the driver can resolve itself.
+  # Local copy of the 1 km covariate parquet. Set to "" to use the newest copy the driver resolves.
 
-# --- only used when BUILD_DESIGN_ONLY = FALSE ---
+# --- MCMC Sampling Settings (used when BUILD_DESIGN_ONLY = FALSE) ---
 NITER   <- 1000L        # total sweeps
-NBURN   <- 250L         # discarded; MUST be < NITER (see the guard below)
-NCHAINS <- 1L           # fitted in parallel over min(cores - 1, NCHAINS) workers
-THIN    <- 4L           # store every k-th retained draw
+NBURN   <- 250L         # discarded sweeps; MUST be < NITER
+NCHAINS <- 1L           # parallel chains
+THIN    <- 1L           # retain every k-th draw
+SUBSAMPLE <- 0L         # 0 = all pixels; >0 subsamples for rapid testing
 
-# --- BART on the terrain surface (only used when BUILD_DESIGN_ONLY = FALSE) ---
-# The sampler's BART priors are the validated ones -- symmetric/CLR trees plus prevalence-scaled
-# leaf shrinkage, measured together at +75.4 held-out against a linear-terrain arm (symmetric
-# alone +38.4, k~prevalence alone fixes only the rare classes). They live in
-# drivers/run_lu_pixel_model.R and are not re-litigated here.
+# --- BART on the terrain surface (used when BUILD_DESIGN_ONLY = FALSE) ---
 USE_BART   <- FALSE     # TRUE = terrain enters as a tree ensemble instead of linear terms
-BART_COLS  <- "topo"    # "topo" = the terrain block ONLY (Slope_rad, Elevation, Aspect_cos/sin_mean,
-                        #          + lon/lat when ADD_COORDS); socio/climate/soil/yields stay LINEAR
-                        #          and interpretable. Measured: pure-topo-in-BART beats the hybrid.
-                        # ""     = every non-focal, non-intercept column goes to BART
-                        # "a,b"  = an explicit, exact column list
-ADD_COORDS <- FALSE     # TRUE = add lon/lat as design columns. REQUIRED for BART_COLS="topo" to
-                        # cover coordinates: the GLOBIOM design carries only the 4 terrain columns,
-                        # so without this "topo" quietly resolves to 4 of the 6 you probably meant.
-COORD_TYPE <- "lonlat"  # "lonlat" = EPSG:4326 degrees (readable) | "laea" = native EPSG:3035 metres
+BART_COLS  <- "topo"    # "topo" = Slope_rad, Elevation, Aspect_cos/sin_mean (+ lon/lat when ADD_COORDS)
+ADD_COORDS <- FALSE     # TRUE = add lon/lat as design columns
+COORD_TYPE <- "lonlat"  # "lonlat" = EPSG:4326 degrees | "laea" = native metres
 ## ========================================================================= ##
 
-# nburn and niter are read INDEPENDENTLY by the driver (run_lu_pixel_model.R:89-90) with no
-# ordering check, and its own burn-in default is 4000 -- so a panel that sets NITER but not NBURN
-# silently asks for 1000 sweeps behind a 4000-sweep burn-in. Fail here instead of at hour six.
+if (!file.exists("codes/mnl_aux_func.R"))
+  stop("Working directory is not the repo root. Open gamble-core.Rproj, or setwd() to gamble-core/.")
+
 if (!isTRUE(BUILD_DESIGN_ONLY) && NBURN >= NITER)
   stop(sprintf("NBURN (%d) must be < NITER (%d)", NBURN, NITER))
 
-if (!file.exists("drivers/run_lu_pixel_model.R"))
-  stop("Working directory is not the repo root. Open gamble-core.Rproj, or setwd() to gamble-core/.")
+# Determine whether design dump needs to be assembled
+need_build <- isTRUE(BUILD_DESIGN_ONLY) || isTRUE(REBUILD_DESIGN) || !file.exists(DESIGN_PATH)
 
-vars <- c(DRIVER_CLASS_COLS = CLASSIFICATION,
-          DRIVER_PROMOTE_NATURAL_OTHER = if (isTRUE(PROMOTE_NATURAL_OTHER)) "TRUE" else "FALSE",
-          DRIVER_MODEL_YEARS = MODEL_YEARS, DRIVER_FOCAL_YEARS = FOCAL_YEARS,
-          DRIVER_COV_YEARS = COV_YEARS, DRIVER_NITER = as.character(NITER),
-          DRIVER_NBURN = as.character(NBURN), DRIVER_THIN = as.character(THIN),
-          DRIVER_NCHAINS = as.character(NCHAINS))
-# BART knobs are passed ONLY when requested, so an unrelated design build keeps the driver's own
-# defaults rather than inheriting a stale panel setting.
-if (isTRUE(USE_BART)) vars <- c(vars, DRIVER_USE_BART = "TRUE", DRIVER_BART_COLS = BART_COLS)
-if (isTRUE(ADD_COORDS)) vars <- c(vars, DRIVER_ADD_COORDS = "TRUE", DRIVER_COORD_TYPE = COORD_TYPE)
-# BOTH dump flags are required: DRIVER_DUMP_EXIT alone is nested INSIDE the DUMP_INPUTS block, so on
-# its own it neither dumps nor exits -- it silently runs a full flat fit instead.
-if (isTRUE(BUILD_DESIGN_ONLY)) vars <- c(vars, DRIVER_DUMP_INPUTS = "TRUE", DRIVER_DUMP_EXIT = "TRUE")
-if (nzchar(MASTER_PARQUET))    vars <- c(vars, GAMBLE_MASTER_PARQUET = MASTER_PARQUET)
-do.call(Sys.setenv, as.list(vars))
+if (need_build) {
+  message(sprintf(">>> Assembling DESIGN dump: classification=%s | years %s (focal %s, cov %s)",
+                  CLASSIFICATION, MODEL_YEARS, FOCAL_YEARS, COV_YEARS))
+  vars <- c(DRIVER_CLASS_COLS = CLASSIFICATION,
+            DRIVER_PROMOTE_NATURAL_OTHER = if (isTRUE(PROMOTE_NATURAL_OTHER)) "TRUE" else "FALSE",
+            DRIVER_MODEL_YEARS = MODEL_YEARS, DRIVER_FOCAL_YEARS = FOCAL_YEARS,
+            DRIVER_COV_YEARS = COV_YEARS,
+            DRIVER_DUMP_INPUTS = "TRUE",
+            DRIVER_DUMP_EXIT = "TRUE",
+            DRIVER_DUMP_PATH = DESIGN_PATH)
+  if (isTRUE(ADD_COORDS)) vars <- c(vars, DRIVER_ADD_COORDS = "TRUE", DRIVER_COORD_TYPE = COORD_TYPE)
+  if (nzchar(MASTER_PARQUET) && file.exists(MASTER_PARQUET)) vars <- c(vars, GAMBLE_MASTER_PARQUET = MASTER_PARQUET)
+  do.call(Sys.setenv, as.list(vars))
+  source("drivers/run_lu_pixel_model.R", echo = FALSE)
+  message(">>> Design dump built -> ", DESIGN_PATH)
+}
 
-message(sprintf(">>> classification=%s | %s | years %s (focal %s, cov %s)",
-                CLASSIFICATION, if (isTRUE(BUILD_DESIGN_ONLY)) "DESIGN ONLY" else "FLAT FIT",
-                MODEL_YEARS, FOCAL_YEARS, COV_YEARS))
-if (!isTRUE(BUILD_DESIGN_ONLY))
-  message(sprintf(">>> %d sweeps (burn %d, thin %d) x %d chain(s) | BART %s%s",
-                  NITER, NBURN, THIN, NCHAINS,
-                  if (isTRUE(USE_BART)) sprintf("ON (cols=%s)", if (nzchar(BART_COLS)) BART_COLS else "all non-focal") else "OFF",
-                  if (isTRUE(ADD_COORDS)) sprintf(" | coords ON (%s)", COORD_TYPE) else ""))
-source("drivers/run_lu_pixel_model.R", echo = FALSE)
+if (!isTRUE(BUILD_DESIGN_ONLY)) {
+  message(sprintf(">>> Fitting FLAT MNL model: %d sweeps (burn %d, thin %d) x %d chain(s) | BART %s",
+                  NITER, NBURN, THIN, NCHAINS, if (isTRUE(USE_BART)) "ON" else "OFF"))
+  fit_vars <- c(DESIGN_PATH = DESIGN_PATH,
+                NITER = as.character(NITER),
+                NBURN = as.character(NBURN),
+                THIN = as.character(THIN),
+                N_CHAINS = as.character(NCHAINS),
+                SUBSAMPLE = as.character(SUBSAMPLE),
+                USE_BART = if (isTRUE(USE_BART)) "TRUE" else "FALSE")
+  do.call(Sys.setenv, as.list(fit_vars))
+  source("drivers/run_flat_fit.R", echo = FALSE)
+}
 
 ## ------------------------------- NEXT ------------------------------------- ##
-# Design written to output/designs/pixel_model_inputs.rds -> now run run/nested.R.
+# Design written to output/designs/pixel_model_inputs.rds -> now run run/nested.R
 # Check what you built:
 #   inp <- readRDS("output/designs/pixel_model_inputs.rds")
-#   dim(inp$X_mat); colnames(inp$Y_pixel); inp$class_nest   # class_nest = the curated tree
+#   dim(inp$X_mat); colnames(inp$Y_pixel); inp$class_nest

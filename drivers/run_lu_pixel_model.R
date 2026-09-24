@@ -108,12 +108,17 @@ adaptive_separation_soft <- FALSE # FALSE = observe-only (logs n_soft); TRUE = a
 adaptive_sep_overlap_hard <- 0.0 # support overlap <= this => HARD mask (severe separation)
 adaptive_sep_overlap_neutral <- 0.5 # support overlap >= this => healthy cell (pinned delta=1)
 
-# Parallel Settings (Windows-compatible multisession)
+# Parallel Settings
 N_CORES <- min(parallel::detectCores() - 1, N_CHAINS)
-plan(multisession, workers = N_CORES)
+if (.Platform$OS.type != "windows" && future::supportsMulticore()) {
+  plan(multicore, workers = N_CORES)
+  cat(sprintf("Parallel Plan: %s with %d workers (Limit: 10GB)\n", "multicore", N_CORES))
+} else {
+  plan(multisession, workers = N_CORES)
+  cat(sprintf("Parallel Plan: %s with %d workers (Limit: 10GB)\n", "multisession", N_CORES))
+}
 # Increase global size limit (e.g., 10GB) for massive pixel-level datasets
 options(future.globals.maxSize = 10 * 1024^3)
-cat(sprintf("Parallel Plan: %s with %d workers (Limit: 10GB)\n", "multisession", N_CORES))
 
 # Stabilization Settings
 STABILIZE_SPARSE_Y <- FALSE

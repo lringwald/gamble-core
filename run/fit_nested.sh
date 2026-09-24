@@ -19,7 +19,15 @@ cd "$(dirname "$0")/.."
 MODE="${1:-prod}"; VARIANT="${2:-factorized}"; RE_COLS="${3:-intercept}"; HS="${4:-symhs}"
 DESIGN="${NCUT_DESIGN:-output/designs/pixel_model_inputs.rds}"
 
-[ -f "$DESIGN" ] || { echo "FATAL: no design dump at $DESIGN (build one with run/flat.R)"; exit 1; }
+if [ ! -f "$DESIGN" ]; then
+  cand=$(ls -t output/designs/pixel_model_inputs*.rds output/pixel_model_inputs*.rds 2>/dev/null | head -1 || true)
+  if [ -n "$cand" ] && [ -f "$cand" ]; then
+    DESIGN="$cand"
+    echo ">>> Auto-detected design dump: $DESIGN"
+  else
+    echo "FATAL: no design dump at $DESIGN (build one with run/flat.R or TASK=flat_design)"; exit 1
+  fi
+fi
 case "$MODE"    in smoke) SUB=6000; NITER=200 ;; prod) SUB=0; NITER=1000 ;;
                    *) echo "FATAL: mode must be smoke|prod"; exit 1 ;; esac
 case "$VARIANT" in factorized) USE_IV=FALSE ;; iv) USE_IV=TRUE ;;

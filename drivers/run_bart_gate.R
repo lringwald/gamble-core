@@ -174,11 +174,12 @@ for (nm in ARMS) {
     # re-source the sampler -- sourceCpp pointers do not survive into a fresh R process
     # ("NULL value passed as symbol address").
     suppressMessages(library(future.apply))
-    future::plan(future::multisession, workers = min(NCH, NCORES))
+    plan_type <- if (.Platform$OS.type != "windows" && future::supportsMulticore()) future::multicore else future::multisession
+    future::plan(plan_type, workers = min(NCH, NCORES))
     invisible(future.apply::future_lapply(seq_len(NCH), function(ci) {
       source("codes/mnl_aux_func.R"); source("codes/mnlogit_rcpp_sym.R")
       fit_arm(ub, ci, dp); NULL
-    }, future.seed = TRUE))
+    }, future.seed = TRUE, future.stdout = NA))
     future::plan(future::sequential)
   } else {
     for (ci in seq_len(NCH)) invisible(fit_arm(ub, ci, dp))

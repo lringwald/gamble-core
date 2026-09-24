@@ -20,16 +20,8 @@ reg = json.loads((ROOT / "config/knobs.json").read_text())
 knobs = reg["knobs"]
 
 
-def project_tasks():
-    out = []
-    for d in sorted((ROOT / "projects").glob("*/gamble_model/run.sh")):
-        name = d.parent.parent.name
-        out += [f"{name}_{a}" for a in ("smoke", "design", "fit", "all", "more")]
-    return out
-
-
-CORE_TASKS = ["nested", "flat_design", "flat_fit", "count", "report", "recover_bart", "bart_gate", "test"]
-ALL_TASKS = None  # set once project_tasks() is callable
+CORE_TASKS = ["flat_fit", "flat_design", "nested", "report", "recover_bart", "bart_gate", "count", "test"]
+ALL_TASKS = CORE_TASKS
 
 
 def sh_quote(s):
@@ -50,15 +42,13 @@ for k in knobs:
 (ROOT / "config/knobs.generated.sh").write_text("\n".join(lines) + "\n")
 
 # ---- routine schema -----------------------------------------------------------------------
-ALL_TASKS = project_tasks() + CORE_TASKS
-
 props = {
     "TASK": {"type": "string", "title": "Workflow / Task",
              "description": "Which workflow to run. A default set here is NOT enough: the platform "
                             "must pass the value into the container, as a command argument or in the "
                             "environment. The run log names the source it arrived from.",
-             "default": "BMLEH_Los1_CAPRI_smoke",
-             "enum": project_tasks() + CORE_TASKS},
+             "default": "flat_fit",
+             "enum": CORE_TASKS},
     "PROFILE": {"type": "string", "title": "Profile",
                 "description": "A named settings file in config/profiles/. Individual fields below "
                                "still override it. Recorded in the manifest, so a run is reproducible "
@@ -68,7 +58,6 @@ props = {
 }
 FAMILY_TASKS = {"nested": ["nested"],
                 "flat": ["flat_design", "flat_fit"],
-                "project": project_tasks(),
                 "count": ["count"],
                 "recover": ["recover_bart"],
                 "gate": ["bart_gate"]}

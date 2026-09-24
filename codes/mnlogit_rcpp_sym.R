@@ -4139,6 +4139,12 @@ mnlogit_rcpp_sym <- function(X, Y, intercept = FALSE, baseline = ncol(Y),
         phase <- if (iter <= nburn) "[Burn-in]" else "[Sampling]"
         p_msg <- sprintf("Chain %s: Iteration %d / %d %s", ifelse(is.null(chain_id), "?", chain_id), iter, niter, phase)
         progress_cb(message = p_msg)
+        if (save_posterior_to_disk) {
+          c_label <- if (is.null(chain_id)) "0" else as.character(chain_id)
+          try(writeLines(sprintf("%d %d %s %s", iter, niter, phase, format(Sys.time())),
+                         file.path(posterior_disk_path, sprintf("progress_chain_%s.txt", c_label))),
+              silent = TRUE)
+        }
       } else {
         progress_cb() # advance without changing message
       }

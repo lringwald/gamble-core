@@ -14,7 +14,7 @@
 # =============================================================================
 
 ## ============================ CONTROL PANEL ============================== ##
-DESIGN     <- "output/designs/pixel_model_inputs.rds"  # design dump from run/flat.R (BUILD_DESIGN_ONLY=TRUE)
+DESIGN     <- Sys.getenv("DESIGN_PATH", "output/designs/pixel_model_inputs.rds")
 BRANCH     <- "GLOBIOM"        # "GLOBIOM" | "AGMIP" | "BIOCLIMA" -- only used when the dump carries
                                # no curated `class_nest` column; otherwise the curated tree wins.
 VARIANT    <- "factorized"     # "factorized" = levels fit independently (VALIDATED CHOICE)
@@ -41,8 +41,19 @@ STORE_DIR  <- NULL             # NULL = auto (tagged by variant/RE/HS). Kill-saf
 
 if (!file.exists("codes/nested_cut.R"))
   stop("Working directory is not the repo root. Open gamble-core.Rproj, or setwd() to gamble-core/.")
-if (!file.exists(DESIGN))
-  stop("Design dump not found: ", DESIGN, "\n  Build one with run/flat.R (BUILD_DESIGN_ONLY <- TRUE).")
+
+if (!file.exists(DESIGN)) {
+  cands <- c(list.files("output/designs", pattern = "^pixel_model_inputs.*\\.rds$", full.names = TRUE),
+             list.files("output", pattern = "^pixel_model_inputs.*\\.rds$", full.names = TRUE))
+  cands <- unique(cands[file.exists(cands)])
+  if (length(cands) > 0) {
+    cands <- cands[order(file.mtime(cands), decreasing = TRUE)]
+    DESIGN <- cands[1]
+    message(">>> Auto-detected newest design dump: ", DESIGN)
+  } else {
+    stop("Design dump not found: ", DESIGN, "\n  Build one with run/flat.R (BUILD_DESIGN_ONLY <- TRUE) or TASK=flat_design.")
+  }
+}
 
 USE_IV <- switch(VARIANT, factorized = "FALSE", iv = "TRUE",
                  stop("VARIANT must be 'factorized' or 'iv'"))

@@ -15,7 +15,7 @@ cd "$(dirname "$0")"
 # The knob registry, generated from config/knobs.json (tools/gen_config.py).
 [ -f config/knobs.generated.sh ] && . config/knobs.generated.sh
 
-GAMBLE_TASKS="bmleh bmleh_all bmleh_smoke bmleh_design bmleh_fit nested flat_design flat_fit count report recover_bart bart_gate test"
+GAMBLE_TASKS="flat_fit flat_design nested count report recover_bart bart_gate test"
 is_task() { case " $GAMBLE_TASKS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
 # =============================================================================
@@ -252,18 +252,20 @@ else
   echo "Nothing arrived as a command argument, or in TASK / task / WORKFLOW /"
   echo "workflow / GAMBLE_TASK. A default set in a routine's config schema is"
   echo "NOT enough -- the platform has to pass the value into the container:"
-  echo "    command:  ./entrypoint.sh BMLEH_Los1_CAPRI_smoke"
-  echo "    or env:   TASK=BMLEH_Los1_CAPRI_smoke"
+  echo "    command:  ./entrypoint.sh flat_fit"
+  echo "    or env:   TASK=flat_fit"
   echo
   echo "  Core tasks:    $GAMBLE_TASKS"
-  echo "  Project tasks: $(gamble_project_tasks)"
+  _pt="$(gamble_project_tasks)"; [ -n "$_pt" ] && echo "  Project tasks: $_pt"
   echo "------------------------------------------------------------------"
   exit 1
 fi
 
-# The bmleh* spellings predate discovery. Keep them working, and resolve them to the explicit name
-# so a config pinned to the old form neither breaks nor stays vague about which project it means.
+# Normalize task aliases (e.g. flat -> flat_fit, fit -> flat_fit, design -> flat_design)
 case "$TASK" in
+  flat|fit)        TASK="flat_fit" ;;
+  design)          TASK="flat_design" ;;
+  nested_fit)      TASK="nested" ;;
   bmleh|bmleh_all) TASK="BMLEH_Los1_CAPRI_all" ;;
   bmleh_smoke)     TASK="BMLEH_Los1_CAPRI_smoke" ;;
   bmleh_design)    TASK="BMLEH_Los1_CAPRI_design" ;;
@@ -273,7 +275,7 @@ esac
 if ! is_task "$TASK" && ! resolve_project_task "$TASK"; then
   echo "ERROR: unknown task '$TASK' (from $TASK_SRC)."
   echo "  Core tasks:    $GAMBLE_TASKS"
-  echo "  Project tasks: $(gamble_project_tasks)"
+  _pt="$(gamble_project_tasks)"; [ -n "$_pt" ] && echo "  Project tasks: $_pt"
   exit 1
 fi
 knob_record TASK "$TASK" "$TASK_SRC"
@@ -661,6 +663,7 @@ case "$TASK" in
     export DRIVER_PROMOTE_NATURAL_OTHER="TRUE"
     export DRIVER_DUMP_INPUTS="TRUE"
     export DRIVER_DUMP_EXIT="TRUE"
+    [ -n "$DESIGN_PATH" ] && [ "$DESIGN_PATH" != "auto" ] && export DRIVER_DUMP_PATH="$DESIGN_PATH"
 
     Rscript drivers/run_lu_pixel_model.R
     ;;
@@ -668,14 +671,26 @@ case "$TASK" in
   flat_fit)
     echo ">>> Task: Fitting FLAT pixel model (no nesting)"
     echo "    Classification: $CLASSIFICATION"
+    echo "    Design:         ${DESIGN_PATH:-auto}"
     echo "    Iterations:     $NITER"
     echo "    Chains:         $N_CHAINS"
     export DRIVER_CLASS_COLS="$CLASSIFICATION"
     export DRIVER_PROMOTE_NATURAL_OTHER="TRUE"
     export DRIVER_NITER="$NITER"
     export DRIVER_NCHAINS="$N_CHAINS"
+    export DESIGN_PATH="${DESIGN_PATH:-output/designs/pixel_model_inputs.rds}"
+    export OUTPUT_DIR="$OUTPUT_DIR"
 
-    Rscript drivers/run_lu_pixel_model.R
+    # If the design dump does not exist yet, build it first
+    if [ ! -f "$DESIGN_PATH" ]; then
+      echo ">>> Design dump not found at $DESIGN_PATH; assembling it first via drivers/run_lu_pixel_model.R..."
+      export DRIVER_DUMP_INPUTS="TRUE"
+      export DRIVER_DUMP_EXIT="TRUE"
+      export DRIVER_DUMP_PATH="$DESIGN_PATH"
+      Rscript drivers/run_lu_pixel_model.R
+    fi
+
+    Rscript drivers/run_flat_fit.R
     ;;
 
   count)
