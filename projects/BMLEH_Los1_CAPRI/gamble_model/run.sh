@@ -127,11 +127,28 @@ more() {
     BM_NITER="${BM_NITER:-5000}" BM_THIN="${BM_THIN:-1}" Rscript "$P/estimate_prior.R"
 }
 
+# Generate report for an existing run directory without refitting
+report() {
+  local target="${1:-}"
+  if [ -z "$target" ]; then
+    for d in $(ls -1d "$RES"/prior_* 2>/dev/null | sort -r); do
+      if [ -d "$d/posterior" ]; then target="$d"; break; fi
+    done
+  fi
+  if [ -z "$target" ] || [ ! -d "$target" ]; then
+    echo "no prior run found under $RES."
+    exit 1
+  fi
+  echo ">>> reporting $target"
+  BM_INPUT="${BM_INPUT:-${DESIGN_PATH:-$DUMP}}" Rscript "$P/make_report.R" "$target"
+}
+
 case "${1:-all}" in
   design) design ;;
   fit)    fit ;;
   more)   more "${2:-}" ;;
+  report) report "${2:-}" ;;
   smoke)  design; fit --smoke ;;
   all)    design; fit ;;
-  *) echo "usage: $0 [design|fit|more [dir]|smoke|all]"; exit 1 ;;
+  *) echo "usage: $0 [design|fit|more [dir]|report [dir]|smoke|all]"; exit 1 ;;
 esac

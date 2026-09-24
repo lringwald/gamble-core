@@ -429,7 +429,8 @@ heat <- function(M, CR, rowlab, collab, digits = 2, rowmark = NULL, unit = "per 
          sprintf('<p class="sub">Tile SIZE = posterior certainty of sign (12%% at p=0.5, full cell at p=1). Colour = signed effect (%s), saturating at |%.3g|.</p>',
                  unit, vlim)) }
 
-conv_bad <- conv[block == "log_lik (joint)", rhat_max] > 1.05
+.mx <- conv[block == "log_lik (joint)", rhat_max]
+conv_bad <- length(.mx) > 0 && !is.na(.mx) && isTRUE(.mx > 1.05)
 html <- paste0('<meta charset="utf-8"><title>BMLEH prior — ', esc(basename(RUN)), '</title>
 <style>
  :root{--ink:#1b1f23;--mut:#5b6672;--line:#dfe3e8;--bg:#fff;--warnbg:#fdf3f0;--warnln:#c1543b;--ok:#3f8f6b}
@@ -480,9 +481,10 @@ html <- paste0('<meta charset="utf-8"><title>BMLEH prior — ', esc(basename(RUN
    'reason to hide it.</p><div class="wrap">', tbl(set_sw, 4), '</div>') else '', '
 
 <h2>Convergence</h2>
-<div class="box', if (!conv_bad) ' ok' else '', '"><b>',
- if (conv_bad) 'The joint chain has not mixed.' else 'Joint chain mixed.',
- '</b><br>', if (conv_bad) paste0('log_lik Rhat is ', round(conv[block=="log_lik (joint)", rhat_max],2),
+<div class="box', if (!conv_bad && length(chs) >= 2) ' ok' else '', '"><b>',
+ if (length(chs) < 2) 'Single chain run.' else if (conv_bad) 'The joint chain has not mixed.' else 'Joint chain mixed.',
+ '</b><br>', if (length(chs) < 2) 'Rhat is undefined for a single chain. Rerun with N_CHAINS &ge; 2 for convergence diagnostics.'
+ else if (conv_bad) paste0('log_lik Rhat is ', round(conv[block=="log_lik (joint)", rhat_max],2),
  '. Note that <em>mu</em> looks healthy by its median — per-parameter medians flatter a chain whose ',
  'chains have each settled somewhere different. Point estimates of abundant classes are usable; ',
  'joint statements and every uncertainty interval are not.') else
@@ -625,7 +627,8 @@ if (!is.null(RC)) paste0("### MCMC\n\n", mdt(set_mcmc, 4), "\n\n",
   "### Sampler switches\n\nEvery non-default argument the sampler was called with, including those ",
   "hardcoded in `estimate_prior.R`.\n\n", mdt(set_sw, 4), "\n\n") else "",
 "## Convergence\n\n",
-if (conv_bad) paste0("**The joint chain has not mixed.** log_lik Rhat is ",
+if (length(chs) < 2) "Single chain run - Rhat is undefined. Rerun with N_CHAINS >= 2 for convergence diagnosis.\n\n"
+else if (conv_bad) paste0("**The joint chain has not mixed.** log_lik Rhat is ",
   round(conv[block=="log_lik (joint)", rhat_max], 2),
   ". Per-parameter medians flatter a chain whose chains have each settled somewhere different. ",
   "Point estimates of abundant classes are usable; joint statements and every uncertainty interval are not.\n\n")
@@ -674,5 +677,7 @@ writeLines(md, file.path(RUN, "report.md"))
 cat(sprintf("\nwrote %s\n     %s\n     %s\n     %s\n", file.path(RUN, "report.html"),
     file.path(RUN, "report.md"),
     file.path(RUN, "beta_rotated.rds"), file.path(RUN, "beta_rotated.csv.gz")))
-cat(sprintf("held-out McFadden %.4f | log_lik Rhat %.3f | rotated rows %s\n",
-    1 - ll/nl, conv[block == "log_lik (joint)", rhat_max], format(nrow(rot), big.mark = ",")))
+cat(sprintf("held-out McFadden %.4f | log_lik Rhat %s | rotated rows %s\n",
+    1 - ll/nl,
+    if (length(.mx) && !is.na(.mx)) sprintf("%.3f", .mx) else "-",
+    format(nrow(rot), big.mark = ",")))

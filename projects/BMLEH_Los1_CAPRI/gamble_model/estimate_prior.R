@@ -354,5 +354,38 @@ saveRDS(list(P=P, rows=rows, per_class=per, cats=cats, ll=S_all$ll, mcfadden=S_a
         file.path(OUT, "prior_fit.rds"))
 fwrite(per, file.path(OUT, "per_class_fit.csv"))
 cat(sprintf("\nsaved %s\n", file.path(OUT, "prior_fit.rds")))
-cat(sprintf("diagnose with: Rscript diagnose_posterior.R %s\n", dp))
-cat(sprintf("elapsed %.1f h\n", as.numeric(difftime(Sys.time(), t0, units="hours"))))
+
+# =============================================================================
+# POST-ESTIMATION CONVERGENCE DIAGNOSTICS & DOWNSCALER REPORT
+# =============================================================================
+DO_DIAG <- isTRUE(as.logical(Sys.getenv("BM_DIAGNOSE", "TRUE")))
+DO_REP  <- isTRUE(as.logical(Sys.getenv("BM_REPORT", "TRUE")))
+
+if (DO_DIAG) {
+  diag_script <- "postprocess/diagnose_posterior.R"
+  if (file.exists(diag_script)) {
+    cat(sprintf("\n%s\nPOSTERIOR CONVERGENCE DIAGNOSTICS (diagnose_posterior.R)\n%s\n", strrep("=", 70), strrep("=", 70)))
+    tryCatch({
+      system2("Rscript", c(diag_script, dp))
+    }, error = function(e) {
+      cat(sprintf("WARNING: diagnose_posterior.R failed: %s\n", e$message))
+    })
+  } else {
+    cat(sprintf("diagnose with: Rscript diagnose_posterior.R %s\n", dp))
+  }
+}
+
+if (DO_REP) {
+  rep_script <- "projects/BMLEH_Los1_CAPRI/gamble_model/make_report.R"
+  if (file.exists(rep_script)) {
+    cat(sprintf("\n%s\nGENERATING PERFORMANCE & DOWNSCALER REPORT (make_report.R)\n%s\n", strrep("=", 70), strrep("=", 70)))
+    tryCatch({
+      Sys.setenv(BM_INPUT = INPUT)
+      system2("Rscript", c(rep_script, OUT))
+    }, error = function(e) {
+      cat(sprintf("WARNING: make_report.R failed: %s\n", e$message))
+    })
+  }
+}
+
+cat(sprintf("\nelapsed %.1f h\n", as.numeric(difftime(Sys.time(), t0, units="hours"))))
