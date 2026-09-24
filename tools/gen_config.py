@@ -136,7 +136,20 @@ schema = {"root": {"type": "object",
 #                                      rather than set to a default, so it cannot quietly beat the
 #                                      profile it was supposed to inherit from.
 #   full (routine_config.schema.full.json)  every knob, for when a one-off really wants the lot.
-LEAN = ["TASK", "GAMBLE_WORK_DIR", "RUN_ID", "NITER", "N_CHAINS", "EXTRA"]
+LEAN = [
+    "TASK",
+    "PROFILE",
+    "CLASSIFICATION",
+    "VARIANT",
+    "RE_BLOCK",
+    "USE_BART",
+    "SUBSAMPLE",
+    "NITER",
+    "N_CHAINS",
+    "RUN_ID",
+    "GAMBLE_WORK_DIR",
+    "EXTRA",
+]
 
 lean_props = {}
 for k in LEAN:

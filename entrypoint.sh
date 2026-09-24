@@ -129,18 +129,25 @@ resolve_registry() {
   local kn def envvar scope cur src
   for kn in "${KNOB_REGISTRY[@]}"; do
     eval "def=\$KNOB_DEFAULT_$kn"; eval "envvar=\$KNOB_ENV_$kn"; eval "scope=\$KNOB_SCOPE_$kn"
+    eval "blank=\$KNOB_BLANK_$kn"
     cur="${!kn-}"
-    if   [ -n "$cur" ];         then src="environment"
-    elif extra_has "$kn";       then cur="$(extra_get "$kn")";   src="EXTRA override"
-    elif profile_has "$kn";     then cur="$(profile_get "$kn")"; src="profile:$PROFILE"
-    else cur="$def";                 src="default"
+    if extra_has "$kn"; then
+      cur="$(extra_get "$kn")"
+      src="EXTRA override"
+    elif [ -n "$cur" ] && { [ -z "$blank" ] || [ "$cur" != "$blank" ]; } && { [ -z "$PROFILE" ] || ! profile_has "$kn" || [ "$cur" != "$def" ]; }; then
+      src="environment"
+    elif profile_has "$kn"; then
+      cur="$(profile_get "$kn")"
+      src="profile:$PROFILE"
+    else
+      cur="$def"
+      src="default"
     fi
     printf -v "$kn" '%s' "$cur"
     # A knob resting on its BLANK SENTINEL means "not set". The routine form marks every declared
     # property required and refuses an empty string, so an optional knob needs a value the form can
     # hold; not exporting it here is what makes the driver fall back to its own default, exactly as
     # if the field had been left empty.
-    eval "blank=\$KNOB_BLANK_$kn"
     if [ -n "$blank" ] && [ "$cur" = "$blank" ]; then
       src="$src (unset: '$blank')"
       KNOB_NAMES+=("$kn"); KNOB_VALUES+=("$cur"); KNOB_SOURCES+=("$src")

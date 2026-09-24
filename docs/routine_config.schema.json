@@ -33,16 +33,69 @@
           "test"
         ]
       },
-      "GAMBLE_WORK_DIR": {
+      "PROFILE": {
         "type": "string",
-        "title": "Mounted drive  [count, flat, gate, nested, project, recover]",
-        "description": "Mounted drive  [count, flat, gate, nested, project, recover] -- The FUSE mount where outputs and results are symlinked so the platform collects them.",
-        "default": "/mnt/wdrv/gamble-core"
+        "title": "Profile",
+        "description": "Profile -- A named settings file in config/profiles/. Individual fields below still override it. Recorded in the manifest, so a run is reproducible from its profile name.",
+        "default": "none",
+        "enum": [
+          "none",
+          "bmleh_los1_fit",
+          "bmleh_los1_smoke",
+          "globiom_bart_gate",
+          "globiom_bart_topo",
+          "globiom_flat_bart",
+          "globiom_nested_prod",
+          "globiom_nested_smoke"
+        ]
       },
-      "RUN_ID": {
+      "CLASSIFICATION": {
         "type": "string",
-        "title": "Run identifier / tag  [count, flat, gate, nested, project]",
-        "description": "Run identifier / tag  [count, flat, gate, nested, project] -- Tag appended to output directories to isolate runs (e.g. 'run1', 'exp_v2'). 'auto' uses the cluster job ID or timestamp.",
+        "title": "Classification [model spec]  [flat, nested]",
+        "description": "Classification [model spec]  [flat, nested] -- Class column(s) the model predicts -- decides what the outcome IS.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable with runs at the default.",
+        "default": "GLOBIOM_subclass",
+        "enum": [
+          "GLOBIOM_subclass",
+          "GLOBIOM_UNFCCC,GLOBIOM_mngmt",
+          "AgMIP_label",
+          "BIOCLIMA_DS_reporting",
+          "BMLEH_Los1_label"
+        ]
+      },
+      "VARIANT": {
+        "type": "string",
+        "title": "Nested variant [model spec]  [nested]",
+        "description": "Nested variant [model spec]  [nested] -- factorized = independent nests; iv = inclusive-value coupling.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable with runs at the default.",
+        "default": "factorized",
+        "enum": [
+          "factorized",
+          "iv"
+        ]
+      },
+      "RE_BLOCK": {
+        "type": "string",
+        "title": "RE block [model spec]  [nested]",
+        "description": "RE block [model spec]  [nested] -- Nested-path RE block. intercept is the documented standard.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable with runs at the default.",
+        "default": "intercept",
+        "enum": [
+          "intercept",
+          "intercept+socio"
+        ]
+      },
+      "USE_BART": {
+        "type": "string",
+        "title": "BART [model spec]  [flat]",
+        "description": "BART [model spec]  [flat] -- Terrain (and whatever BART_COLS names) enters as a tree ensemble instead of linear terms. FLAT PATH ONLY -- nested_cut has no BART support.  CHANGES WHAT IS ESTIMATED -- runs differing here are not comparable with runs at the default.",
+        "default": "FALSE",
+        "enum": [
+          "TRUE",
+          "FALSE"
+        ]
+      },
+      "SUBSAMPLE": {
+        "type": "string",
+        "title": "Pixel subsample  [gate, nested, project]",
+        "description": "Pixel subsample  [gate, nested, project] -- Pixel subsample size. 'auto' uses preset default (0/all for production, 5000 for smoke). Set a number to cap pixels for custom tests.",
         "default": "auto"
       },
       "NITER": {
@@ -56,6 +109,18 @@
         "title": "Chains  [count, flat, gate, nested, project]",
         "description": "Chains  [count, flat, gate, nested, project] -- Chains fitted in parallel; 'auto' uses the preset default (e.g. 4 for BMLEH production, 1 for smoke). Set a number for custom multi-chain runs.",
         "default": "auto"
+      },
+      "RUN_ID": {
+        "type": "string",
+        "title": "Run identifier / tag  [count, flat, gate, nested, project]",
+        "description": "Run identifier / tag  [count, flat, gate, nested, project] -- Tag appended to output directories to isolate runs (e.g. 'run1', 'exp_v2'). 'auto' uses the cluster job ID or timestamp.",
+        "default": "auto"
+      },
+      "GAMBLE_WORK_DIR": {
+        "type": "string",
+        "title": "Mounted drive  [count, flat, gate, nested, project, recover]",
+        "description": "Mounted drive  [count, flat, gate, nested, project, recover] -- The FUSE mount where outputs and results are symlinked so the platform collects them.",
+        "default": "/mnt/wdrv/gamble-core"
       },
       "EXTRA": {
         "type": "string",
