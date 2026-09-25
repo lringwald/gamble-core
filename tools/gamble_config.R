@@ -39,6 +39,7 @@ gamble_config <- function(task = c("flat_fit", "nested", "flat_design", "report"
                           iterations = "auto",
                           chains = "auto",
                           cores = "auto",
+                          progress_sec = 600,
                           run_id = "auto",
                           work_dir = "/mnt/wdrv/gamble-core",
                           overrides = list()) {
@@ -106,7 +107,8 @@ gamble_config <- function(task = c("flat_fit", "nested", "flat_design", "report"
       nburn = if (identical(nburn, "auto")) "auto" else as.integer(nburn),
       iterations = if (identical(iterations, "auto")) "auto" else as.integer(iterations),
       chains = if (identical(chains, "auto")) "auto" else as.integer(chains),
-      cores = if (identical(cores, "auto")) "auto" else as.integer(cores)
+      cores = if (identical(cores, "auto")) "auto" else as.integer(cores),
+      progress_sec = if (identical(progress_sec, "auto")) "auto" else as.integer(progress_sec)
     ),
     system = list(
       work_dir = work_dir
@@ -158,6 +160,9 @@ compile_to_env <- function(cfg) {
   env[["NITER"]] <- as.character(sampling$iterations %||% "auto")
   env[["N_CHAINS"]] <- as.character(sampling$chains %||% "auto")
   env[["N_CORES"]] <- as.character(sampling$cores %||% "auto")
+  if (!identical(sampling$progress_sec, "auto") && !is.null(sampling$progress_sec)) {
+    env[["PROGRESS_SEC"]] <- as.character(sampling$progress_sec)
+  }
 
   # 4. System Mounts
   system_opts <- cfg$system %||% list()

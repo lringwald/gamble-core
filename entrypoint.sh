@@ -774,7 +774,19 @@ case "$TASK" in
 
   report)
     echo ">>> Task: Generating fit report"
-    Rscript postprocess/nested_report.R
+    NESTED_FIT=$(ls -t output/nested_cut_*.rds 2>/dev/null | head -1)
+    FLAT_FIT=$(find results/gamble_model output/results -mindepth 2 -maxdepth 2 -type d 2>/dev/null | sort -r | head -1)
+    if [ -n "$NESTED_FIT" ] && [ -f "$NESTED_FIT" ]; then
+      echo ">>> Detected nested fit: $NESTED_FIT"
+      Rscript postprocess/nested_report.R "$NESTED_FIT"
+    elif [ -n "$FLAT_FIT" ] && [ -d "$FLAT_FIT" ] && [ -f "postprocess/model_report.R" ]; then
+      echo ">>> Detected flat fit: $FLAT_FIT"
+      export REPORT_INPUT="${DESIGN_PATH:-output/designs/pixel_model_inputs.rds}"
+      Rscript postprocess/model_report.R "$FLAT_FIT"
+    else
+      echo "ERROR: No nested (output/nested_cut_*.rds) or flat (results/gamble_model/) fit found to report."
+      exit 1
+    fi
     ;;
 
   test)

@@ -351,7 +351,7 @@ refresh_workers <- function() {
 # Pair BOTH halves at the call site -- a callback without future.stdout = NA is still invisible:
 #   progress_cb = make_progress_cb(sprintf("chain %d", ci), every_sec, niter)
 #   future_lapply(..., future.stdout = NA)
-make_progress_cb <- function(label, every_sec = 30, niter = NA_integer_) {
+make_progress_cb <- function(label, every_sec = 600, niter = NA_integer_) {
   if (!is.finite(every_sec) || every_sec <= 0) return(function(...) invisible(NULL))  # silent
   e <- new.env(parent = emptyenv())
   e$last <- as.numeric(Sys.time()) - 1e6
@@ -372,11 +372,19 @@ make_progress_cb <- function(label, every_sec = 30, niter = NA_integer_) {
         e$phase <- m_iter[4]
       }
     }
-    # Always emit on final iteration or when throttled duration has passed
+    # Always emit on final iteration or when throttled duration has passed (default 10 min)
     if (now - e$last < every_sec && (!is.finite(e$total) || e$n < e$total)) return(invisible())
     e$last <- now
-    el <- (now - e$t0) / 60
+    sec_el <- max(0.001, now - e$t0)
+    el <- sec_el / 60
     eta <- if (is.finite(e$total) && e$total > 0 && e$n > 0) max(0, el / e$n * (e$total - e$n)) else NA_real_
+
+    # Rate: iterations per second (samples/sec)
+    rate <- if (sec_el > 0 && e$n > 0) e$n / sec_el else NA_real_
+    rate_str <- if (is.finite(rate) && rate > 0) {
+      if (rate >= 1.0) sprintf("%.2f it/s", rate)
+      else sprintf("%.2f it/s (%.1fs/it)", rate, 1 / rate)
+    } else ""
 
     if (is.finite(e$total) && e$total > 0) {
       pct <- min(100L, max(0L, as.integer(round(100 * e$n / e$total))))
@@ -388,7 +396,10 @@ make_progress_cb <- function(label, every_sec = 30, niter = NA_integer_) {
     } else {
       txt <- sprintf("iteration %d", e$n)
     }
-    cat(sprintf("[%-7s] %s | %5.1fm elapsed%s\n", label, txt, el,
+    cat(sprintf("[%-7s] %s%s | %5.1fm elapsed%s\n",
+                label, txt,
+                if (nzchar(rate_str)) sprintf(" | %s", rate_str) else "",
+                el,
                 if (is.finite(eta)) sprintf(" | ~ETA %5.1fm", eta) else ""),
         file = stderr())
     flush(stderr())

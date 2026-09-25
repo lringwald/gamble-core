@@ -127,7 +127,7 @@ if (nzchar(RESUME)) {
 }
 
 SCORE_ONLY <- isTRUE(as.logical(.get_env_val(c("SCORE_ONLY", "GB_SCORE_ONLY"), "FALSE")))
-PROG_SEC   <- .get_env_num(c("PROGRESS_SEC", "GB_PROGRESS_SEC"), 30.0)
+PROG_SEC   <- .get_env_num(c("PROGRESS_SEC", "GB_PROGRESS_SEC"), 600.0)
 
 # ---- 3. Load Design Dump -----------------------------------------------------
 cat(sprintf(">>> Loading design dump: %s\n", INPUT))
@@ -387,6 +387,24 @@ if (isTRUE(as.logical(Sys.getenv("DIAGNOSE", "TRUE"))) && file.exists("postproce
     system2("Rscript", c("postprocess/diagnose_posterior.R", dp))
   }, error = function(e) {
     cat(sprintf("WARNING: diagnose_posterior.R failed: %s\n", conditionMessage(e)))
+  })
+}
+
+# ---- 10. Model Performance & HTML Report ------------------------------------
+if (!USE_BART && isTRUE(as.logical(Sys.getenv("REPORT", "TRUE"))) && file.exists("postprocess/model_report.R")) {
+  cat(sprintf("\n%s\nGENERATING HTML MODEL REPORT\n%s\n", strrep("=", 70), strrep("=", 70)))
+  tryCatch({
+    Sys.setenv(REPORT_INPUT = INPUT, REPORT_PROJECT = CLASSIFICATION)
+    system2("Rscript", c("postprocess/model_report.R", OUT))
+    rep_html <- file.path(OUT, "report.html")
+    if (file.exists(rep_html)) {
+      dir.create("output/report", recursive = TRUE, showWarnings = FALSE)
+      file.copy(rep_html, file.path("output/report", sprintf("flat_fit_%s_report.html", basename(OUT))), overwrite = TRUE)
+      cat(sprintf(">>> HTML report generated:\n    %s\n    %s\n",
+                  rep_html, file.path("output/report", sprintf("flat_fit_%s_report.html", basename(OUT)))))
+    }
+  }, error = function(e) {
+    cat(sprintf("WARNING: model_report.R failed: %s\n", conditionMessage(e)))
   })
 }
 
