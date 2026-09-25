@@ -61,24 +61,46 @@ source("codes/mnlogit_rcpp_sym.R")
 source("codes/spatial_split.R")
 
 # ---- 2. MCMC & Model Settings ------------------------------------------------
-NITER <- as.integer(Sys.getenv("NITER", Sys.getenv("DRIVER_NITER", Sys.getenv("GB_NITER", if (SMOKE) "600" else "6000"))))
-NBURN <- as.integer(Sys.getenv("NBURN", Sys.getenv("DRIVER_NBURN", Sys.getenv("GB_NBURN", if (SMOKE) "200" else "2000"))))
-THIN  <- as.integer(Sys.getenv("THIN",  Sys.getenv("DRIVER_THIN",  Sys.getenv("GB_THIN",  "1"))))
-NCH   <- as.integer(Sys.getenv("N_CHAINS", Sys.getenv("DRIVER_NCHAINS", Sys.getenv("GB_CHAINS", if (SMOKE) "1" else "4"))))
-NPIX  <- as.integer(Sys.getenv("SUBSAMPLE", Sys.getenv("GB_NPIX", if (SMOKE) "5000" else "0")))
-TESTF <- as.numeric(Sys.getenv("TESTFRAC", Sys.getenv("GB_TESTFRAC", "0.2")))
+.get_env_val <- function(keys, default = "") {
+  for (k in keys) {
+    v <- Sys.getenv(k, "")
+    if (nzchar(v) && !identical(v, "auto") && !identical(v, "default")) return(v)
+  }
+  default
+}
+.get_env_int <- function(keys, default) {
+  v <- .get_env_val(keys)
+  if (nzchar(v)) {
+    iv <- suppressWarnings(as.integer(v))
+    if (!is.na(iv)) return(iv)
+  }
+  as.integer(default)
+}
+.get_env_num <- function(keys, default) {
+  v <- .get_env_val(keys)
+  if (nzchar(v)) {
+    nv <- suppressWarnings(as.numeric(v))
+    if (!is.na(nv)) return(nv)
+  }
+  as.numeric(default)
+}
 
-NCORES <- as.integer(Sys.getenv("N_CORES", Sys.getenv("DRIVER_NCORES",
-                     as.character(max(1L, min(NCH, parallel::detectCores() - 1L))))))
+NITER  <- .get_env_int(c("NITER", "DRIVER_NITER", "GB_NITER", "BM_NITER"), if (SMOKE) 600L else 6000L)
+NBURN  <- .get_env_int(c("NBURN", "DRIVER_NBURN", "GB_NBURN", "BM_NBURN"), if (SMOKE) 200L else 2000L)
+THIN   <- .get_env_int(c("THIN", "DRIVER_THIN", "GB_THIN", "BM_THIN"), 1L)
+NCH    <- .get_env_int(c("N_CHAINS", "DRIVER_NCHAINS", "GB_CHAINS", "BM_CHAINS"), if (SMOKE) 1L else 4L)
+NPIX   <- .get_env_int(c("SUBSAMPLE", "GB_NPIX", "BM_NPIX"), if (SMOKE) 5000L else 0L)
+TESTF  <- .get_env_num(c("TESTFRAC", "GB_TESTFRAC", "BM_TESTFRAC"), 0.2)
+NCORES <- .get_env_int(c("N_CORES", "DRIVER_NCORES", "GB_CORES", "BM_CORES"), max(1L, min(NCH, parallel::detectCores())))
 
-RE_ASIS     <- isTRUE(as.logical(Sys.getenv("RE_ASIS", Sys.getenv("DRIVER_RE_ASIS", "TRUE"))))
-RE_SUPPORT  <- as.numeric(Sys.getenv("RE_SUPPORT", Sys.getenv("GB_RE_SUPPORT", "1")))
-SLAB_EST    <- isTRUE(as.logical(Sys.getenv("SLAB_C2", Sys.getenv("GB_SLAB_C2", "TRUE"))))
+RE_ASIS     <- isTRUE(as.logical(.get_env_val(c("RE_ASIS", "DRIVER_RE_ASIS", "GB_RE_ASIS"), "TRUE")))
+RE_SUPPORT  <- .get_env_num(c("RE_SUPPORT", "GB_RE_SUPPORT"), 1.0)
+SLAB_EST    <- isTRUE(as.logical(.get_env_val(c("SLAB_C2", "GB_SLAB_C2"), "TRUE")))
 SLAB_VAL    <- {
   .v <- Sys.getenv("SLAB_C2_VAL", Sys.getenv("GB_SLAB_C2_VAL", "4"))
-  if (identical(.v, "auto")) "auto" else as.numeric(.v)
+  if (identical(.v, "auto") || !nzchar(.v)) "auto" else as.numeric(.v)
 }
-USE_BART    <- isTRUE(as.logical(Sys.getenv("USE_BART", Sys.getenv("DRIVER_USE_BART", "FALSE"))))
+USE_BART    <- isTRUE(as.logical(.get_env_val(c("USE_BART", "DRIVER_USE_BART", "GB_BART"), "FALSE")))
 
 # Output path
 RUN_TAG <- Sys.getenv("RUN_ID", Sys.getenv("RUN_TAG", ""))
@@ -104,8 +126,8 @@ if (nzchar(RESUME)) {
   }
 }
 
-SCORE_ONLY <- isTRUE(as.logical(Sys.getenv("SCORE_ONLY", "FALSE")))
-PROG_SEC   <- as.numeric(Sys.getenv("PROGRESS_SEC", "30"))
+SCORE_ONLY <- isTRUE(as.logical(.get_env_val(c("SCORE_ONLY", "GB_SCORE_ONLY"), "FALSE")))
+PROG_SEC   <- .get_env_num(c("PROGRESS_SEC", "GB_PROGRESS_SEC"), 30.0)
 
 # ---- 3. Load Design Dump -----------------------------------------------------
 cat(sprintf(">>> Loading design dump: %s\n", INPUT))

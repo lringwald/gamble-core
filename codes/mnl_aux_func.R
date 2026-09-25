@@ -354,17 +354,41 @@ refresh_workers <- function() {
 make_progress_cb <- function(label, every_sec = 30, niter = NA_integer_) {
   if (!is.finite(every_sec) || every_sec <= 0) return(function(...) invisible(NULL))  # silent
   e <- new.env(parent = emptyenv())
-  e$last <- as.numeric(Sys.time()) - 1e6; e$t0 <- as.numeric(Sys.time()); e$n <- 0L
+  e$last <- as.numeric(Sys.time()) - 1e6
+  e$t0 <- as.numeric(Sys.time())
+  e$n <- 0L
+  e$total <- if (is.finite(niter) && niter > 0) as.integer(niter) else NA_integer_
+  e$phase <- "[Burn-in]"
+
   function(message = NULL, ...) {   # `message` shadows base::message -> call base:: explicitly
     e$n <- e$n + 1L
     now <- as.numeric(Sys.time())
-    if (now - e$last < every_sec) return(invisible())
+    if (!is.null(message)) {
+      # Extract iteration, total, and phase if reported by sampler (e.g. "Chain 1: Iteration 260 / 5000 [Burn-in]")
+      m_iter <- regmatches(message, regexec("Iteration[[:space:]]+([0-9]+)[[:space:]]*/[[:space:]]*([0-9]+)[[:space:]]*(\\[[^]]+\\])", message))[[1]]
+      if (length(m_iter) == 4) {
+        e$n <- as.integer(m_iter[2])
+        e$total <- as.integer(m_iter[3])
+        e$phase <- m_iter[4]
+      }
+    }
+    # Always emit on final iteration or when throttled duration has passed
+    if (now - e$last < every_sec && (!is.finite(e$total) || e$n < e$total)) return(invisible())
     e$last <- now
     el <- (now - e$t0) / 60
-    # ETA from the observed rate so far; only meaningful once niter is known.
-    eta <- if (is.finite(niter) && niter > 0 && e$n > 0) max(0, el / e$n * (niter - e$n)) else NA_real_
-    txt <- if (is.null(message)) sprintf("iteration %d", e$n) else sub("^Chain [^:]*: ", "", message)
-    cat(sprintf("[%-8s] %-38s elapsed %5.1fm%s\n", label, txt, el,
+    eta <- if (is.finite(e$total) && e$total > 0 && e$n > 0) max(0, el / e$n * (e$total - e$n)) else NA_real_
+
+    if (is.finite(e$total) && e$total > 0) {
+      pct <- min(100L, max(0L, as.integer(round(100 * e$n / e$total))))
+      bar_w <- 20L
+      n_eq <- min(bar_w, max(0L, as.integer(round(bar_w * e$n / e$total))))
+      b_char <- if (n_eq > 0L && n_eq < bar_w) ">" else if (n_eq == bar_w) "=" else ""
+      bar_str <- paste0("[", paste(rep("=", max(0L, n_eq - 1L)), collapse = ""), b_char, paste(rep(" ", bar_w - n_eq), collapse = ""), "]")
+      txt <- sprintf("%s %3d%% %-10s %d/%d", bar_str, pct, e$phase, e$n, e$total)
+    } else {
+      txt <- sprintf("iteration %d", e$n)
+    }
+    cat(sprintf("[%-7s] %s | %5.1fm elapsed%s\n", label, txt, el,
                 if (is.finite(eta)) sprintf(" | ~ETA %5.1fm", eta) else ""),
         file = stderr())
     flush(stderr())
