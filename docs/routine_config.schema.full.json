@@ -2,7 +2,7 @@
   "root": {
     "type": "object",
     "title": "gamble-core routine configuration",
-    "description": "GENERATED from config/knobs.json by tools/gen_config.py. Field names are the environment variable names entrypoint.sh reads.  FULL variant: every knob. The lean one is usually what you want.",
+    "description": "GENERATED from config/knobs.json by tools/gen_config.R. Field names are the environment variable names entrypoint.sh reads.  FULL variant: every knob. The lean one is usually what you want.",
     "required": [
       "TASK"
     ],
@@ -355,3 +355,4 @@
     }
   }
 }
+

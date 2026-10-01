@@ -2,7 +2,7 @@
   "root": {
     "type": "object",
     "title": "gamble-core design matrix routine configuration",
-    "description": "GENERATED from config/knobs.json by tools/gen_config.py. Dedicated routine schema for assembling pixel model design dumps (TASK=flat_design).",
+    "description": "GENERATED from config/knobs.json by tools/gen_config.R. Dedicated routine schema for assembling pixel model design dumps (TASK=flat_design).",
     "required": [
       "TASK"
     ],
@@ -78,3 +78,4 @@
     }
   }
 }
+

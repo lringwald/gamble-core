@@ -12,7 +12,7 @@ cd "$(dirname "$0")"
 
 # The task list, named ONCE. It used to be spelled out again inside the passthrough test, which
 # silently omitted all four bmleh* tasks -- harmless only because `command -v bmleh` happens to fail.
-# The knob registry, generated from config/knobs.json (tools/gen_config.py).
+# The knob registry, generated from config/knobs.json (tools/gen_config.R).
 [ -f config/knobs.generated.sh ] && . config/knobs.generated.sh
 
 GAMBLE_TASKS="flat_fit flat_design nested count report recover_bart bart_gate test"

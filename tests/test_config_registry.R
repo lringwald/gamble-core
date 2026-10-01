@@ -15,7 +15,7 @@ ok <- function(c_, m) { if (isTRUE(c_)) { np <<- np+1L; cat(sprintf("[PASS] %s\n
 
 for (f in c("config/knobs.json", "config/knobs.generated.sh",
             "docs/routine_config.schema.json", "docs/routine_config.schema.full.json")) {
-  if (!file.exists(f)) { cat(sprintf("SKIP: %s missing -- run tools/gen_config.py\n", f)); quit(status = 0) }
+  if (!file.exists(f)) { cat(sprintf("SKIP: %s missing -- run tools/gen_config.R\n", f)); quit(status = 0) }
 }
 reg_txt <- paste(readLines("config/knobs.json", warn = FALSE), collapse = "\n")
 gen_txt <- paste(readLines("config/knobs.generated.sh", warn = FALSE), collapse = "\n")
